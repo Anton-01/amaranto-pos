@@ -2,6 +2,8 @@
 
 use App\Http\Controllers\Auth\AuthController;
 use App\Http\Controllers\Auth\TwoFactorController;
+use App\Http\Controllers\Catalog\CategoryController;
+use App\Http\Controllers\Catalog\ProductController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('auth')->group(function () {
@@ -21,4 +23,11 @@ Route::prefix('auth')->group(function () {
             Route::post('/disable', [TwoFactorController::class, 'disable']);
         });
     });
+});
+
+Route::middleware(['auth:sanctum', 'user.active'])->group(function () {
+    Route::apiResource('categories', CategoryController::class);
+
+    Route::get('products/grouped', [ProductController::class, 'grouped']);
+    Route::apiResource('products', ProductController::class);
 });

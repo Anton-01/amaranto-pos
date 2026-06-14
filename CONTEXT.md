@@ -6,13 +6,13 @@
 - Base de Datos: Managed PostgreSQL (DigitalOcean)
 - Estado de Infraestructura: Docker Compose configurado y funcional.
 
-## 2. Matriz de Modules y Progreso
+## 2. Matriz de Modulos y Progreso
 | Modulo | Estado Backend | Estado Frontend | Observaciones |
 | :--- | :--- | :--- | :--- |
 | Infraestructura & Docker | [🟢 Completado] | [🟢 Completado] | Dockerfiles ligeros listos |
 | Migraciones & Modelos Base (BD) | [🟢 Completado] | N/A | 18 migraciones, 15 modelos, Trait AdvancedSoftDeletes, Seeder base |
 | Autenticacion & 2FA (Sanctum) | [🟢 Completado] | [🟢 Completado] | Login, Logout, 2FA TOTP, Kill-Switch, Session Log |
-| Catalogo, Categorias y Variaciones| [⚪ Pendiente] | [⚪ Pendiente] | - |
+| Catalogo, Categorias y Variaciones| [🟢 Completado] | [🟢 Completado] | CRUD completo, DataTable filtros avanzados, variaciones en serie |
 | Promociones e Historicos | [⚪ Pendiente] | [⚪ Pendiente] | - |
 | Usuarios, Roles y Permisos (RBAC)| [⚪ Pendiente] | [⚪ Pendiente] | - |
 | Caja Chica, Retiros e Integridad| [⚪ Pendiente] | [⚪ Pendiente] | - |
@@ -113,12 +113,62 @@ Todas las tablas utilizan UUID como llave primaria. Tipos monetarios: `NUMERIC(1
 - **TwoFactorModal** - Dialog animado de PrimeReact con backdrop-blur-sm, InputOtp de 6 digitos, bloqueo de cierre durante verificacion
 - **DashboardPage** (`/dashboard`) - Vista protegida basica con header y boton de logout
 - **AuthContext** - Provider React con estado global de autenticacion (login, logout, fetchUser)
-- **Axios Interceptor** - Interceptor global que maneja suspension (403), expiacion de token (401), y redirecciones
+- **Axios Interceptor** - Interceptor global que maneja suspension (403), expiracion de token (401), y redirecciones
 - **Sonner** - Notificaciones toast para exito/error de autenticacion
 - **Rutas protegidas** - ProtectedRoute (requiere auth) y GuestRoute (redirige si ya autenticado)
 
-## 5. Ultima Accion Ejecutada
-- Implementacion completa del sistema de autenticacion con 2FA, middleware Kill-Switch, y frontend React con login + modal 2FA.
+## 5. Detalle del Modulo Completado: Catalogo, Categorias y Variaciones
 
-## 6. Proximo Paso Inmediato
-- Implementar el modulo de Catalogo, Categorias y Variaciones (CRUD completo con productos y SKU agrupados).
+### Backend - API Endpoints (11 rutas)
+| Metodo | Ruta | Descripcion |
+| :--- | :--- | :--- |
+| GET | /api/categories | Lista categorias con filtros (search, is_active), incluye count de productos |
+| POST | /api/categories | Crear categoria |
+| GET | /api/categories/{id} | Detalle de categoria |
+| PUT | /api/categories/{id} | Actualizar categoria |
+| DELETE | /api/categories/{id} | Borrado logico con motivo obligatorio (AdvancedSoftDeletes) |
+| GET | /api/products | Lista productos con filtros avanzados (search, category_id[], is_active, sale_price_min/max, parent_sku, low_stock) |
+| POST | /api/products | Crear producto |
+| GET | /api/products/{id} | Detalle con variaciones del mismo parent_sku |
+| PUT | /api/products/{id} | Actualizar producto |
+| DELETE | /api/products/{id} | Borrado logico con motivo obligatorio |
+| GET | /api/products/grouped | Productos agrupados por parent_sku para punto de venta |
+
+### FormRequests (Validacion estricta)
+- `StoreCategoryRequest`, `UpdateCategoryRequest`, `DeleteCategoryRequest`
+- `StoreProductRequest`, `UpdateProductRequest`, `DeleteProductRequest`
+- SKU unico validado con `unique:products,sku` (ignorando el registro actual en update)
+- Precios validados como `numeric|min:0|max:9999999999.99`
+- `deletion_reason` obligatorio en toda eliminacion logica
+
+### Reglas de Negocio
+- Categoria no se puede eliminar si tiene productos activos (retorna 409 con count)
+- Productos eliminados logicamente con `advancedDelete()` registran `deleted_by` y `deletion_reason`
+- `parent_sku` agrupa variaciones logicamente para el punto de venta
+- Endpoint `/products/grouped` devuelve productos activos agrupados por parent_sku
+
+### Frontend React - Paginas
+- **CategoriesPage** (`/categories`) - DataTable con busqueda global, CRUD inline via modales, borrado con motivo
+- **ProductsPage** (`/products`) - DataTable avanzado con:
+  - Filtro por nombre (texto libre por columna)
+  - Filtro por categoria (MultiSelect por columna)
+  - Filtro por rango de precio de venta (InputNumber min/max)
+  - Filtro por estatus activo/inactivo (Dropdown)
+  - Paginacion configurable (10/20/50)
+  - Indicador visual de stock bajo (texto rose cuando current_stock <= minimum_stock)
+  - Columna de grupo (parent_sku)
+- **ProductFormPage** (`/products/create`, `/products/:id/edit`) - Formulario de alta/edicion con:
+  - Campos: SKU, parent_sku (grupo), nombre, categoria (dropdown), costo, precio venta, stock actual/min/max, activo
+  - Calculo de margen en tiempo real
+  - **Guardar y Crear Variacion**: congela category_id, name, is_active; auto-rellena parent_sku con el SKU del producto recien guardado; limpia sku, cost_price, sale_price para captura inmediata de la siguiente variacion
+  - Contador de variaciones creadas en la sesion
+
+### Componentes Compartidos
+- **AppLayout** - Layout unificado con navbar, navegacion (Dashboard, Productos, Categorias), usuario y logout
+- **DeleteDialog** - Modal reutilizable para borrado logico con campo de motivo obligatorio
+
+## 6. Ultima Accion Ejecutada
+- Implementacion completa del modulo de Catalogo con CRUD de categorias y productos, DataTable con filtros avanzados, y flujo UX de variaciones en serie.
+
+## 7. Proximo Paso Inmediato
+- Implementar el modulo de Promociones e Historicos.

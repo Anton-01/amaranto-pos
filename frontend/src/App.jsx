@@ -3,6 +3,9 @@ import { Toaster } from 'sonner';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import LoginPage from './pages/auth/LoginPage';
 import DashboardPage from './pages/DashboardPage';
+import CategoriesPage from './pages/catalog/CategoriesPage';
+import ProductsPage from './pages/catalog/ProductsPage';
+import ProductFormPage from './pages/catalog/ProductFormPage';
 
 function ProtectedRoute({ children }) {
   const { user, loading } = useAuth();
@@ -56,6 +59,10 @@ export default function App() {
         <Routes>
           <Route path="/login" element={<GuestRoute><LoginPage /></GuestRoute>} />
           <Route path="/dashboard" element={<ProtectedRoute><DashboardPage /></ProtectedRoute>} />
+          <Route path="/categories" element={<ProtectedRoute><CategoriesPage /></ProtectedRoute>} />
+          <Route path="/products" element={<ProtectedRoute><ProductsPage /></ProtectedRoute>} />
+          <Route path="/products/create" element={<ProtectedRoute><ProductFormPage /></ProtectedRoute>} />
+          <Route path="/products/:id/edit" element={<ProtectedRoute><ProductFormPage /></ProtectedRoute>} />
           <Route path="*" element={<Navigate to="/login" replace />} />
         </Routes>
       </AuthProvider>
