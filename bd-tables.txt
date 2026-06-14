@@ -1,0 +1,311 @@
+Catálogo Completo de Base de Datos (PostgreSQL E-R)
+A continuación se detalla la especificación exacta de las tablas que se crearán en la base de datos a través de las migraciones de Laravel.
+
+       +-------------------+               +-------------------+
+       |       users       |               |       roles       |
+       +-------------------+               +-------------------+
+       | PK  id (UUID)     |<------------->| PK  id (UUID)     |
+       |     status (ENUM) |               |     name (VARCHAR)|
+       +-------------------+               +-------------------+
+                 |
+                 | (1:N)
+                 v
+   +---------------------------+           +---------------------------+
+   |  petty_cash_transactions  |           |      stock_movements      |
+   +---------------------------+           +---------------------------+
+   | PK  id (UUID)             |           | PK  id (UUID)             |
+   | FK  user_id (UUID)        |           | FK  product_id (UUID)     |
+   |     immutable_snapshot    |           |     type (ENUM)           |
+   |     (JSONB)               |           |     reason (ENUM)         |
+   +---------------------------+           +---------------------------+
+                 ^                                       ^
+                 |                                       |
+                 | (N:1 via ticket_config_id)            | (N:1)
+                 |                                       |
+       +-------------------+               +-------------------+
+       |      orders       |               |     products      |
+       +-------------------+               +-------------------+
+       | PK  id (UUID)     |               | PK  id (UUID)     |
+       | FK  ticket_config_|               |     sku (VARCHAR) |
+       |     id (UUID)     |               |     parent_sku    |
+       +-------------------+               +-------------------+
+                 |                                       |
+                 | (1:N)                                 | (1:N)
+                 v                                       v
+       +-------------------------------------------------------+
+       |                      order_items                      |
+       +-------------------------------------------------------+
+       | PK  id (UUID)                                         |
+       | FK  order_id (UUID)                                   |
+       | FK  product_id (UUID)                                 |
+       | FK  promotion_id (UUID)                               |
+       |     base_price_at_sale (NUMERIC)                      |
+       |     discount_amount_at_sale (NUMERIC)                 |
+       |     final_price_at_sale (NUMERIC)                     |
+       +-------------------------------------------------------+
+
+
+::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+
+Tabla: global_settings
+key (VARCHAR(100), Primary Key)
+
+value (JSONB)
+
+Tabla: ticket_configs
+id (UUID, Primary Key)
+
+version (INTEGER)
+
+is_active (BOOLEAN)
+
+business_name (VARCHAR(150))
+
+rfc (VARCHAR(20))
+
+address (TEXT)
+
+phone (VARCHAR(20))
+
+header_message (TEXT, Nullable)
+
+footer_message (TEXT, Nullable)
+
+logo_url (VARCHAR(255), Nullable)
+
+updated_by (UUID, FK users)
+
+created_at (TIMESTAMP WITH TIME ZONE)
+
+Tabla: users
+id (UUID, Primary Key)
+
+name (VARCHAR(150))
+
+email (VARCHAR(150), Unique)
+
+password (VARCHAR(255))
+
+status (ENUM('active', 'suspended'))
+
+two_factor_secret (TEXT, Nullable)
+
+two_factor_recovery_codes (TEXT, Nullable)
+
+two_factor_confirmed_at (TIMESTAMP, Nullable)
+
+password_restored_at (TIMESTAMP, Nullable)
+
+deleted_at (TIMESTAMP, Nullable)
+
+deleted_by (UUID, Nullable, FK users)
+
+deletion_reason (VARCHAR(255), Nullable)
+
+created_at (TIMESTAMP WITH TIME ZONE)
+
+Tabla: roles
+id (UUID, Primary Key)
+
+name (VARCHAR(50), Unique) // admin, manager, vendor
+
+created_at (TIMESTAMP)
+
+Tabla: model_has_roles
+role_id (UUID, FK roles, Cascade)
+
+model_id (UUID, FK users, Cascade)
+
+Composite PK: (role_id, model_id)
+
+Tabla: user_sessions_log
+id (UUID, Primary Key)
+
+user_id (UUID, FK users, Cascade)
+
+login_at (TIMESTAMP WITH TIME ZONE)
+
+logout_at (TIMESTAMP WITH TIME ZONE, Nullable)
+
+ip_address (VARCHAR(45))
+
+user_agent (TEXT)
+
+Tabla: categories
+id (UUID, Primary Key)
+
+name (VARCHAR(100))
+
+is_active (BOOLEAN)
+
+deleted_at (TIMESTAMP, Nullable)
+
+deleted_by (UUID, Nullable)
+
+deletion_reason (VARCHAR(255), Nullable)
+
+Tabla: products
+id (UUID, Primary Key)
+
+sku (VARCHAR(50), Unique)
+
+parent_sku (VARCHAR(50), Nullable, Index) // Para agrupación en la interfaz del cajero
+
+name (VARCHAR(150))
+
+category_id (UUID, FK categories)
+
+cost_price (NUMERIC(12,2))
+
+sale_price (NUMERIC(12,2))
+
+current_stock (INTEGER)
+
+minimum_stock (INTEGER)
+
+maximum_stock (INTEGER)
+
+is_active (BOOLEAN)
+
+deleted_at (TIMESTAMP, Nullable)
+
+deleted_by (UUID, Nullable)
+
+deletion_reason (VARCHAR(255), Nullable)
+
+Tabla: promotions
+id (UUID, Primary Key)
+
+name (VARCHAR(100))
+
+type (ENUM('percentage', 'fixed_amount', 'freebie_100'))
+
+value (NUMERIC(12,2))
+
+start_date (TIMESTAMP)
+
+end_date (TIMESTAMP)
+
+is_active (BOOLEAN)
+
+deleted_at (TIMESTAMP, Nullable)
+
+deleted_by (UUID, Nullable)
+
+deletion_reason (VARCHAR(255), Nullable)
+
+Tabla: product_promotion
+product_id (UUID, FK products, Cascade)
+
+promotion_id (UUID, FK promotions, Cascade)
+
+Composite PK: (product_id, promotion_id)
+
+Tabla: cash_registers
+id (UUID, Primary Key)
+
+user_id (UUID, FK users)
+
+opened_at (TIMESTAMP WITH TIME ZONE)
+
+closed_at (TIMESTAMP WITH TIME ZONE, Nullable)
+
+opening_balance (NUMERIC(12,2))
+
+expected_closing_balance (NUMERIC(12,2))
+
+actual_closing_balance (NUMERIC(12,2), Nullable)
+
+Tabla: orders
+id (UUID, Primary Key)
+
+cash_register_id (UUID, FK cash_registers)
+
+ticket_config_id (UUID, FK ticket_configs) // Conserva el diseño exacto del ticket de ese día
+
+payment_method (ENUM('efectivo', 'tarjeta', 'transferencia'))
+
+subtotal (NUMERIC(12,2)) // Suma de final_price_at_sale antes de IVA
+
+iva_total (NUMERIC(12,2))
+
+total (NUMERIC(12,2))
+
+custom_legend (TEXT, Nullable) // Leyenda agregada al vuelo por el cajero
+
+created_at (TIMESTAMP WITH TIME ZONE)
+
+Tabla: order_items
+id (UUID, Primary Key)
+
+order_id (UUID, FK orders, Cascade)
+
+product_id (UUID, Nullable, Set Null) // Mantiene integridad si el producto se purga por completo
+
+promotion_id (UUID, Nullable)
+
+quantity (INTEGER)
+
+base_price_at_sale (NUMERIC(12,2)) // Precio original del producto al momento de la venta
+
+discount_amount_at_sale (NUMERIC(12,2)) // Descuento monetario exacto aplicado
+
+final_price_at_sale (NUMERIC(12,2)) // (base_price * quantity) - discount
+
+tax_amount_at_sale (NUMERIC(12,2)) // IVA de este ítem
+
+created_at (TIMESTAMP)
+
+Tabla: stock_movements
+id (UUID, Primary Key)
+
+product_id (UUID, FK products)
+
+user_id (UUID, FK users)
+
+type (ENUM('purchase_input', 'merma_output', 'sale_output', 'adjustment'))
+
+quantity (INTEGER) // Positivo si entra, negativo si sale
+
+cost_price_at_movement (NUMERIC(12,2))
+
+reason (ENUM('expired', 'damaged_spilled', 'internal_consumption', 'theft_loss'), Nullable)
+
+created_at (TIMESTAMP)
+
+Tabla: petty_cash_transactions
+id (UUID, Primary Key)
+
+user_id (UUID, FK users)
+
+amount (NUMERIC(12,2))
+
+reason (ENUM('provider_payment', 'supplies_purchase', 'change_delivery', 'emergency'))
+
+description (TEXT)
+
+immutable_snapshot (JSONB) // Snapshot inmutable con hash SHA256 anti-manipulación contable
+
+created_at (TIMESTAMP WITH TIME ZONE)
+
+Tabla: notification_types
+id (UUID, Primary Key)
+
+slug (VARCHAR(100), Unique)
+
+name (VARCHAR(100))
+
+description (TEXT)
+
+allowed_roles (JSONB) // Array de roles permitidos: ["admin", "manager"]
+
+Tabla: user_notification_preferences
+user_id (UUID, FK users, Cascade)
+
+notification_type_id (UUID, FK notification_types, Cascade)
+
+channel (VARCHAR(50)) // 'mail', 'database'
+
+is_enabled (BOOLEAN)
+
+Composite PK: (user_id, notification_type_id, channel)
