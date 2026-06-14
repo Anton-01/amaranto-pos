@@ -9,10 +9,11 @@ use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
+use Laravel\Sanctum\HasApiTokens;
 
 class User extends Authenticatable
 {
-    use HasFactory, HasUuids, Notifiable, AdvancedSoftDeletes;
+    use HasFactory, HasUuids, HasApiTokens, Notifiable, AdvancedSoftDeletes;
 
     protected $fillable = [
         'name',
