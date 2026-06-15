@@ -1,0 +1,105 @@
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.dev
+    container_name: cronos-backend
+    ports:
+      - "8000:8000"
+      - "8080:8080"
+    volumes:
+      - ./backend:/var/www/html
+      - backend-vendor:/var/www/html/vendor
+    environment:
+      - APP_NAME=Cronos POS
+      - APP_ENV=local
+      - APP_DEBUG=true
+      - APP_URL=http://localhost:8000
+      - DB_CONNECTION=pgsql
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_DATABASE=cronos_pos
+      - DB_USERNAME=cronos
+      - DB_PASSWORD=cronos_secret
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - CACHE_STORE=redis
+      - QUEUE_CONNECTION=redis
+      - SESSION_DRIVER=database
+      - BROADCAST_CONNECTION=reverb
+      - REVERB_APP_ID=cronos-local
+      - REVERB_APP_KEY=cronos-reverb-key
+      - REVERB_APP_SECRET=cronos-reverb-secret
+      - REVERB_HOST=0.0.0.0
+      - REVERB_PORT=8080
+      - MAIL_MAILER=log
+      - MAIL_FROM_ADDRESS=no-reply@cronos.pos
+      - MAIL_FROM_NAME=Cronos POS
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - cronos-network
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    container_name: cronos-frontend
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/app
+      - frontend-node-modules:/app/node_modules
+    environment:
+      - VITE_API_URL=http://localhost:8000
+    depends_on:
+      - backend
+    networks:
+      - cronos-network
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: cronos-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_DB=cronos_pos
+      - POSTGRES_USER=cronos
+      - POSTGRES_PASSWORD=cronos_secret
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cronos -d cronos_pos"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - cronos-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: cronos-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - cronos-network
+
+volumes:
+  postgres-data:
+  redis-data:
+  backend-vendor:
+  frontend-node-modules:
+
+networks:
+  cronos-network:
+    driver: bridge
