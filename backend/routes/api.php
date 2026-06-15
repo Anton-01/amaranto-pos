@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\Admin\UserController;
 use App\Http\Controllers\Auth\AuthController;
 use App\Http\Controllers\Auth\TwoFactorController;
 use App\Http\Controllers\Catalog\CategoryController;
@@ -66,6 +67,17 @@ Route::middleware(['auth:sanctum', 'user.active'])->group(function () {
         Route::get('/', [StockMovementController::class, 'index']);
         Route::post('/', [StockMovementController::class, 'store']);
         Route::get('/summary', [StockMovementController::class, 'summary']);
+    });
+
+    Route::middleware('role:admin,manager')->prefix('admin/users')->group(function () {
+        Route::get('/', [UserController::class, 'index']);
+        Route::post('/', [UserController::class, 'store']);
+        Route::get('/roles', [UserController::class, 'roles']);
+        Route::get('/{user}', [UserController::class, 'show']);
+        Route::post('/{user}/toggle-status', [UserController::class, 'toggleStatus']);
+        Route::delete('/{user}', [UserController::class, 'destroy']);
+        Route::post('/{user}/send-password-reset', [UserController::class, 'sendPasswordReset']);
+        Route::post('/{user}/sessions/{sessionId}/revoke', [UserController::class, 'revokeSession']);
     });
 
     Route::middleware('role:admin,manager')->prefix('analytics')->group(function () {

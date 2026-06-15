@@ -12,6 +12,7 @@ import PettyCashPage from './pages/finance/PettyCashPage';
 import FinanceDashboardPage from './pages/finance/FinanceDashboardPage';
 import StockMovementsPage from './pages/logistics/StockMovementsPage';
 import TicketConfigPage from './pages/settings/TicketConfigPage';
+import UsersPage from './pages/admin/UsersPage';
 
 function ProtectedRoute({ children }) {
   const { user, loading } = useAuth();
@@ -75,6 +76,7 @@ export default function App() {
           <Route path="/finance" element={<ProtectedRoute><FinanceDashboardPage /></ProtectedRoute>} />
           <Route path="/stock-movements" element={<ProtectedRoute><StockMovementsPage /></ProtectedRoute>} />
           <Route path="/ticket-config" element={<ProtectedRoute><TicketConfigPage /></ProtectedRoute>} />
+          <Route path="/admin/usuarios" element={<ProtectedRoute><UsersPage /></ProtectedRoute>} />
           <Route path="*" element={<Navigate to="/login" replace />} />
         </Routes>
       </AuthProvider>

@@ -14,7 +14,7 @@
 | Autenticacion & 2FA (Sanctum) | [🟢 Completado] | [🟢 Completado] | Login, Logout, 2FA TOTP, Kill-Switch, Session Log |
 | Catalogo, Categorias y Variaciones| [🟢 Completado] | [🟢 Completado] | CRUD completo, DataTable filtros avanzados, variaciones en serie |
 | Promociones e Historicos | [🟢 Completado] | [🟢 Completado] | CRUD con RBAC, limite 1 promo/ticket, POS cart con validacion cruzada |
-| Usuarios, Roles y Permisos (RBAC)| [⚪ Pendiente] | [⚪ Pendiente] | - |
+| Usuarios, Roles y Permisos (RBAC)| [🟢 Completado] | [🟢 Completado] | CRUD con Kill-Switch, detail tabs (seguridad/sesiones/cajas), reset link |
 | Caja Chica, Retiros e Integridad| [🟢 Completado] | [🟢 Completado] | SHA256 inmutable, eventos, notificaciones, audit ticket |
 | Ventas, Ticket Config & Historico | [🟢 Completado] | [🟢 Completado] | Append-only versioning, OrderController, ticket preview 80mm, @media print |
 | Finanzas Avanzadas (70/30) & Stock | [🟢 Completado] | [🟢 Completado] | Recharts dashboard, 70/30 split, stock movements con merma validada |
@@ -465,7 +465,85 @@ Todas las tablas utilizan UUID como llave primaria. Tipos monetarios: `NUMERIC(1
 **Dependencias:**
 - `recharts` agregado a package.json
 
-## 10. Reporte de Cierre General de la Arquitectura en Marcha
+## 10. Detalle del Modulo Completado: Usuarios, Roles y Permisos (RBAC)
+
+### Backend - API Endpoints (8 rutas nuevas)
+| Metodo | Ruta | Middleware | Descripcion |
+| :--- | :--- | :--- | :--- |
+| GET | /api/admin/users | auth, user.active, **role:admin,manager** | Lista usuarios con filtros: status, role, has_active_session, search |
+| POST | /api/admin/users | auth, user.active, **role:admin,manager** | Crear usuario con asignacion de rol |
+| GET | /api/admin/users/roles | auth, user.active, **role:admin,manager** | Lista roles disponibles |
+| GET | /api/admin/users/{id} | auth, user.active, **role:admin,manager** | Detalle con seguridad, ultimas 3 sesiones, historial de cajas |
+| POST | /api/admin/users/{id}/toggle-status | auth, user.active, **role:admin,manager** | Suspender/Activar (Kill-Switch: revoca todos los tokens) |
+| DELETE | /api/admin/users/{id} | auth, user.active, **role:admin,manager** | Baja logica con motivo obligatorio (AdvancedSoftDeletes) |
+| POST | /api/admin/users/{id}/send-password-reset | auth, user.active, **role:admin,manager** | Genera URL firmada de 4 horas y envia Mailable |
+| POST | /api/admin/users/{id}/sessions/{sid}/revoke | auth, user.active, **role:admin,manager** | Fuerza cierre de sesion individual + revoca tokens |
+
+### Controlador: UserController (Admin)
+- `index()` — Filtros avanzados: status (active/suspended), role (admin/manager/vendor), has_active_session (users con sessionsLog sin logout_at), search (name/email con ilike). Incluye `active_tokens_count` via withCount.
+- `show()` — API Resource optimizado que retorna:
+  - User con roles
+  - Security: two_factor_enabled, two_factor_confirmed_at, password_restored_at, active_tokens count
+  - Sessions: ultimas 3 de user_sessions_log (login_at, logout_at, ip_address, user_agent)
+  - Cash Registers: ultimos 10 turnos (opened_at, closed_at, opening/expected/actual balance)
+- `store()` — Crea usuario en DB::transaction con asignacion de rol via pivot model_has_roles
+- `toggleStatus()` — Kill-Switch: cambia status via raw SQL (enum nativo PostgreSQL), revoca tokens si suspendido
+- `destroy()` — Baja logica con advancedDelete() que registra deleted_by y deletion_reason
+- `sendPasswordReset()` — URL::temporarySignedRoute de 4 horas + PasswordResetLinkMail (ShouldQueue)
+- `revokeSession()` — Cierra sesion individual (logout_at = now) y revoca todos los tokens del usuario
+
+### FormRequest: StoreUserRequest
+- name: required, string, max:150
+- email: required, email, max:150, unique:users
+- password: required, string, min:8, max:255
+- role: required, string, exists:roles,name
+
+### Mailable: PasswordResetLinkMail (ShouldQueue)
+- Email HTML inline con diseno corporativo Cronos POS
+- Boton de restauracion con URL firmada
+- Expiracion de 4 horas indicada en el cuerpo del email
+
+### Frontend - UsersPage (`/admin/usuarios`)
+
+#### DataTable con Filtros Avanzados
+- **Busqueda global**: InputText por nombre o email
+- **Filtro por estatus**: Dropdown (Todos/Activo/Suspendido) — consulta backend con param status
+- **Filtro por rol**: Dropdown (Todos/Admin/Manager/Vendor) — consulta backend con param role
+- **Filtro por sesion activa**: Dropdown (Todos/Con sesion/Sin sesion) — consulta backend con param has_active_session
+- Columnas: Usuario (nombre clickeable + email), Rol (Tag coloreado), Estatus (Tag), Sesion (indicador de conexion con punto animado), Creado, Acciones
+
+#### Acciones por Fila
+- **Suspender/Activar**: Boton toggle que invoca Kill-Switch (revoca tokens inmediatamente)
+- **Reset**: Envia enlace de restauracion de contraseña (URL firmada 4 horas) por email
+- **Eliminar**: Abre modal con textarea de motivo obligatorio, ejecuta advancedDelete
+
+#### Detalle de Usuario (Dialog con TabView)
+- **Tab 1 (Seguridad)**: Estado 2FA (HABILITADO/DESHABILITADO con fecha), ultima restauracion de contraseña, tokens activos
+- **Tab 2 (Sesiones)**: Ultimas 3 conexiones de user_sessions_log con IP, navegador (parseado de user_agent), fecha login/logout, indicador de sesion activa, boton "Forzar Cierre" para sesiones activas
+- **Tab 3 (Auditoria de Cajas)**: Historial de cash_registers con apertura/cierre, balances (apertura, esperado, real), calculo de diferencia con color (verde positivo, rojo negativo), Tag ABIERTA/CERRADA
+
+#### Crear Usuario (Dialog)
+- Campos: Nombre, Email, Contraseña, Rol (Dropdown)
+- Validacion frontend + backend con errores específicos de Sonner
+
+### Archivos Creados/Modificados en esta Fase
+**Backend (nuevos):**
+- `app/Http/Controllers/Admin/UserController.php`
+- `app/Http/Requests/User/StoreUserRequest.php`
+- `app/Mail/PasswordResetLinkMail.php`
+
+**Backend (modificados):**
+- `routes/api.php` — 8 rutas nuevas bajo /admin/users con role:admin,manager
+- `routes/web.php` — Ruta nombrada password.reset para URL firmada
+
+**Frontend (nuevos):**
+- `src/pages/admin/UsersPage.jsx`
+
+**Frontend (modificados):**
+- `src/App.jsx` — Ruta /admin/usuarios
+- `src/components/layout/AppLayout.jsx` — NavLink "Usuarios"
+
+## 11. Reporte de Cierre General de la Arquitectura en Marcha
 
 ### Resumen de Progreso Global
 | # | Modulo | Backend | Frontend | Estado |
@@ -478,18 +556,19 @@ Todas las tablas utilizan UUID como llave primaria. Tipos monetarios: `NUMERIC(1
 | 6 | Caja Chica & Integridad | SHA256 seal, Events/Listeners/Notifications | WithdrawModal + AuditTicket termico | 🟢 |
 | 7 | Ventas & Ticket Config | OrderController, Append-Only versioning | CheckoutModal + TicketPreview 80mm + @media print | 🟢 |
 | 8 | Finanzas 70/30 & Stock | AnalyticsController, StockMovementController | Recharts dashboard, StockMovementsPage | 🟢 |
-| 9 | Usuarios & Roles (RBAC) | Pendiente | Pendiente | ⚪ |
+| 9 | Usuarios & Roles (RBAC) | UserController, Kill-Switch, URL firmada | UsersPage con TabView detail | 🟢 |
 | 10 | Notificaciones Reverb | Pendiente | Pendiente | ⚪ |
 | 11 | Papelera Global | Pendiente | Pendiente | ⚪ |
 
 ### Estadisticas de la Arquitectura
-- **Rutas API totales**: ~40 endpoints RESTful
-- **Controladores**: 9 (Auth, TwoFactor, Category, Product, Promotion, PettyCash, TicketConfig, Order, Analytics, StockMovement)
-- **FormRequests**: 11 clases de validacion estricta
+- **Rutas API totales**: ~48 endpoints RESTful
+- **Controladores**: 11 (Auth, TwoFactor, Category, Product, Promotion, PettyCash, TicketConfig, Order, Analytics, StockMovement, UserAdmin)
+- **FormRequests**: 12 clases de validacion estricta
 - **Modelos Eloquent**: 15 con relaciones completas
 - **Middleware custom**: 2 (EnsureUserIsActive, EnsureUserHasRole)
+- **Mailables**: 1 (PasswordResetLinkMail, ShouldQueue)
 - **Eventos/Listeners**: 1 evento broadcast + 1 listener + 1 notificacion queued
-- **Paginas React**: 11 (Login, Dashboard, Categories, Products, ProductForm, Promotions, POS, PettyCash, TicketConfig, Finance, StockMovements)
+- **Paginas React**: 12 (Login, Dashboard, Categories, Products, ProductForm, Promotions, POS, PettyCash, TicketConfig, Finance, StockMovements, UsersAdmin)
 - **Componentes React**: 8 (AppLayout, DeleteDialog, TwoFactorModal, WithdrawModal, AuditTicket, TicketPreview, CheckoutModal)
 - **Librerias frontend**: React, Tailwind CSS v4, PrimeReact, Sonner, Recharts, Axios
 
@@ -497,10 +576,11 @@ Todas las tablas utilizan UUID como llave primaria. Tipos monetarios: `NUMERIC(1
 1. **Inmutabilidad financiera**: order_items con _at_sale fields, petty_cash con JSONB snapshot + SHA256
 2. **Append-Only**: ticket_configs con versionado incremental
 3. **RBAC con middleware**: role:admin,manager para operaciones sensibles
-4. **Kill-Switch**: Suspension instantanea de usuarios con revocacion de tokens
+4. **Kill-Switch**: Suspension instantanea de usuarios con revocacion de tokens (usado en UserController y EnsureUserIsActive)
 5. **Transacciones atomicas**: DB::transaction con lockForUpdate en stock, ordenes, caja chica
 6. **Segmentacion contable 70/30**: Configurable via global_settings, deducciones automaticas
 7. **Validacion dual**: Frontend reactivo + Backend FormRequest (ej: 1 promo por ticket)
+8. **URLs firmadas temporales**: URL::temporarySignedRoute para enlaces de restauracion de 4 horas
 
 ### Proximo Paso Inmediato
-- Implementar el modulo de Usuarios, Roles y Permisos (RBAC) con gestion completa de usuarios, o Notificaciones Reverb para push en tiempo real.
+- Implementar Notificaciones Reverb para push en tiempo real, o Papelera Global con recuperacion de registros soft-deleted.

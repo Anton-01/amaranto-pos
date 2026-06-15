@@ -12,6 +12,7 @@ const navItems = [
   { label: 'Finanzas', path: '/finance' },
   { label: 'Almacen', path: '/stock-movements' },
   { label: 'Tickets', path: '/ticket-config' },
+  { label: 'Usuarios', path: '/admin/usuarios' },
 ];
 
 export default function AppLayout({ children }) {
