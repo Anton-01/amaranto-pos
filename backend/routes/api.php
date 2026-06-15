@@ -6,6 +6,8 @@ use App\Http\Controllers\Catalog\CategoryController;
 use App\Http\Controllers\Catalog\ProductController;
 use App\Http\Controllers\Finance\PettyCashController;
 use App\Http\Controllers\Promotion\PromotionController;
+use App\Http\Controllers\Sales\OrderController;
+use App\Http\Controllers\Sales\TicketConfigController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('auth')->group(function () {
@@ -43,6 +45,20 @@ Route::middleware(['auth:sanctum', 'user.active'])->group(function () {
         Route::patch('promotions/{promotion}', [PromotionController::class, 'update']);
         Route::delete('promotions/{promotion}', [PromotionController::class, 'destroy']);
     });
+
+    Route::prefix('ticket-configs')->group(function () {
+        Route::get('/', [TicketConfigController::class, 'index']);
+        Route::get('/active', [TicketConfigController::class, 'active']);
+        Route::get('/{ticketConfig}', [TicketConfigController::class, 'show']);
+    });
+
+    Route::middleware('role:admin,manager')->group(function () {
+        Route::post('ticket-configs', [TicketConfigController::class, 'store']);
+    });
+
+    Route::get('orders', [OrderController::class, 'index']);
+    Route::post('orders', [OrderController::class, 'store']);
+    Route::get('orders/{order}', [OrderController::class, 'show']);
 
     Route::prefix('petty-cash')->group(function () {
         Route::get('/', [PettyCashController::class, 'index']);

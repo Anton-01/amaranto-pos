@@ -1,18 +1,11 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { InputText } from 'primereact/inputtext';
-import { InputNumber } from 'primereact/inputnumber';
 import { Dropdown } from 'primereact/dropdown';
 import { Button } from 'primereact/button';
-import { Tag } from 'primereact/tag';
 import { toast } from 'sonner';
 import api from '../../api/axios';
 import AppLayout from '../../components/layout/AppLayout';
-
-const paymentMethods = [
-  { label: 'Efectivo', value: 'efectivo' },
-  { label: 'Tarjeta', value: 'tarjeta' },
-  { label: 'Transferencia', value: 'transferencia' },
-];
+import CheckoutModal from '../../components/pos/CheckoutModal';
 
 export default function POSPage() {
   const [productGroups, setProductGroups] = useState([]);
@@ -21,9 +14,7 @@ export default function POSPage() {
   const [search, setSearch] = useState('');
 
   const [cart, setCart] = useState([]);
-  const [paymentMethod, setPaymentMethod] = useState('efectivo');
-  const [customLegend, setCustomLegend] = useState('');
-  const [submitting, setSubmitting] = useState(false);
+  const [showCheckout, setShowCheckout] = useState(false);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -156,43 +147,9 @@ export default function POSPage() {
   const ivaTotal = subtotal * ivaRate;
   const total = subtotal + ivaTotal;
 
-  const handleSubmitOrder = async () => {
-    if (cart.length === 0) {
-      toast.error('El carrito esta vacio.');
-      return;
-    }
-
-    setSubmitting(true);
-    toast.info('Validando orden...', { description: 'El backend verificara la regla de 1 promocion por ticket.' });
-
-    try {
-      const payload = {
-        cash_register_id: '00000000-0000-0000-0000-000000000000',
-        payment_method: paymentMethod,
-        custom_legend: customLegend || null,
-        items: cart.map(i => ({
-          product_id: i.product_id,
-          quantity: i.quantity,
-          promotion_id: i.promotion_id,
-        })),
-      };
-
-      await api.post('/orders', payload);
-      toast.success('Orden registrada exitosamente.');
-      setCart([]);
-      setCustomLegend('');
-    } catch (err) {
-      const data = err.response?.data;
-      if (data?.code === 'ERR_POS_PROMOTION_LIMIT_EXCEEDED') {
-        toast.error('Limite de promociones excedido', {
-          description: data.message,
-        });
-      } else {
-        toast.error(data?.message || 'Error al procesar la orden.');
-      }
-    } finally {
-      setSubmitting(false);
-    }
+  const handleCheckoutSuccess = () => {
+    setCart([]);
+    fetchData();
   };
 
   if (loading) {
@@ -375,32 +332,10 @@ export default function POSPage() {
                   </div>
                 </div>
 
-                <div className="mb-3">
-                  <Dropdown
-                    value={paymentMethod}
-                    options={paymentMethods}
-                    onChange={(e) => setPaymentMethod(e.value)}
-                    className="w-full text-sm"
-                    pt={{ root: { className: 'w-full' } }}
-                  />
-                </div>
-
-                <div className="mb-4">
-                  <InputText
-                    value={customLegend}
-                    onChange={(e) => setCustomLegend(e.target.value)}
-                    placeholder="Leyenda adicional (opcional)"
-                    className="w-full rounded-lg border-slate-200 px-3 py-2 text-sm"
-                    pt={{ root: { className: 'w-full' } }}
-                  />
-                </div>
-
                 <Button
-                  label={submitting ? 'Procesando...' : 'Cobrar'}
-                  onClick={handleSubmitOrder}
-                  disabled={submitting}
-                  loading={submitting}
-                  className="w-full rounded-lg bg-emerald-600 px-4 py-3 text-sm font-bold text-white shadow-sm hover:bg-emerald-500 disabled:opacity-50"
+                  label="Cobrar"
+                  onClick={() => setShowCheckout(true)}
+                  className="w-full rounded-lg bg-emerald-600 px-4 py-3 text-sm font-bold text-white shadow-sm hover:bg-emerald-500"
                   pt={{ root: { className: 'border-0' } }}
                 />
               </div>
@@ -408,6 +343,13 @@ export default function POSPage() {
           </div>
         </div>
       </div>
+
+      <CheckoutModal
+        visible={showCheckout}
+        onHide={() => setShowCheckout(false)}
+        cart={cart}
+        onSuccess={handleCheckoutSuccess}
+      />
     </AppLayout>
   );
 }

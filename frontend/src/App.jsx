@@ -9,6 +9,7 @@ import ProductFormPage from './pages/catalog/ProductFormPage';
 import PromotionsPage from './pages/promotions/PromotionsPage';
 import POSPage from './pages/pos/POSPage';
 import PettyCashPage from './pages/finance/PettyCashPage';
+import TicketConfigPage from './pages/settings/TicketConfigPage';
 
 function ProtectedRoute({ children }) {
   const { user, loading } = useAuth();
@@ -69,6 +70,7 @@ export default function App() {
           <Route path="/promotions" element={<ProtectedRoute><PromotionsPage /></ProtectedRoute>} />
           <Route path="/pos" element={<ProtectedRoute><POSPage /></ProtectedRoute>} />
           <Route path="/petty-cash" element={<ProtectedRoute><PettyCashPage /></ProtectedRoute>} />
+          <Route path="/ticket-config" element={<ProtectedRoute><TicketConfigPage /></ProtectedRoute>} />
           <Route path="*" element={<Navigate to="/login" replace />} />
         </Routes>
       </AuthProvider>

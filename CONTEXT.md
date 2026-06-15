@@ -16,7 +16,7 @@
 | Promociones e Historicos | [🟢 Completado] | [🟢 Completado] | CRUD con RBAC, limite 1 promo/ticket, POS cart con validacion cruzada |
 | Usuarios, Roles y Permisos (RBAC)| [⚪ Pendiente] | [⚪ Pendiente] | - |
 | Caja Chica, Retiros e Integridad| [🟢 Completado] | [🟢 Completado] | SHA256 inmutable, eventos, notificaciones, audit ticket |
-| Ventas, Ticket Config & Historico | [⚪ Pendiente] | [⚪ Pendiente] | - |
+| Ventas, Ticket Config & Historico | [🟢 Completado] | [🟢 Completado] | Append-only versioning, OrderController, ticket preview 80mm, @media print |
 | Finanzas Avanzadas (70/30) | [⚪ Pendiente] | [⚪ Pendiente] | - |
 | Notificaciones Reverb (Push/Mail)| [⚪ Pendiente] | [⚪ Pendiente] | - |
 | Papelera Global (Soft Deletes)| [⚪ Pendiente] | [⚪ Pendiente] | - |
@@ -291,8 +291,102 @@ Todas las tablas utilizan UUID como llave primaria. Tipos monetarios: `NUMERIC(1
 - `src/App.jsx` - Ruta /petty-cash con ProtectedRoute
 - `src/components/layout/AppLayout.jsx` - NavLink "Caja Chica" en navbar
 
-## 8. Ultima Accion Ejecutada
-- Implementacion completa del modulo de Caja Chica con snapshot inmutable SHA256, eventos/notificaciones, y vista de auditoria estilo ticket termico.
+## 8. Detalle del Modulo Completado: Ventas, Ticket Config & Historico
 
-## 9. Proximo Paso Inmediato
+### Backend - API Endpoints (7 rutas)
+| Metodo | Ruta | Middleware | Descripcion |
+| :--- | :--- | :--- | :--- |
+| GET | /api/ticket-configs | auth, user.active | Lista todas las versiones de ticket (ordenadas desc) |
+| GET | /api/ticket-configs/active | auth, user.active | Retorna la configuracion de ticket activa |
+| GET | /api/ticket-configs/{id} | auth, user.active | Detalle de una version con updatedByUser |
+| POST | /api/ticket-configs | auth, user.active, **role:admin,manager** | Crea nueva version (append-only: desactiva previa, incrementa version) |
+| GET | /api/orders | auth, user.active | Lista ordenes con filtros (date_from, date_to, payment_method), paginado |
+| POST | /api/orders | auth, user.active | Procesar venta: calcula precios, descuentos, IVA, asocia ticket_config activo |
+| GET | /api/orders/{id} | auth, user.active | Detalle de orden con items, productos, promociones, ticket config |
+
+### Controlador: TicketConfigController (Append-Only Versioning)
+- `store()` ejecuta en `DB::transaction`: desactiva version previa (`is_active = false`), calcula `max(version) + 1`, inserta nueva version como activa
+- Cada version es inmutable una vez creada — no se permite editar ni eliminar
+- Historico completo preservado: ordenes antiguas referencian la version de ticket vigente al momento de la venta
+
+### Controlador: OrderController
+- `store()` ejecuta en `DB::transaction`:
+  1. Obtiene ticket_config activo (retorna ERR_TICKET_NO_ACTIVE_CONFIG si no existe)
+  2. Auto-abre caja registradora si el usuario no tiene una abierta (`CashRegister::create`)
+  3. Para cada item: obtiene producto, calcula descuento segun tipo de promocion (percentage/fixed_amount/freebie_100)
+  4. Registra `base_price_at_sale`, `discount_amount_at_sale`, `final_price_at_sale`, `tax_amount_at_sale` en order_items
+  5. Decrementa `current_stock` del producto
+  6. Calcula subtotal, IVA (16%), total
+  7. Incrementa `expected_closing_balance` en la caja registradora
+  8. Retorna orden completa con items, productos y ticket config
+- `index()` con filtros: date_from, date_to, payment_method + paginacion
+- `show()` carga orden con todas las relaciones
+
+### FormRequest: StoreOrderRequest (Actualizado)
+- Removido `cash_register_id` (ahora auto-gestionado por el controlador)
+- Mantiene validacion de limite 1 promocion por ticket con `ERR_POS_PROMOTION_LIMIT_EXCEEDED`
+
+### Preservacion Historica de Precios
+- `order_items.base_price_at_sale` — Precio base del producto al momento de la venta
+- `order_items.discount_amount_at_sale` — Descuento calculado por promocion
+- `order_items.final_price_at_sale` — Precio final (base * qty - descuento)
+- `order_items.tax_amount_at_sale` — IVA calculado (16% del precio final)
+- `orders.ticket_config_id` — FK inmutable a la version de ticket vigente al momento de la venta
+
+### Frontend - Componentes
+
+#### TicketPreview (Componente reutilizable)
+- Simula dimensiones fisicas de papel termico de 80mm (302px)
+- Fuente monoespaciada con leading relajado
+- Secciones: Encabezado (razon social, RFC, direccion, telefono, mensaje cabecera), Info de orden (folio, fecha, pago), Items (nombre, qty x precio, descuentos, promociones), Totales (subtotal, IVA, total), Leyenda personalizada, Pie (mensaje pie, version)
+- Acepta `forwardRef` para integracion con impresion
+- Renderiza tanto datos de preview (cart) como datos de orden completada (API response)
+
+#### CheckoutModal (Componente)
+- Dialog PrimeReact con layout de 2 columnas: controles a la izquierda, ticket preview a la derecha
+- **Controles**: Metodo de pago (Dropdown), Leyenda personalizada (textarea con contador 0/500), Totales, Botones cancelar/confirmar
+- **Inyeccion "Al Vuelo"**: El textarea modifica `customLegend` en tiempo real, que se renderiza instantaneamente en el TicketPreview
+- **Post-venta**: Muestra la orden completada con botones Cerrar e Imprimir Ticket
+- Carga automaticamente la configuracion de ticket activa al abrir
+- Maneja errores: ERR_POS_PROMOTION_LIMIT_EXCEEDED, ERR_TICKET_NO_ACTIVE_CONFIG
+
+#### TicketConfigPage (`/ticket-config`)
+- DataTable con historial de versiones: numero de version (con Tag "ACTIVA"), razon social, RFC, telefono, fecha
+- Boton "Nueva Version": abre formulario pre-poblado con datos de la version activa actual
+- Formulario con preview en tiempo real del ticket a la derecha (datos de ejemplo)
+- Dialogo para ver ticket de cualquier version historica
+- Acceso restringido a admin/manager via middleware backend
+
+### Estilos CSS para Impresion Termica
+- `@media print` en index.css configura:
+  - Oculta navbar, modales, controles (`print:hidden`)
+  - Ticket a 80mm con `@page { size: 80mm auto; margin: 0 }`
+  - Elimina bordes, sombras y padding decorativo del ticket
+  - `page-break-inside: avoid` para evitar cortes
+
+### Archivos Creados/Modificados en esta Fase
+**Backend (nuevos):**
+- `app/Http/Controllers/Sales/TicketConfigController.php`
+- `app/Http/Controllers/Sales/OrderController.php`
+- `app/Http/Requests/TicketConfig/StoreTicketConfigRequest.php`
+
+**Backend (modificados):**
+- `app/Http/Requests/Order/StoreOrderRequest.php` — Removido cash_register_id, auto-gestionado
+- `routes/api.php` — 7 rutas nuevas (4 ticket-configs, 3 orders)
+
+**Frontend (nuevos):**
+- `src/components/pos/TicketPreview.jsx`
+- `src/components/pos/CheckoutModal.jsx`
+- `src/pages/settings/TicketConfigPage.jsx`
+
+**Frontend (modificados):**
+- `src/pages/pos/POSPage.jsx` — Reemplazado checkout inline con CheckoutModal, limpieza de imports
+- `src/App.jsx` — Ruta /ticket-config con ProtectedRoute
+- `src/components/layout/AppLayout.jsx` — NavLink "Tickets" en navbar
+- `src/index.css` — Estilos @media print para impresion termica 80mm
+
+## 9. Ultima Accion Ejecutada
+- Implementacion completa del modulo de Ventas y Ticket Config con versionado append-only, OrderController con preservacion historica de precios, TicketPreview 80mm, CheckoutModal con inyeccion de leyenda al vuelo, y estilos @media print para impresoras termicas.
+
+## 10. Proximo Paso Inmediato
 - Implementar el modulo de Usuarios, Roles y Permisos (RBAC) con gestion completa de usuarios.

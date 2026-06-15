@@ -14,7 +14,6 @@ class StoreOrderRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'cash_register_id' => 'required|uuid|exists:cash_registers,id',
             'payment_method' => 'required|string|in:efectivo,tarjeta,transferencia',
             'custom_legend' => 'nullable|string|max:500',
             'items' => 'required|array|min:1',

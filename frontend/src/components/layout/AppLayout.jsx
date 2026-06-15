@@ -9,6 +9,7 @@ const navItems = [
   { label: 'Categorias', path: '/categories' },
   { label: 'Promociones', path: '/promotions' },
   { label: 'Caja Chica', path: '/petty-cash' },
+  { label: 'Tickets', path: '/ticket-config' },
 ];
 
 export default function AppLayout({ children }) {
