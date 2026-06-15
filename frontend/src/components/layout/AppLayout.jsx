@@ -9,6 +9,8 @@ const navItems = [
   { label: 'Categorias', path: '/categories' },
   { label: 'Promociones', path: '/promotions' },
   { label: 'Caja Chica', path: '/petty-cash' },
+  { label: 'Finanzas', path: '/finance' },
+  { label: 'Almacen', path: '/stock-movements' },
   { label: 'Tickets', path: '/ticket-config' },
 ];
 

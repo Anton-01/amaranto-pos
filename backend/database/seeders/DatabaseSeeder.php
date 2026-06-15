@@ -2,6 +2,7 @@
 
 namespace Database\Seeders;
 
+use App\Models\GlobalSetting;
 use App\Models\NotificationType;
 use App\Models\Role;
 use App\Models\User;
@@ -68,5 +69,15 @@ class DatabaseSeeder extends Seeder
         foreach ($notificationTypes as $type) {
             NotificationType::create($type);
         }
+
+        GlobalSetting::create([
+            'key' => 'tax_rate',
+            'value' => ['rate' => 0.16, 'label' => 'IVA 16%'],
+        ]);
+
+        GlobalSetting::create([
+            'key' => 'investment_split',
+            'value' => ['investment_pct' => 70, 'profit_pct' => 30],
+        ]);
     }
 }

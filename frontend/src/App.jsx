@@ -9,6 +9,8 @@ import ProductFormPage from './pages/catalog/ProductFormPage';
 import PromotionsPage from './pages/promotions/PromotionsPage';
 import POSPage from './pages/pos/POSPage';
 import PettyCashPage from './pages/finance/PettyCashPage';
+import FinanceDashboardPage from './pages/finance/FinanceDashboardPage';
+import StockMovementsPage from './pages/logistics/StockMovementsPage';
 import TicketConfigPage from './pages/settings/TicketConfigPage';
 
 function ProtectedRoute({ children }) {
@@ -70,6 +72,8 @@ export default function App() {
           <Route path="/promotions" element={<ProtectedRoute><PromotionsPage /></ProtectedRoute>} />
           <Route path="/pos" element={<ProtectedRoute><POSPage /></ProtectedRoute>} />
           <Route path="/petty-cash" element={<ProtectedRoute><PettyCashPage /></ProtectedRoute>} />
+          <Route path="/finance" element={<ProtectedRoute><FinanceDashboardPage /></ProtectedRoute>} />
+          <Route path="/stock-movements" element={<ProtectedRoute><StockMovementsPage /></ProtectedRoute>} />
           <Route path="/ticket-config" element={<ProtectedRoute><TicketConfigPage /></ProtectedRoute>} />
           <Route path="*" element={<Navigate to="/login" replace />} />
         </Routes>

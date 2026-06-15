@@ -4,7 +4,9 @@ use App\Http\Controllers\Auth\AuthController;
 use App\Http\Controllers\Auth\TwoFactorController;
 use App\Http\Controllers\Catalog\CategoryController;
 use App\Http\Controllers\Catalog\ProductController;
+use App\Http\Controllers\Finance\AnalyticsController;
 use App\Http\Controllers\Finance\PettyCashController;
+use App\Http\Controllers\Logistics\StockMovementController;
 use App\Http\Controllers\Promotion\PromotionController;
 use App\Http\Controllers\Sales\OrderController;
 use App\Http\Controllers\Sales\TicketConfigController;
@@ -59,6 +61,18 @@ Route::middleware(['auth:sanctum', 'user.active'])->group(function () {
     Route::get('orders', [OrderController::class, 'index']);
     Route::post('orders', [OrderController::class, 'store']);
     Route::get('orders/{order}', [OrderController::class, 'show']);
+
+    Route::prefix('stock-movements')->group(function () {
+        Route::get('/', [StockMovementController::class, 'index']);
+        Route::post('/', [StockMovementController::class, 'store']);
+        Route::get('/summary', [StockMovementController::class, 'summary']);
+    });
+
+    Route::middleware('role:admin,manager')->prefix('analytics')->group(function () {
+        Route::get('/sales-by-payment', [AnalyticsController::class, 'salesByPaymentMethod']);
+        Route::get('/financial-summary', [AnalyticsController::class, 'financialSummary']);
+        Route::get('/daily-trend', [AnalyticsController::class, 'dailyTrend']);
+    });
 
     Route::prefix('petty-cash')->group(function () {
         Route::get('/', [PettyCashController::class, 'index']);

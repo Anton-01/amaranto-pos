@@ -17,7 +17,7 @@
 | Usuarios, Roles y Permisos (RBAC)| [⚪ Pendiente] | [⚪ Pendiente] | - |
 | Caja Chica, Retiros e Integridad| [🟢 Completado] | [🟢 Completado] | SHA256 inmutable, eventos, notificaciones, audit ticket |
 | Ventas, Ticket Config & Historico | [🟢 Completado] | [🟢 Completado] | Append-only versioning, OrderController, ticket preview 80mm, @media print |
-| Finanzas Avanzadas (70/30) | [⚪ Pendiente] | [⚪ Pendiente] | - |
+| Finanzas Avanzadas (70/30) & Stock | [🟢 Completado] | [🟢 Completado] | Recharts dashboard, 70/30 split, stock movements con merma validada |
 | Notificaciones Reverb (Push/Mail)| [⚪ Pendiente] | [⚪ Pendiente] | - |
 | Papelera Global (Soft Deletes)| [⚪ Pendiente] | [⚪ Pendiente] | - |
 
@@ -385,8 +385,122 @@ Todas las tablas utilizan UUID como llave primaria. Tipos monetarios: `NUMERIC(1
 - `src/components/layout/AppLayout.jsx` — NavLink "Tickets" en navbar
 - `src/index.css` — Estilos @media print para impresion termica 80mm
 
-## 9. Ultima Accion Ejecutada
-- Implementacion completa del modulo de Ventas y Ticket Config con versionado append-only, OrderController con preservacion historica de precios, TicketPreview 80mm, CheckoutModal con inyeccion de leyenda al vuelo, y estilos @media print para impresoras termicas.
+## 9. Detalle del Modulo Completado: Finanzas Avanzadas (70/30) & Logistica de Stock
 
-## 10. Proximo Paso Inmediato
-- Implementar el modulo de Usuarios, Roles y Permisos (RBAC) con gestion completa de usuarios.
+### Backend - API Endpoints (6 rutas nuevas)
+| Metodo | Ruta | Middleware | Descripcion |
+| :--- | :--- | :--- | :--- |
+| GET | /api/analytics/sales-by-payment | auth, user.active, **role:admin,manager** | Ventas diarias desglosadas por metodo de pago (ingreso neto sin IVA) |
+| GET | /api/analytics/financial-summary | auth, user.active, **role:admin,manager** | Resumen 70/30: ingreso neto, fondo inversion, utilidad, deducciones |
+| GET | /api/analytics/daily-trend | auth, user.active, **role:admin,manager** | Tendencia diaria de ingresos (neto/bruto/ordenes) |
+| GET | /api/stock-movements | auth, user.active | Lista movimientos de stock con filtros (product_id, type, reason, rango fechas) |
+| POST | /api/stock-movements | auth, user.active | Registrar movimiento: entrada, merma (motivo obligatorio), ajuste |
+| GET | /api/stock-movements/summary | auth, user.active | Resumen por tipo y desglose de merma por motivo |
+
+### Controlador: AnalyticsController (Exclusivo Admin/Manager)
+- `salesByPaymentMethod()` — Agrega ventas por DATE(created_at) y payment_method usando PostgreSQL. Retorna ingreso neto (subtotal, sin IVA) para cada dia/metodo. Filtros: date_from, date_to.
+- `financialSummary()` — Calcula el ciclo financiero completo:
+  1. Lee `tax_rate` de global_settings (default 0.16)
+  2. Lee `investment_split` de global_settings (default 70/30)
+  3. Ingreso Bruto = SUM(orders.total), Ingreso Neto = SUM(orders.subtotal)
+  4. Fondo Inversion = Neto * 70%
+  5. Utilidad Real = Neto * 30%
+  6. Deducciones del 70%: SUM(petty_cash_transactions.amount) + SUM(stock_movements[purchase_input].cost * qty)
+  7. Remanente = Fondo 70% - Deducciones totales
+  8. Merma informativa: SUM(stock_movements[merma_output].cost * qty)
+- `dailyTrend()` — Serie temporal de ingresos diarios (neto/bruto/ordenes)
+
+### Controlador: StockMovementController
+- `store()` ejecuta en `DB::transaction` con `lockForUpdate()`:
+  - `purchase_input`: incrementa current_stock
+  - `merma_output`: valida stock suficiente, decrementa current_stock, **requiere reason obligatorio** del catalogo (expired, damaged_spilled, internal_consumption, theft_loss)
+  - `adjustment`: establece current_stock al valor indicado
+  - Registra cost_price_at_movement para trazabilidad contable
+- `index()` con filtros: product_id, type, reason, date_from, date_to + paginacion
+- `summary()` agrega por tipo (count, total_quantity, total_cost) y desglose de merma por motivo
+
+### FormRequest: StoreStockMovementRequest
+- `product_id` -> required, uuid, exists:products
+- `type` -> required, in:purchase_input,merma_output,adjustment (excluye sale_output — reservado para OrderController)
+- `quantity` -> required, integer, min:1
+- `cost_price_at_movement` -> required, numeric, min:0
+- `reason` -> **required** si type=merma_output, nullable en otros casos. Valores: expired, damaged_spilled, internal_consumption, theft_loss
+
+### GlobalSettings Seedados
+- `tax_rate` -> { rate: 0.16, label: "IVA 16%" }
+- `investment_split` -> { investment_pct: 70, profit_pct: 30 }
+
+### Frontend - Paginas
+
+#### FinanceDashboardPage (`/finance`) — Panel Financiero Avanzado
+- **Selector de periodo**: Calendar PrimeReact con seleccion de rango
+- **KPI Cards (4)**: Ingreso Bruto, Ingreso Neto (sin IVA), Fondo Inversion 70% (con Tag REMANENTE/DEFICIT), Utilidad Real 30%
+- **Vista 1 — Stacked Bar Chart (Recharts)**: Ventas diarias por metodo de pago (Efectivo verde, Tarjeta indigo, Transferencia amber). Tooltip personalizado con formato MXN. Eje Y con formato moneda.
+- **Vista 2 — Barra Horizontal Comparativa (Recharts)**: Ingreso Neto vs Fondo Inversion vs Utilidad. Cada barra con color diferente via Cell. Debajo: panel de deducciones desglosado (caja chica, compras stock, merma) con calculo de remanente.
+
+#### StockMovementsPage (`/stock-movements`) — Logistica de Almacen
+- **Tarjetas de resumen**: Entradas (+uds, $ invertido), Mermas (-uds, $ perdido), Desglose de merma por motivo
+- **DataTable**: Fecha, Producto, Tipo (Tag coloreado), Cantidad (+/-), Costo Unitario, Costo Total, Motivo, Usuario
+- **Modal de Registro**: Producto (Dropdown con filtro), Tipo de movimiento, Motivo de merma (condicional, aparece solo para merma_output), Cantidad, Costo unitario (auto-poblado desde cost_price del producto)
+- Banner de advertencia para mermas
+
+### Archivos Creados/Modificados en esta Fase
+**Backend (nuevos):**
+- `app/Http/Controllers/Finance/AnalyticsController.php`
+- `app/Http/Controllers/Logistics/StockMovementController.php`
+- `app/Http/Requests/StockMovement/StoreStockMovementRequest.php`
+
+**Backend (modificados):**
+- `routes/api.php` — 6 rutas nuevas (3 analytics, 3 stock-movements)
+- `database/seeders/DatabaseSeeder.php` — Seeds tax_rate e investment_split en global_settings
+
+**Frontend (nuevos):**
+- `src/pages/finance/FinanceDashboardPage.jsx`
+- `src/pages/logistics/StockMovementsPage.jsx`
+
+**Frontend (modificados):**
+- `src/App.jsx` — Rutas /finance y /stock-movements
+- `src/components/layout/AppLayout.jsx` — NavLinks "Finanzas" y "Almacen"
+
+**Dependencias:**
+- `recharts` agregado a package.json
+
+## 10. Reporte de Cierre General de la Arquitectura en Marcha
+
+### Resumen de Progreso Global
+| # | Modulo | Backend | Frontend | Estado |
+| :--- | :--- | :--- | :--- | :--- |
+| 1 | Infraestructura Docker | PHP 8.3 Alpine + Nginx + Postgres | Vite + Tailwind v4 | 🟢 |
+| 2 | Migraciones & Modelos | 18 migraciones, 15 modelos, ENUMs nativos PostgreSQL | N/A | 🟢 |
+| 3 | Autenticacion & 2FA | Sanctum + Google2FA TOTP + Kill-Switch | Login + TwoFactorModal | 🟢 |
+| 4 | Catalogo & Variaciones | CRUD Categories/Products, AdvancedSoftDeletes | DataTable filtros avanzados, ProductFormPage | 🟢 |
+| 5 | Promociones | CRUD con RBAC, StoreOrderRequest 1-promo limit | PromotionsPage + POSPage carrito reactivo | 🟢 |
+| 6 | Caja Chica & Integridad | SHA256 seal, Events/Listeners/Notifications | WithdrawModal + AuditTicket termico | 🟢 |
+| 7 | Ventas & Ticket Config | OrderController, Append-Only versioning | CheckoutModal + TicketPreview 80mm + @media print | 🟢 |
+| 8 | Finanzas 70/30 & Stock | AnalyticsController, StockMovementController | Recharts dashboard, StockMovementsPage | 🟢 |
+| 9 | Usuarios & Roles (RBAC) | Pendiente | Pendiente | ⚪ |
+| 10 | Notificaciones Reverb | Pendiente | Pendiente | ⚪ |
+| 11 | Papelera Global | Pendiente | Pendiente | ⚪ |
+
+### Estadisticas de la Arquitectura
+- **Rutas API totales**: ~40 endpoints RESTful
+- **Controladores**: 9 (Auth, TwoFactor, Category, Product, Promotion, PettyCash, TicketConfig, Order, Analytics, StockMovement)
+- **FormRequests**: 11 clases de validacion estricta
+- **Modelos Eloquent**: 15 con relaciones completas
+- **Middleware custom**: 2 (EnsureUserIsActive, EnsureUserHasRole)
+- **Eventos/Listeners**: 1 evento broadcast + 1 listener + 1 notificacion queued
+- **Paginas React**: 11 (Login, Dashboard, Categories, Products, ProductForm, Promotions, POS, PettyCash, TicketConfig, Finance, StockMovements)
+- **Componentes React**: 8 (AppLayout, DeleteDialog, TwoFactorModal, WithdrawModal, AuditTicket, TicketPreview, CheckoutModal)
+- **Librerias frontend**: React, Tailwind CSS v4, PrimeReact, Sonner, Recharts, Axios
+
+### Patrones Arquitectonicos Implementados
+1. **Inmutabilidad financiera**: order_items con _at_sale fields, petty_cash con JSONB snapshot + SHA256
+2. **Append-Only**: ticket_configs con versionado incremental
+3. **RBAC con middleware**: role:admin,manager para operaciones sensibles
+4. **Kill-Switch**: Suspension instantanea de usuarios con revocacion de tokens
+5. **Transacciones atomicas**: DB::transaction con lockForUpdate en stock, ordenes, caja chica
+6. **Segmentacion contable 70/30**: Configurable via global_settings, deducciones automaticas
+7. **Validacion dual**: Frontend reactivo + Backend FormRequest (ej: 1 promo por ticket)
+
+### Proximo Paso Inmediato
+- Implementar el modulo de Usuarios, Roles y Permisos (RBAC) con gestion completa de usuarios, o Notificaciones Reverb para push en tiempo real.
