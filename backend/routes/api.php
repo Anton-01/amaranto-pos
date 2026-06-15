@@ -4,6 +4,7 @@ use App\Http\Controllers\Auth\AuthController;
 use App\Http\Controllers\Auth\TwoFactorController;
 use App\Http\Controllers\Catalog\CategoryController;
 use App\Http\Controllers\Catalog\ProductController;
+use App\Http\Controllers\Finance\PettyCashController;
 use App\Http\Controllers\Promotion\PromotionController;
 use Illuminate\Support\Facades\Route;
 
@@ -41,5 +42,13 @@ Route::middleware(['auth:sanctum', 'user.active'])->group(function () {
         Route::put('promotions/{promotion}', [PromotionController::class, 'update']);
         Route::patch('promotions/{promotion}', [PromotionController::class, 'update']);
         Route::delete('promotions/{promotion}', [PromotionController::class, 'destroy']);
+    });
+
+    Route::prefix('petty-cash')->group(function () {
+        Route::get('/', [PettyCashController::class, 'index']);
+        Route::post('/', [PettyCashController::class, 'store']);
+        Route::get('/summary', [PettyCashController::class, 'summary']);
+        Route::get('/{pettyCashTransaction}', [PettyCashController::class, 'show']);
+        Route::get('/{pettyCashTransaction}/verify', [PettyCashController::class, 'verify']);
     });
 });

@@ -8,6 +8,7 @@ const navItems = [
   { label: 'Productos', path: '/products' },
   { label: 'Categorias', path: '/categories' },
   { label: 'Promociones', path: '/promotions' },
+  { label: 'Caja Chica', path: '/petty-cash' },
 ];
 
 export default function AppLayout({ children }) {

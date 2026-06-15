@@ -15,7 +15,7 @@
 | Catalogo, Categorias y Variaciones| [🟢 Completado] | [🟢 Completado] | CRUD completo, DataTable filtros avanzados, variaciones en serie |
 | Promociones e Historicos | [🟢 Completado] | [🟢 Completado] | CRUD con RBAC, limite 1 promo/ticket, POS cart con validacion cruzada |
 | Usuarios, Roles y Permisos (RBAC)| [⚪ Pendiente] | [⚪ Pendiente] | - |
-| Caja Chica, Retiros e Integridad| [⚪ Pendiente] | [⚪ Pendiente] | - |
+| Caja Chica, Retiros e Integridad| [🟢 Completado] | [🟢 Completado] | SHA256 inmutable, eventos, notificaciones, audit ticket |
 | Ventas, Ticket Config & Historico | [⚪ Pendiente] | [⚪ Pendiente] | - |
 | Finanzas Avanzadas (70/30) | [⚪ Pendiente] | [⚪ Pendiente] | - |
 | Notificaciones Reverb (Push/Mail)| [⚪ Pendiente] | [⚪ Pendiente] | - |
@@ -211,8 +211,88 @@ Todas las tablas utilizan UUID como llave primaria. Tipos monetarios: `NUMERIC(1
 - **Checkout**: Subtotal, IVA 16%, Total, metodo de pago (Dropdown), leyenda opcional
 - **Validacion dual**: Frontend bloquea visualmente + Backend valida con StoreOrderRequest
 
-## 7. Ultima Accion Ejecutada
-- Implementacion completa del modulo de Promociones con RBAC, validacion de limite 1 promo/ticket, y vista POS con carrito reactivo.
+## 7. Detalle del Modulo Completado: Caja Chica, Retiros e Integridad
 
-## 8. Proximo Paso Inmediato
+### Backend - API Endpoints (5 rutas)
+| Metodo | Ruta | Middleware | Descripcion |
+| :--- | :--- | :--- | :--- |
+| GET | /api/petty-cash | auth, user.active | Lista transacciones con filtros (reason, date_from, date_to, user_id) |
+| POST | /api/petty-cash | auth, user.active | Registrar retiro con snapshot inmutable y sello SHA256 |
+| GET | /api/petty-cash/summary | auth, user.active | Resumen: totales hoy, acumulado, desglose por motivo |
+| GET | /api/petty-cash/{id} | auth, user.active | Detalle de transaccion con verificacion de integridad |
+| GET | /api/petty-cash/{id}/verify | auth, user.active | Verificacion explicita del sello criptografico |
+
+### Modelo: PettyCashTransaction (Inmutable)
+- Bloquea actualizaciones via `booted()::updating` -> lanza `RuntimeException`
+- Campo `immutable_snapshot` (JSONB) almacena: amount, reason, description, operator_name, operator_email, operator_id, balance_before, balance_after, timestamp, security_seal
+- Metodo `verifyIntegrity()` recalcula SHA256 y compara contra el sello almacenado
+- Sello criptografico: `hash_hmac('sha256', json_encode(snapshot_sin_sello), APP_KEY)`
+
+### FormRequest: StorePettyCashRequest
+- `amount` -> required, numeric, min:0.01, max:9999999999.99
+- `reason` -> required, in:provider_payment,supplies_purchase,change_delivery,emergency
+- `description` -> required, string, max:500
+
+### Controlador: PettyCashController
+- `store()` ejecuta en `DB::transaction`: construye snapshot JSONB con datos del operador y saldos, genera sello SHA256 con APP_KEY, crea registro, dispara evento
+- `show()` retorna transaccion con metadata `integrity_valid` (resultado de verifyIntegrity)
+- `summary()` retorna totales del dia, acumulado general, y desglose por motivo con conteos
+- `verify()` endpoint dedicado para verificacion de integridad bajo demanda
+- Limite configurable via `GlobalSetting::where('key', 'petty_cash_daily_limit')` con codigo de error `ERR_FIN_PETTY_CASH_LIMIT_EXCEEDED`
+
+### Eventos y Notificaciones
+- **PettyCashTransactionRegistered** (ShouldBroadcast) - Canal: `petty-cash-alerts`, evento: `transaction.registered`
+- **NotifyPettyCashWithdrawal** (Listener) - Busca usuarios admin con preferencia `petty_cash_withdrawal` activa, envia notificacion
+- **PettyCashWithdrawalNotification** (ShouldQueue) - Via `database` + condicionalmente `mail`, incluye datos del retiro en formato toMail/toArray
+- Registro en `AppServiceProvider`: `Event::listen(PettyCashTransactionRegistered::class, NotifyPettyCashWithdrawal::class)`
+
+### Frontend - Paginas
+
+#### PettyCashPage (`/petty-cash`)
+- **Tarjetas de resumen**: Retiros hoy (count + monto), Total acumulado, Desglose por motivo con conteos
+- **DataTable**: Fecha, Operador, Monto (rojo con signo negativo), Motivo (Tag coloreado), Descripcion, Sello (primeros 12 chars), Accion auditar
+- Busqueda global por operador o descripcion
+- Paginacion de 15 registros, ordenado por fecha descendente
+
+#### WithdrawModal (Componente)
+- Dialog PrimeReact con backdrop-blur y sombra
+- Campos: Monto (InputNumber currency MXN), Motivo (Dropdown con 4 opciones), Descripcion (InputText)
+- Banner de advertencia: "Se generara un sello SHA256 inmutable y se notificara a los administradores"
+- Manejo de error especifico para `ERR_FIN_PETTY_CASH_LIMIT_EXCEEDED`
+- Reset de formulario al abrir, bloqueo de cierre durante guardado
+
+#### AuditTicket (Componente)
+- Estilo de ticket termico con fuente monoespaciada y bordes punteados
+- Encabezado: "CRONOS POS - COMPROBANTE DE CAJA CHICA"
+- Datos del snapshot: Folio (8 chars UUID), Fecha, Operador, Email, Motivo, Descripcion
+- Financiero: Saldo anterior, RETIRO (rojo), Saldo posterior
+- Seccion criptografica: Sello SHA256 truncado (16...16 chars), Tag de integridad (VERIFICADA/COMPROMETIDA/SIN VERIFICAR)
+- Llama a `/petty-cash/{id}` para obtener `integrity_valid` del backend
+
+### Archivos Creados/Modificados en esta Fase
+**Backend (nuevos):**
+- `app/Events/PettyCashTransactionRegistered.php`
+- `app/Listeners/NotifyPettyCashWithdrawal.php`
+- `app/Notifications/PettyCashWithdrawalNotification.php`
+- `app/Http/Controllers/Finance/PettyCashController.php`
+- `app/Http/Requests/PettyCash/StorePettyCashRequest.php`
+
+**Backend (modificados):**
+- `app/Models/PettyCashTransaction.php` - Agregado booted::updating, verifyIntegrity()
+- `app/Providers/AppServiceProvider.php` - Registro de evento/listener
+- `routes/api.php` - 5 rutas de caja chica
+
+**Frontend (nuevos):**
+- `src/pages/finance/PettyCashPage.jsx`
+- `src/components/finance/WithdrawModal.jsx`
+- `src/components/finance/AuditTicket.jsx`
+
+**Frontend (modificados):**
+- `src/App.jsx` - Ruta /petty-cash con ProtectedRoute
+- `src/components/layout/AppLayout.jsx` - NavLink "Caja Chica" en navbar
+
+## 8. Ultima Accion Ejecutada
+- Implementacion completa del modulo de Caja Chica con snapshot inmutable SHA256, eventos/notificaciones, y vista de auditoria estilo ticket termico.
+
+## 9. Proximo Paso Inmediato
 - Implementar el modulo de Usuarios, Roles y Permisos (RBAC) con gestion completa de usuarios.
