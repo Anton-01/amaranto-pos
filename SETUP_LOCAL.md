@@ -118,7 +118,7 @@ Si prefieres ejecutar los servicios directamente en tu maquina.
 
 | Software | Version Minima | Verificar |
 | :--- | :--- | :--- |
-| PHP | 8.3+ | `php -v` |
+| PHP | 8.4+ | `php -v` |
 | Composer | 2.x | `composer -V` |
 | Node.js | 20+ LTS | `node -v` |
 | npm | 10+ | `npm -v` |
@@ -254,11 +254,11 @@ docker compose exec backend chown -R www-data:www-data storage bootstrap/cache
 
 ```bash
 # Ubuntu/Debian
-sudo apt install php8.3-pgsql
-sudo systemctl restart php8.3-fpm
+sudo apt install php8.4-pgsql
+sudo systemctl restart php8.4-fpm
 
 # macOS (Homebrew)
-brew install php@8.3
+brew install php@8.4
 ```
 
 ### Error: ENUM type already exists al re-migrar
