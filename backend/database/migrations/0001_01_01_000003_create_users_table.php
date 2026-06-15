@@ -23,7 +23,9 @@ return new class extends Migration
             $table->string('deletion_reason', 255)->nullable();
             $table->timestampTz('created_at')->nullable();
             $table->timestamp('updated_at')->nullable();
+        });
 
+        Schema::table('users', function (Blueprint $table) {
             $table->foreign('deleted_by')->references('id')->on('users')->onDelete('set null');
         });
 
