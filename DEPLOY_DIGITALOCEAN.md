@@ -154,17 +154,17 @@ sudo add-apt-repository ppa:ondrej/php -y
 sudo apt update
 
 sudo apt install -y \
-  php8.3-fpm \
-  php8.3-pgsql \
-  php8.3-mbstring \
-  php8.3-xml \
-  php8.3-curl \
-  php8.3-zip \
-  php8.3-bcmath \
-  php8.3-gd \
-  php8.3-intl \
-  php8.3-redis \
-  php8.3-pcntl
+  php8.4-fpm \
+  php8.4-pgsql \
+  php8.4-mbstring \
+  php8.4-xml \
+  php8.4-curl \
+  php8.4-zip \
+  php8.4-bcmath \
+  php8.4-gd \
+  php8.4-intl \
+  php8.4-redis \
+  php8.4-pcntl
 ```
 
 Verificar:
@@ -358,7 +358,7 @@ server {
         try_files $uri $uri/ @laravel;
 
         location ~ \.php$ {
-            fastcgi_pass unix:/run/php/php8.3-fpm.sock;
+            fastcgi_pass unix:/run/php/php8.4-fpm.sock;
             fastcgi_param SCRIPT_FILENAME /var/www/cronos-pos/backend/public/index.php;
             include fastcgi_params;
         }
@@ -469,7 +469,7 @@ pm.max_requests = 500
 ```
 
 ```bash
-sudo systemctl restart php8.3-fpm
+sudo systemctl restart php8.4-fpm
 ```
 
 ---
@@ -588,7 +588,7 @@ npm ci
 npm run build
 
 echo "→ Restarting services..."
-sudo systemctl restart php8.3-fpm
+sudo systemctl restart php8.4-fpm
 sudo supervisorctl restart cronos-worker:*
 sudo supervisorctl restart cronos-reverb
 
@@ -613,7 +613,7 @@ cd /var/www/cronos-pos && ./deploy.sh
 
 ```bash
 # PHP-FPM activo
-sudo systemctl status php8.3-fpm
+sudo systemctl status php8.4-fpm
 
 # Nginx activo
 sudo systemctl status nginx
@@ -730,7 +730,7 @@ Desde el panel de DigitalOcean:
 | Servicio | Puerto | Gestion |
 | :--- | :--- | :--- |
 | Nginx | 80, 443 | `systemctl` |
-| PHP-FPM 8.3 | unix socket | `systemctl` |
+| PHP-FPM 8.4 | unix socket | `systemctl` |
 | Redis | 6379 (local) | `systemctl` |
 | Queue Workers (x2) | — | `supervisorctl` |
 | Laravel Reverb | 8080 (via Nginx) | `supervisorctl` |

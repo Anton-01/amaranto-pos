@@ -1,7 +1,7 @@
 # Estado Actual del Sistema POS - Cronos
 
 ## 1. Arquitectura General
-- Backend: Laravel 13 (API-First), PHP 8.3 Alpine
+- Backend: Laravel 13 (API-First), PHP 8.4 Alpine
 - Frontend: React 18/19, Tailwind CSS v4, PrimeReact, Sonner
 - Base de Datos: Managed PostgreSQL (DigitalOcean)
 - Cache / Colas: Redis 7 Alpine (cache global + queue worker)
@@ -653,7 +653,7 @@ Todas las tablas utilizan UUID como llave primaria. Tipos monetarios: `NUMERIC(1
 
 | Servicio | Imagen Base | Puerto Expuesto | Descripcion |
 | :--- | :--- | :--- | :--- |
-| backend | PHP 8.3-FPM Alpine (custom) | 8000, 8080 | Laravel API + Reverb WebSockets |
+| backend | PHP 8.4-FPM Alpine (custom) | 8000, 8080 | Laravel API + Reverb WebSockets |
 | frontend | Node 22 Alpine (custom) | 3000 | Vite dev server con HMR |
 | postgres | postgres:16-alpine | 5432 | Base de datos con volumen persistente |
 | redis | redis:7-alpine | 6379 | Cache global + colas de notificaciones |
@@ -665,7 +665,7 @@ Todas las tablas utilizan UUID como llave primaria. Tipos monetarios: `NUMERIC(1
 - `frontend-node-modules`: Volumen anonimo para node_modules/ (evita conflictos OS)
 
 ### backend/Dockerfile.dev
-- Base: `php:8.3-fpm-alpine`
+- Base: `php:8.4-fpm-alpine`
 - Extensiones instaladas via apk + docker-php-ext-install: `pdo_pgsql`, `pgsql`, `zip`, `gd` (con freetype+jpeg), `intl`, `bcmath`, `opcache`, `mbstring`, `pcntl`
 - Extension Redis via PECL: `pecl install redis && docker-php-ext-enable redis`
 - Composer copiado desde imagen oficial: `COPY --from=composer:2`
@@ -731,7 +731,7 @@ Secuencia de ejecucion al levantar el contenedor:
 ### Resumen de Progreso Global — TODOS LOS MODULOS COMPLETADOS
 | # | Modulo | Backend | Frontend | Estado |
 | :--- | :--- | :--- | :--- | :--- |
-| 1 | Infraestructura Docker | PHP 8.3-FPM Alpine + PostgreSQL 16 + Redis 7 + Reverb WS | Vite + Node 22 Alpine + HMR | 🟢 |
+| 1 | Infraestructura Docker | PHP 8.4-FPM Alpine + PostgreSQL 16 + Redis 7 + Reverb WS | Vite + Node 22 Alpine + HMR | 🟢 |
 | 2 | Migraciones & Modelos | 18 migraciones, 15 modelos, ENUMs nativos PostgreSQL | N/A | 🟢 |
 | 3 | Autenticacion & 2FA | Sanctum + Google2FA TOTP + Kill-Switch | Login + TwoFactorModal | 🟢 |
 | 4 | Catalogo & Variaciones | CRUD Categories/Products, AdvancedSoftDeletes | DataTable filtros avanzados, ProductFormPage | 🟢 |
