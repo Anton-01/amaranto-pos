@@ -14,6 +14,7 @@ import StockMovementsPage from './pages/logistics/StockMovementsPage';
 import TicketConfigPage from './pages/settings/TicketConfigPage';
 import UsersPage from './pages/admin/UsersPage';
 import NotificationPreferencesPage from './pages/profile/NotificationPreferencesPage';
+import TrashPage from './pages/admin/TrashPage';
 
 function ProtectedRoute({ children }) {
   const { user, loading } = useAuth();
@@ -79,6 +80,7 @@ export default function App() {
           <Route path="/ticket-config" element={<ProtectedRoute><TicketConfigPage /></ProtectedRoute>} />
           <Route path="/admin/usuarios" element={<ProtectedRoute><UsersPage /></ProtectedRoute>} />
           <Route path="/profile/notifications" element={<ProtectedRoute><NotificationPreferencesPage /></ProtectedRoute>} />
+          <Route path="/admin/papelera" element={<ProtectedRoute><TrashPage /></ProtectedRoute>} />
           <Route path="*" element={<Navigate to="/login" replace />} />
         </Routes>
       </AuthProvider>

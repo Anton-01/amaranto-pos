@@ -14,6 +14,7 @@ const navItems = [
   { label: 'Tickets', path: '/ticket-config' },
   { label: 'Usuarios', path: '/admin/usuarios' },
   { label: 'Notificaciones', path: '/profile/notifications' },
+  { label: 'Papelera', path: '/admin/papelera' },
 ];
 
 export default function AppLayout({ children }) {

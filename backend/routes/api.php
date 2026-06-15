@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\Admin\TrashController;
 use App\Http\Controllers\Admin\UserController;
 use App\Http\Controllers\Auth\AuthController;
 use App\Http\Controllers\Auth\TwoFactorController;
@@ -79,6 +80,12 @@ Route::middleware(['auth:sanctum', 'user.active'])->group(function () {
         Route::delete('/{user}', [UserController::class, 'destroy']);
         Route::post('/{user}/send-password-reset', [UserController::class, 'sendPasswordReset']);
         Route::post('/{user}/sessions/{sessionId}/revoke', [UserController::class, 'revokeSession']);
+    });
+
+    Route::middleware('role:admin,manager')->prefix('admin/trash')->group(function () {
+        Route::get('/{type}', [TrashController::class, 'index']);
+        Route::post('/{type}/{id}/restore', [TrashController::class, 'restore']);
+        Route::delete('/{type}/{id}', [TrashController::class, 'forceDelete']);
     });
 
     Route::middleware('role:admin,manager')->prefix('analytics')->group(function () {
