@@ -782,3 +782,38 @@ Secuencia de ejecucion al levantar el contenedor:
 
 ### Estado del Sistema
 Todos los 11 modulos planificados han sido completados exitosamente. El sistema Cronos POS esta listo para pruebas de integracion y despliegue.
+
+### Notas Generales
+
+#### Cambio de Arquitectura de Navegacion: Sidebar Global (Post-Fase 11)
+Se refactorizo por completo el layout global del sistema, migrando de una barra de navegacion superior horizontal saturada a un **AppShell premium con Sidebar izquierdo fijo/colapsable**.
+
+**Estructura del nuevo layout:**
+- **AppLayout.jsx** — Shell raiz con flexbox: Sidebar fijo a la izquierda + contenedor fluido a la derecha (header + content area)
+- **Sidebar.jsx** — Panel lateral izquierdo (`w-64`, colapsable a `w-[72px]`) con navegacion agrupada por categorias semanticas:
+  - VENTAS: Dashboard, Punto de Venta, Tickets
+  - CATALOGO: Productos, Categorías, Promociones
+  - LOGISTICA: Almacén, Caja Chica
+  - ADMINISTRACION: Usuarios, Finanzas, Notificaciones, Papelera
+  - Cada item con icono SVG Heroicons, estados activos con `bg-indigo-50 text-indigo-700`, transiciones fluidas
+  - Boton de colapso en el footer del sidebar con animacion de rotacion
+- **AppHeader.jsx** — Header superior sticky con `backdrop-blur-md`, contiene:
+  - Boton hamburguesa para toggle del sidebar
+  - Titulo de pagina contextual dinamico segun ruta
+  - KPI compacto en tiempo real ("X ventas hoy") con polling cada 60s
+  - Campana de notificaciones con badge dinamico
+  - Componente UserProfileDropdown
+- **UserProfileDropdown.jsx** — OverlayPanel de PrimeReact con tarjeta de perfil:
+  - Avatar con iniciales + gradiente indigo
+  - Nombre, email, rol con Tag estilizado por rol (admin=rose, manager=amber, vendor=emerald)
+  - Links internos: "Mi Perfil", "Configurar Alertas"
+  - Boton "Cerrar Sesion" full-width con borde rose y hover rose-50
+
+**Archivos creados:**
+- `frontend/src/components/layout/Sidebar.jsx`
+- `frontend/src/components/layout/AppHeader.jsx`
+- `frontend/src/components/layout/UserProfileDropdown.jsx`
+
+**Archivos modificados:**
+- `frontend/src/components/layout/AppLayout.jsx` — Reescrito como AppShell con Sidebar + Header
+- `frontend/src/index.css` — Agregado `aside` a reglas @media print para ocultar sidebar al imprimir
