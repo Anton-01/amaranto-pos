@@ -4,8 +4,10 @@ import { useAuth } from '../../context/AuthContext';
 
 const navItems = [
   { label: 'Dashboard', path: '/dashboard' },
+  { label: 'POS', path: '/pos' },
   { label: 'Productos', path: '/products' },
   { label: 'Categorias', path: '/categories' },
+  { label: 'Promociones', path: '/promotions' },
 ];
 
 export default function AppLayout({ children }) {

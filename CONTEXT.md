@@ -13,7 +13,7 @@
 | Migraciones & Modelos Base (BD) | [🟢 Completado] | N/A | 18 migraciones, 15 modelos, Trait AdvancedSoftDeletes, Seeder base |
 | Autenticacion & 2FA (Sanctum) | [🟢 Completado] | [🟢 Completado] | Login, Logout, 2FA TOTP, Kill-Switch, Session Log |
 | Catalogo, Categorias y Variaciones| [🟢 Completado] | [🟢 Completado] | CRUD completo, DataTable filtros avanzados, variaciones en serie |
-| Promociones e Historicos | [⚪ Pendiente] | [⚪ Pendiente] | - |
+| Promociones e Historicos | [🟢 Completado] | [🟢 Completado] | CRUD con RBAC, limite 1 promo/ticket, POS cart con validacion cruzada |
 | Usuarios, Roles y Permisos (RBAC)| [⚪ Pendiente] | [⚪ Pendiente] | - |
 | Caja Chica, Retiros e Integridad| [⚪ Pendiente] | [⚪ Pendiente] | - |
 | Ventas, Ticket Config & Historico | [⚪ Pendiente] | [⚪ Pendiente] | - |
@@ -149,26 +149,70 @@ Todas las tablas utilizan UUID como llave primaria. Tipos monetarios: `NUMERIC(1
 
 ### Frontend React - Paginas
 - **CategoriesPage** (`/categories`) - DataTable con busqueda global, CRUD inline via modales, borrado con motivo
-- **ProductsPage** (`/products`) - DataTable avanzado con:
-  - Filtro por nombre (texto libre por columna)
-  - Filtro por categoria (MultiSelect por columna)
-  - Filtro por rango de precio de venta (InputNumber min/max)
-  - Filtro por estatus activo/inactivo (Dropdown)
-  - Paginacion configurable (10/20/50)
-  - Indicador visual de stock bajo (texto rose cuando current_stock <= minimum_stock)
-  - Columna de grupo (parent_sku)
-- **ProductFormPage** (`/products/create`, `/products/:id/edit`) - Formulario de alta/edicion con:
-  - Campos: SKU, parent_sku (grupo), nombre, categoria (dropdown), costo, precio venta, stock actual/min/max, activo
-  - Calculo de margen en tiempo real
-  - **Guardar y Crear Variacion**: congela category_id, name, is_active; auto-rellena parent_sku con el SKU del producto recien guardado; limpia sku, cost_price, sale_price para captura inmediata de la siguiente variacion
-  - Contador de variaciones creadas en la sesion
+- **ProductsPage** (`/products`) - DataTable avanzado con filtros por columna
+- **ProductFormPage** (`/products/create`, `/products/:id/edit`) - Formulario con "Guardar y Crear Variacion"
 
 ### Componentes Compartidos
-- **AppLayout** - Layout unificado con navbar, navegacion (Dashboard, Productos, Categorias), usuario y logout
+- **AppLayout** - Layout unificado con navbar (Dashboard, POS, Productos, Categorias, Promociones)
 - **DeleteDialog** - Modal reutilizable para borrado logico con campo de motivo obligatorio
 
-## 6. Ultima Accion Ejecutada
-- Implementacion completa del modulo de Catalogo con CRUD de categorias y productos, DataTable con filtros avanzados, y flujo UX de variaciones en serie.
+## 6. Detalle del Modulo Completado: Promociones e Historicos
 
-## 7. Proximo Paso Inmediato
-- Implementar el modulo de Promociones e Historicos.
+### Backend - API Endpoints (7 rutas)
+| Metodo | Ruta | Middleware | Descripcion |
+| :--- | :--- | :--- | :--- |
+| GET | /api/promotions | auth, user.active | Lista todas las promociones con productos vinculados |
+| GET | /api/promotions/active | auth, user.active | Solo promociones vigentes (is_active + dentro de fecha) |
+| GET | /api/promotions/{id} | auth, user.active | Detalle de promocion con productos |
+| POST | /api/promotions | auth, user.active, **role:admin,manager** | Crear promocion (RBAC restringido) |
+| PUT | /api/promotions/{id} | auth, user.active, **role:admin,manager** | Actualizar promocion (RBAC restringido) |
+| DELETE | /api/promotions/{id} | auth, user.active, **role:admin,manager** | Borrado logico (RBAC restringido) |
+
+### Middleware: EnsureUserHasRole (RBAC)
+- Alias: `role`
+- Acepta multiples roles: `role:admin,manager`
+- Verifica que el usuario autenticado tenga al menos uno de los roles requeridos
+- Retorna 403 con `ERR_AUTH_FORBIDDEN_ROLE` si no cumple
+
+### Validacion de Orden: StoreOrderRequest
+- Valida el array de `items` con `product_id`, `quantity`, `promotion_id` (nullable)
+- **Regla critica**: Cuenta los `promotion_id` unicos no-null en todo el payload
+- Si hay mas de 1 promocion distinta -> bloquea con `ERR_POS_PROMOTION_LIMIT_EXCEEDED` (422)
+- Override de `failedValidation()` para retornar formato de error corporativo con el codigo especifico
+
+### FormRequests
+- `StorePromotionRequest` - name, type (enum), value, start/end_date, is_active, product_ids[]
+- `UpdatePromotionRequest` - Todos los campos opcionales, product_ids[] para sync
+- `DeletePromotionRequest` - deletion_reason obligatorio
+
+### Controlador: PromotionController
+- CRUD completo con sync de product_promotion pivot
+- Endpoint `/active` filtra por is_active + rango de fechas vigente
+- Borrado logico con advancedDelete()
+
+### Frontend - Paginas
+
+#### PromotionsPage (`/promotions`)
+- DataTable con columnas: nombre, tipo (Tag coloreado), valor, productos, inicio, fin, estatus (Vigente/Programada/Inactiva)
+- CRUD via modales con campos: nombre, tipo (Dropdown), valor (InputNumber adaptativo), fechas (Calendar con hora), productos (MultiSelect con filtro), activa (checkbox)
+- Botones de editar/eliminar solo visibles si el usuario tiene rol admin o manager
+- Vendor solo ve la tabla en modo lectura
+
+#### POSPage (`/pos`) - Vista de Punto de Venta
+- **Catalogo**: Productos agrupados por parent_sku en tarjetas clicables, busqueda por nombre/SKU
+- **Carrito (Ticket de Venta)**: Lista de items con cantidad +/-, precio, eliminar
+- **Sistema de Promocion Unica por Ticket**:
+  - Estado reactivo `hasActivePromotion` evaluado con `useMemo` sobre el carrito
+  - Si ya hay una promocion aplicada: Dropdown de cupones se deshabilita en TODOS los demas items
+  - Mensaje visual "Cupon bloqueado (1 por ticket)" en items sin promocion cuando el limite esta activo
+  - Banner amarillo "Promocion aplicada - Limite: 1 por ticket" en la cabecera del carrito
+  - Boton "Quitar" en el item con promocion para liberarla y permitir reasignacion
+  - Toast de Sonner con warning si se intenta aplicar una segunda promocion
+- **Checkout**: Subtotal, IVA 16%, Total, metodo de pago (Dropdown), leyenda opcional
+- **Validacion dual**: Frontend bloquea visualmente + Backend valida con StoreOrderRequest
+
+## 7. Ultima Accion Ejecutada
+- Implementacion completa del modulo de Promociones con RBAC, validacion de limite 1 promo/ticket, y vista POS con carrito reactivo.
+
+## 8. Proximo Paso Inmediato
+- Implementar el modulo de Usuarios, Roles y Permisos (RBAC) con gestion completa de usuarios.

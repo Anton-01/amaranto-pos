@@ -4,6 +4,7 @@ use App\Http\Controllers\Auth\AuthController;
 use App\Http\Controllers\Auth\TwoFactorController;
 use App\Http\Controllers\Catalog\CategoryController;
 use App\Http\Controllers\Catalog\ProductController;
+use App\Http\Controllers\Promotion\PromotionController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('auth')->group(function () {
@@ -30,4 +31,15 @@ Route::middleware(['auth:sanctum', 'user.active'])->group(function () {
 
     Route::get('products/grouped', [ProductController::class, 'grouped']);
     Route::apiResource('products', ProductController::class);
+
+    Route::get('promotions/active', [PromotionController::class, 'active']);
+    Route::get('promotions', [PromotionController::class, 'index']);
+    Route::get('promotions/{promotion}', [PromotionController::class, 'show']);
+
+    Route::middleware('role:admin,manager')->group(function () {
+        Route::post('promotions', [PromotionController::class, 'store']);
+        Route::put('promotions/{promotion}', [PromotionController::class, 'update']);
+        Route::patch('promotions/{promotion}', [PromotionController::class, 'update']);
+        Route::delete('promotions/{promotion}', [PromotionController::class, 'destroy']);
+    });
 });

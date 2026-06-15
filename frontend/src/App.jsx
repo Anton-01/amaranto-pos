@@ -6,6 +6,8 @@ import DashboardPage from './pages/DashboardPage';
 import CategoriesPage from './pages/catalog/CategoriesPage';
 import ProductsPage from './pages/catalog/ProductsPage';
 import ProductFormPage from './pages/catalog/ProductFormPage';
+import PromotionsPage from './pages/promotions/PromotionsPage';
+import POSPage from './pages/pos/POSPage';
 
 function ProtectedRoute({ children }) {
   const { user, loading } = useAuth();
@@ -63,6 +65,8 @@ export default function App() {
           <Route path="/products" element={<ProtectedRoute><ProductsPage /></ProtectedRoute>} />
           <Route path="/products/create" element={<ProtectedRoute><ProductFormPage /></ProtectedRoute>} />
           <Route path="/products/:id/edit" element={<ProtectedRoute><ProductFormPage /></ProtectedRoute>} />
+          <Route path="/promotions" element={<ProtectedRoute><PromotionsPage /></ProtectedRoute>} />
+          <Route path="/pos" element={<ProtectedRoute><POSPage /></ProtectedRoute>} />
           <Route path="*" element={<Navigate to="/login" replace />} />
         </Routes>
       </AuthProvider>
