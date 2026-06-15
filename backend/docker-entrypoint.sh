@@ -21,26 +21,26 @@ if [ ! -f ".env" ]; then
     php artisan key:generate --force
 fi
 
-# 4. Run migrations and seeders
+# 4. Install Reverb if not present (before migrations)
+if ! composer show laravel/reverb > /dev/null 2>&1; then
+    echo "→ Installing Laravel Reverb..."
+    composer require laravel/reverb --with-all-dependencies
+    php artisan vendor:publish --provider="Laravel\Reverb\ReverbServiceProvider" --force 2>/dev/null || true
+fi
+
+# 5. Run migrations and seeders
 echo "→ Running migrations with seed..."
 php artisan migrate:fresh --seed --force
 
-# 5. Clear and rebuild caches
+# 6. Clear and rebuild caches
 echo "→ Clearing caches..."
 php artisan config:clear
 php artisan cache:clear
 php artisan route:clear
 
-# 6. Install Reverb if not present
-if ! composer show laravel/reverb > /dev/null 2>&1; then
-    echo "→ Installing Laravel Reverb..."
-    composer require laravel/reverb --with-all-dependencies
-    php artisan install:broadcasting --force 2>/dev/null || true
-fi
-
 # 7. Start queue worker in background
 echo "→ Starting queue worker..."
-php artisan queue:work --sleep=3 --tries=3 --max-time=3600 &
+php artisan queue:work redis --sleep=3 --tries=3 --max-time=3600 &
 
 # 8. Start Reverb WebSocket server in background
 echo "→ Starting Laravel Reverb on port 8080..."
