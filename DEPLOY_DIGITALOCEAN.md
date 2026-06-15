@@ -3,40 +3,51 @@
 ## Arquitectura de Infraestructura
 
 ```
-                    ┌─────────────────────────────┐
-                    │     DigitalOcean Cloud       │
-                    │                              │
-┌──────────┐       │  ┌────────────────────────┐  │
-│ Usuarios │──────▶│  │  Droplet (App Server)  │  │
-│ (HTTPS)  │       │  │                        │  │
-└──────────┘       │  │  ┌──────────────────┐  │  │
-                    │  │  │     Nginx        │  │  │
-                    │  │  │  (Reverse Proxy) │  │  │
-                    │  │  │                  │  │  │
-                    │  │  │  :443 → :8000    │  │  │
-                    │  │  │  /api → PHP-FPM  │  │  │
-                    │  │  │  /* → React SPA  │  │  │
-                    │  │  └──────────────────┘  │  │
-                    │  │                        │  │
-                    │  │  ┌──────────────────┐  │  │
-                    │  │  │    PHP-FPM 8.3   │  │  │
-                    │  │  │  (Laravel 13)    │  │  │
-                    │  │  └───────┬──────────┘  │  │
-                    │  └──────────┼─────────────┘  │
-                    │             │                 │
-                    │  ┌──────────▼─────────────┐  │
-                    │  │  Managed PostgreSQL    │  │
-                    │  │  (DigitalOcean DB)     │  │
-                    │  └────────────────────────┘  │
-                    └─────────────────────────────┘
+                    ┌──────────────────────────────────┐
+                    │       DigitalOcean Cloud          │
+                    │                                   │
+┌──────────┐       │  ┌─────────────────────────────┐  │
+│ Usuarios │──────▶│  │    Droplet (App Server)     │  │
+│ (HTTPS)  │       │  │                             │  │
+└──────────┘       │  │  ┌───────────────────────┐  │  │
+                    │  │  │       Nginx            │  │  │
+                    │  │  │   (Reverse Proxy)      │  │  │
+                    │  │  │                        │  │  │
+                    │  │  │  :443 → :8000 (API)    │  │  │
+                    │  │  │  /ws  → :8080 (Reverb) │  │  │
+                    │  │  │  /*   → React SPA      │  │  │
+                    │  │  └───────────────────────┘  │  │
+                    │  │                             │  │
+                    │  │  ┌──────────┐ ┌──────────┐  │  │
+                    │  │  │ PHP-FPM  │ │  Redis   │  │  │
+                    │  │  │ 8.3     │ │  7.x     │  │  │
+                    │  │  └────┬─────┘ └──────────┘  │  │
+                    │  │       │                      │  │
+                    │  │  ┌────▼─────┐ ┌──────────┐  │  │
+                    │  │  │ Reverb   │ │ Queue    │  │  │
+                    │  │  │ :8080   │ │ Worker   │  │  │
+                    │  │  └──────────┘ └──────────┘  │  │
+                    │  └──────────┼──────────────────┘  │
+                    │             │                      │
+                    │  ┌──────────▼──────────────────┐  │
+                    │  │   Managed PostgreSQL 16     │  │
+                    │  │   (DigitalOcean Database)   │  │
+                    │  └─────────────────────────────┘  │
+                    └──────────────────────────────────┘
 ```
 
 | Componente | Servicio DigitalOcean | Especificacion |
 | :--- | :--- | :--- |
 | App Server | Droplet | Ubuntu 24.04, 2 vCPU, 4GB RAM (minimo) |
 | Base de Datos | Managed Database | PostgreSQL 16, 1GB RAM, 10GB disco |
+| Cache / Colas | Redis (en Droplet) | redis-server local |
+| WebSockets | Laravel Reverb (en Droplet) | Puerto 8080 |
 | DNS | DigitalOcean DNS | Registro A → IP del Droplet |
 | SSL | Let's Encrypt (Certbot) | Certificado HTTPS gratuito |
+
+### Nota sobre Docker
+
+El proyecto incluye `docker-compose.yml` con `Dockerfile.dev` para desarrollo local. Para produccion en DigitalOcean se recomienda la instalacion nativa (sin Docker) en el Droplet para mejor rendimiento y control directo de los servicios. Esta guia cubre la instalacion nativa en produccion.
 
 ---
 
@@ -152,14 +163,15 @@ sudo apt install -y \
   php8.3-bcmath \
   php8.3-gd \
   php8.3-intl \
-  php8.3-redis
+  php8.3-redis \
+  php8.3-pcntl
 ```
 
 Verificar:
 
 ```bash
 php -v
-php -m | grep -E "pgsql|mbstring|xml|curl|zip|bcmath|gd|intl"
+php -m | grep -E "pgsql|mbstring|xml|curl|zip|bcmath|gd|intl|redis|pcntl"
 ```
 
 ### 3.5 Instalar Composer
@@ -185,7 +197,21 @@ sudo apt install -y nginx
 sudo systemctl enable nginx
 ```
 
-### 3.8 Instalar Certbot (SSL)
+### 3.8 Instalar Redis
+
+```bash
+sudo apt install -y redis-server
+sudo systemctl enable redis-server
+```
+
+Verificar:
+
+```bash
+redis-cli ping
+# Debe responder: PONG
+```
+
+### 3.9 Instalar Certbot (SSL)
 
 ```bash
 sudo apt install -y certbot python3-certbot-nginx
@@ -235,10 +261,24 @@ DB_USERNAME=doadmin
 DB_PASSWORD=tu_password_de_digitalocean
 DB_SSLMODE=require
 
-BROADCAST_CONNECTION=log
-QUEUE_CONNECTION=database
-CACHE_STORE=database
+REDIS_HOST=127.0.0.1
+REDIS_PORT=6379
+
+BROADCAST_CONNECTION=reverb
+QUEUE_CONNECTION=redis
+CACHE_STORE=redis
 SESSION_DRIVER=database
+
+REVERB_APP_ID=cronos-production
+REVERB_APP_KEY=tu-reverb-key-seguro
+REVERB_APP_SECRET=tu-reverb-secret-seguro
+REVERB_HOST=0.0.0.0
+REVERB_PORT=8080
+
+VITE_REVERB_APP_KEY="${REVERB_APP_KEY}"
+VITE_REVERB_HOST=tu-dominio.com
+VITE_REVERB_PORT=443
+VITE_REVERB_SCHEME=https
 
 MAIL_MAILER=smtp
 MAIL_HOST=smtp.tu-proveedor.com
@@ -252,10 +292,12 @@ MAIL_FROM_NAME="Cronos POS"
 BCRYPT_ROUNDS=12
 ```
 
-Generar clave y ejecutar migraciones:
+Generar clave, instalar Reverb, y ejecutar migraciones:
 
 ```bash
 php artisan key:generate
+composer require laravel/reverb --with-all-dependencies
+php artisan install:broadcasting --force
 php artisan migrate --seed --force
 ```
 
@@ -326,7 +368,21 @@ server {
         rewrite ^/api/(.*)$ /api/index.php?/$1 last;
     }
 
-    # Sanctum CSRF cookie (si se usa desde web)
+    # WebSocket Reverb (upgrade de conexion)
+    location /app {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 60s;
+        proxy_send_timeout 60s;
+    }
+
+    # Sanctum CSRF cookie
     location /sanctum {
         try_files $uri $uri/ @laravel;
     }
@@ -348,7 +404,7 @@ server {
         deny all;
     }
 
-    # Limites de upload (para logos de tickets, etc.)
+    # Limites de upload
     client_max_body_size 10M;
 }
 ```
@@ -380,7 +436,7 @@ Esperar la propagacion DNS (verificar con `dig tu-dominio.com`).
 sudo certbot --nginx -d tu-dominio.com -d www.tu-dominio.com
 ```
 
-Certbot modifica automaticamente la configuracion de Nginx para HTTPS.
+Certbot modifica automaticamente la configuracion de Nginx para HTTPS, incluyendo el proxy WebSocket de Reverb.
 
 ### 6.3 Verificar Renovacion Automatica
 
@@ -418,9 +474,9 @@ sudo systemctl restart php8.3-fpm
 
 ---
 
-## Fase 8: Configurar el Queue Worker (Supervisor)
+## Fase 8: Configurar Supervisor (Queue Worker + Reverb)
 
-El sistema usa colas para emails (PasswordResetLinkMail) y notificaciones (PettyCashWithdrawalNotification).
+El sistema usa colas para emails (PasswordResetLinkMail) y notificaciones (PettyCashWithdrawalNotification), y Reverb para WebSockets en tiempo real.
 
 ### 8.1 Instalar Supervisor
 
@@ -428,7 +484,7 @@ El sistema usa colas para emails (PasswordResetLinkMail) y notificaciones (Petty
 sudo apt install -y supervisor
 ```
 
-### 8.2 Crear Configuracion del Worker
+### 8.2 Crear Configuracion del Queue Worker
 
 ```bash
 sudo nano /etc/supervisor/conf.d/cronos-worker.conf
@@ -437,7 +493,7 @@ sudo nano /etc/supervisor/conf.d/cronos-worker.conf
 ```ini
 [program:cronos-worker]
 process_name=%(program_name)s_%(process_num)02d
-command=php /var/www/cronos-pos/backend/artisan queue:work --sleep=3 --tries=3 --max-time=3600
+command=php /var/www/cronos-pos/backend/artisan queue:work redis --sleep=3 --tries=3 --max-time=3600
 autostart=true
 autorestart=true
 stopasgroup=true
@@ -449,12 +505,34 @@ stdout_logfile=/var/www/cronos-pos/backend/storage/logs/worker.log
 stopwaitsecs=3600
 ```
 
-### 8.3 Activar el Worker
+### 8.3 Crear Configuracion de Reverb
+
+```bash
+sudo nano /etc/supervisor/conf.d/cronos-reverb.conf
+```
+
+```ini
+[program:cronos-reverb]
+process_name=%(program_name)s
+command=php /var/www/cronos-pos/backend/artisan reverb:start --host=0.0.0.0 --port=8080
+autostart=true
+autorestart=true
+stopasgroup=true
+killasgroup=true
+user=cronos
+numprocs=1
+redirect_stderr=true
+stdout_logfile=/var/www/cronos-pos/backend/storage/logs/reverb.log
+stopwaitsecs=10
+```
+
+### 8.4 Activar los Servicios
 
 ```bash
 sudo supervisorctl reread
 sudo supervisorctl update
 sudo supervisorctl start cronos-worker:*
+sudo supervisorctl start cronos-reverb
 sudo supervisorctl status
 ```
 
@@ -512,6 +590,7 @@ npm run build
 echo "→ Restarting services..."
 sudo systemctl restart php8.3-fpm
 sudo supervisorctl restart cronos-worker:*
+sudo supervisorctl restart cronos-reverb
 
 echo "=== Deploy completed ==="
 ```
@@ -539,8 +618,11 @@ sudo systemctl status php8.3-fpm
 # Nginx activo
 sudo systemctl status nginx
 
-# Queue Workers activos
-sudo supervisorctl status cronos-worker:*
+# Redis activo
+sudo systemctl status redis-server
+
+# Queue Workers y Reverb activos
+sudo supervisorctl status
 
 # Probar API
 curl -s https://tu-dominio.com/api/auth/login \
@@ -550,6 +632,12 @@ curl -s https://tu-dominio.com/api/auth/login \
 
 # Verificar HTTPS
 curl -I https://tu-dominio.com
+
+# Verificar WebSocket (debe responder upgrade)
+curl -s -o /dev/null -w "%{http_code}" \
+  -H "Upgrade: websocket" \
+  -H "Connection: upgrade" \
+  https://tu-dominio.com/app/cronos-reverb-key
 ```
 
 ### 11.2 Acceder a la Aplicacion
@@ -583,7 +671,23 @@ sudo apt install -y fail2ban
 sudo systemctl enable fail2ban
 ```
 
-### 12.3 Backups Automaticos
+### 12.3 Asegurar Redis
+
+```bash
+sudo nano /etc/redis/redis.conf
+```
+
+Verificar que estas lineas esten activas:
+```ini
+bind 127.0.0.1 ::1
+protected-mode yes
+```
+
+```bash
+sudo systemctl restart redis-server
+```
+
+### 12.4 Backups Automaticos
 
 La base de datos gestionada de DigitalOcean incluye backups automaticos diarios.
 Para backups adicionales on-demand:
@@ -600,7 +704,7 @@ PGPASSWORD=tu_password pg_dump \
   -f backup_$(date +%Y%m%d_%H%M%S).dump
 ```
 
-### 12.4 Monitoreo
+### 12.5 Monitoreo
 
 Desde el panel de DigitalOcean:
 - **Droplet Monitoring**: CPU, RAM, Disco, Bandwidth (activar en el Droplet)
@@ -616,6 +720,7 @@ Desde el panel de DigitalOcean:
 | Managed PostgreSQL | Basic 1 GB | ~$15 |
 | Dominio (.com) | Externo | ~$1 |
 | SSL (Let's Encrypt) | Gratuito | $0 |
+| Redis (en Droplet) | Incluido | $0 |
 | **Total estimado** | | **~$40/mes** |
 
 ---
@@ -626,6 +731,8 @@ Desde el panel de DigitalOcean:
 | :--- | :--- | :--- |
 | Nginx | 80, 443 | `systemctl` |
 | PHP-FPM 8.3 | unix socket | `systemctl` |
-| Queue Workers | — | `supervisorctl` |
+| Redis | 6379 (local) | `systemctl` |
+| Queue Workers (x2) | — | `supervisorctl` |
+| Laravel Reverb | 8080 (via Nginx) | `supervisorctl` |
 | Cron Scheduler | — | `crontab` |
 | PostgreSQL | 25060 (remoto) | DigitalOcean Panel |

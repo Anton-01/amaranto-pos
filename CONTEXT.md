@@ -4,12 +4,14 @@
 - Backend: Laravel 13 (API-First), PHP 8.3 Alpine
 - Frontend: React 18/19, Tailwind CSS v4, PrimeReact, Sonner
 - Base de Datos: Managed PostgreSQL (DigitalOcean)
-- Estado de Infraestructura: Docker Compose configurado y funcional.
+- Cache / Colas: Redis 7 Alpine (cache global + queue worker)
+- WebSockets: Laravel Reverb (puerto 8080, tiempo real)
+- Estado de Infraestructura: Docker Compose multi-contenedor operativo (4 servicios: backend, frontend, postgres, redis).
 
 ## 2. Matriz de Modulos y Progreso
 | Modulo | Estado Backend | Estado Frontend | Observaciones |
 | :--- | :--- | :--- | :--- |
-| Infraestructura & Docker | [🟢 Completado] | [🟢 Completado] | Dockerfiles ligeros listos |
+| Infraestructura & Docker | [🟢 Completado y Operativo] | [🟢 Completado y Operativo] | Docker Compose multi-contenedor, Alpine, Hot-Reload, Reverb WS :8080 |
 | Migraciones & Modelos Base (BD) | [🟢 Completado] | N/A | 18 migraciones, 15 modelos, Trait AdvancedSoftDeletes, Seeder base |
 | Autenticacion & 2FA (Sanctum) | [🟢 Completado] | [🟢 Completado] | Login, Logout, 2FA TOTP, Kill-Switch, Session Log |
 | Catalogo, Categorias y Variaciones| [🟢 Completado] | [🟢 Completado] | CRUD completo, DataTable filtros avanzados, variaciones en serie |
@@ -644,12 +646,92 @@ Todas las tablas utilizan UUID como llave primaria. Tipos monetarios: `NUMERIC(1
 - `src/App.jsx` — Ruta /admin/papelera
 - `src/components/layout/AppLayout.jsx` — NavLink "Papelera"
 
-## 13. Reporte Final de Cierre de Arquitectura
+## 13. Detalle: Infraestructura Docker Multi-Contenedor
+
+### docker-compose.yml (Raiz del Proyecto)
+4 servicios orquestados con healthchecks y dependencias:
+
+| Servicio | Imagen Base | Puerto Expuesto | Descripcion |
+| :--- | :--- | :--- | :--- |
+| backend | PHP 8.3-FPM Alpine (custom) | 8000, 8080 | Laravel API + Reverb WebSockets |
+| frontend | Node 22 Alpine (custom) | 3000 | Vite dev server con HMR |
+| postgres | postgres:16-alpine | 5432 | Base de datos con volumen persistente |
+| redis | redis:7-alpine | 6379 | Cache global + colas de notificaciones |
+
+### Volumenes
+- `postgres-data`: Persistencia de datos PostgreSQL entre reinicios
+- `redis-data`: Persistencia de datos Redis
+- `backend-vendor`: Volumen anonimo para vendor/ (evita conflictos host/contenedor)
+- `frontend-node-modules`: Volumen anonimo para node_modules/ (evita conflictos OS)
+
+### backend/Dockerfile.dev
+- Base: `php:8.3-fpm-alpine`
+- Extensiones instaladas via apk + docker-php-ext-install: `pdo_pgsql`, `pgsql`, `zip`, `gd` (con freetype+jpeg), `intl`, `bcmath`, `opcache`, `mbstring`, `pcntl`
+- Extension Redis via PECL: `pecl install redis && docker-php-ext-enable redis`
+- Composer copiado desde imagen oficial: `COPY --from=composer:2`
+- Limpieza de dependencias de compilacion tras instalar extensiones
+
+### backend/docker-entrypoint.sh (Automatizacion de Arranque)
+Secuencia de ejecucion al levantar el contenedor:
+1. `composer install` si vendor/autoload.php no existe
+2. `chown -R www-data:www-data storage bootstrap/cache` + `chmod -R 775`
+3. Copia `.env.example` → `.env` + `key:generate` si .env no existe
+4. `migrate:fresh --seed --force` (recrea BD con datos base)
+5. Limpieza de caches (config, cache, route)
+6. Instala `laravel/reverb` si no esta presente
+7. Inicia `queue:work` en background
+8. Inicia `reverb:start --host=0.0.0.0 --port=8080` en background
+9. Inicia `php artisan serve --host=0.0.0.0 --port=8000` en foreground
+
+### frontend/Dockerfile.dev
+- Base: `node:22-alpine`
+- WORKDIR: `/app`
+- Copia `package.json` + `package-lock.json`, ejecuta `npm install`
+- CMD: `npm run dev -- --host 0.0.0.0 --port 3000`
+
+### .dockerignore
+- Backend: excluye `vendor/`, `node_modules/`, logs, cache, `.env`
+- Frontend: excluye `node_modules/`, `dist/`, `.env`
+
+### Configuracion de Red
+- Red bridge `cronos-network` compartida entre todos los servicios
+- Frontend proxy `/api` → `http://localhost:8000` (configurable via `VITE_API_URL`)
+- Variables de entorno de Docker inyectadas desde docker-compose.yml (no requiere .env manual)
+
+### Healthchecks
+- PostgreSQL: `pg_isready -U cronos -d cronos_pos` cada 5s
+- Redis: `redis-cli ping` cada 5s
+- Backend depende de postgres + redis con `condition: service_healthy`
+
+### Archivos Creados/Modificados
+**Raiz (nuevos):**
+- `docker-compose.yml`
+
+**Backend (nuevos):**
+- `Dockerfile.dev`
+- `docker-entrypoint.sh` (con permisos de ejecucion)
+- `.dockerignore`
+
+**Backend (modificados):**
+- `.env.example` — Actualizado con defaults Docker (postgres/redis como hosts, Reverb config)
+
+**Frontend (nuevos):**
+- `Dockerfile.dev`
+- `.dockerignore`
+
+**Frontend (modificados):**
+- `vite.config.js` — Proxy target configurable via `VITE_API_URL`
+
+**Documentacion (modificados):**
+- `SETUP_LOCAL.md` — Reestructurado: Opcion A (Docker zero-deps) + Opcion B (nativa)
+- `DEPLOY_DIGITALOCEAN.md` — Agregado Redis, Reverb, Supervisor para Reverb, Nginx WebSocket proxy
+
+## 14. Reporte Final de Cierre de Arquitectura
 
 ### Resumen de Progreso Global — TODOS LOS MODULOS COMPLETADOS
 | # | Modulo | Backend | Frontend | Estado |
 | :--- | :--- | :--- | :--- | :--- |
-| 1 | Infraestructura Docker | PHP 8.3 Alpine + Nginx + Postgres | Vite + Tailwind v4 | 🟢 |
+| 1 | Infraestructura Docker | PHP 8.3-FPM Alpine + PostgreSQL 16 + Redis 7 + Reverb WS | Vite + Node 22 Alpine + HMR | 🟢 |
 | 2 | Migraciones & Modelos | 18 migraciones, 15 modelos, ENUMs nativos PostgreSQL | N/A | 🟢 |
 | 3 | Autenticacion & 2FA | Sanctum + Google2FA TOTP + Kill-Switch | Login + TwoFactorModal | 🟢 |
 | 4 | Catalogo & Variaciones | CRUD Categories/Products, AdvancedSoftDeletes | DataTable filtros avanzados, ProductFormPage | 🟢 |

@@ -1,6 +1,120 @@
 # Cronos POS - Guia de Instalacion Local
 
-## Requisitos Previos
+## Opcion A: Docker (Recomendado — Zero Dependencies)
+
+Solo necesitas **Docker Desktop** y **Git** instalados en tu maquina.
+
+### Requisitos
+
+| Software | Version Minima | Verificar |
+| :--- | :--- | :--- |
+| Docker Desktop | 4.x+ | `docker --version` |
+| Docker Compose | 2.x+ (incluido en Desktop) | `docker compose version` |
+| Git | 2.x | `git --version` |
+
+### 1. Clonar el Repositorio
+
+```bash
+git clone https://github.com/anton-01/amaranto-pos.git
+cd amaranto-pos
+```
+
+### 2. Levantar Todo el Entorno
+
+```bash
+docker compose up --build
+```
+
+El primer arranque tarda ~2-3 minutos. El entrypoint del backend automatiza:
+- Instala dependencias de Composer (si `vendor/` no existe)
+- Crea `.env` desde `.env.example` y genera `APP_KEY`
+- Ejecuta `migrate:fresh --seed` (crea las 18 tablas + datos base)
+- Instala Laravel Reverb (WebSockets)
+- Inicia el queue worker en segundo plano
+- Inicia Reverb en puerto 8080
+- Inicia el servidor Laravel en puerto 8000
+
+### 3. Acceder a la Aplicacion
+
+| Servicio | URL | Descripcion |
+| :--- | :--- | :--- |
+| Frontend (React SPA) | http://localhost:3000 | Vite dev server con HMR |
+| Backend API | http://localhost:8000/api | Laravel API |
+| WebSockets (Reverb) | ws://localhost:8080 | Tiempo real |
+| PostgreSQL | localhost:5432 | DB local (user: `cronos`, pass: `cronos_secret`) |
+| Redis | localhost:6379 | Cache y colas |
+
+### Credenciales del Administrador
+
+| Campo | Valor |
+| :--- | :--- |
+| Email | admin@cronos.pos |
+| Password | password |
+
+### 4. Comandos Docker Utiles
+
+```bash
+# Levantar en segundo plano
+docker compose up -d
+
+# Ver logs en tiempo real
+docker compose logs -f backend
+docker compose logs -f frontend
+
+# Ejecutar artisan dentro del contenedor
+docker compose exec backend php artisan migrate:status
+docker compose exec backend php artisan route:list --path=api
+docker compose exec backend php artisan tinker
+
+# Ejecutar tests
+docker compose exec backend php artisan test
+
+# Rebuild completo (si cambias Dockerfiles)
+docker compose down && docker compose up --build
+
+# Destruir todo (incluyendo volumenes de datos)
+docker compose down -v
+```
+
+### 5. Estructura Docker
+
+```
+amaranto-pos/
+├── docker-compose.yml              # Orquestador: 4 servicios
+├── backend/
+│   ├── Dockerfile.dev              # PHP 8.3-FPM Alpine + extensiones
+│   ├── docker-entrypoint.sh        # Automatizacion de arranque
+│   └── .dockerignore               # Excluye vendor/, node_modules/
+├── frontend/
+│   ├── Dockerfile.dev              # Node 22-Alpine + Vite
+│   └── .dockerignore               # Excluye node_modules/, dist/
+```
+
+### 6. Hot-Reload en Desarrollo
+
+- **Frontend**: Vite HMR esta activo. Editar archivos en `frontend/src/` recarga el navegador al instante.
+- **Backend**: El codigo PHP se monta como volumen. Los cambios en `backend/app/` se reflejan inmediatamente sin reiniciar.
+- **Nota**: Si cambias `composer.json`, ejecutar `docker compose exec backend composer install` manualmente.
+
+### 7. Conectar a la Base de Datos con un Cliente
+
+Puedes usar pgAdmin, DBeaver, o TablePlus para conectarte a PostgreSQL:
+
+| Campo | Valor |
+| :--- | :--- |
+| Host | localhost |
+| Puerto | 5432 |
+| Base de datos | cronos_pos |
+| Usuario | cronos |
+| Password | cronos_secret |
+
+---
+
+## Opcion B: Instalacion Nativa (Sin Docker)
+
+Si prefieres ejecutar los servicios directamente en tu maquina.
+
+### Requisitos Previos
 
 | Software | Version Minima | Verificar |
 | :--- | :--- | :--- |
@@ -9,11 +123,12 @@
 | Node.js | 20+ LTS | `node -v` |
 | npm | 10+ | `npm -v` |
 | PostgreSQL | 15+ | `psql --version` |
+| Redis | 7+ (opcional) | `redis-cli --version` |
 | Git | 2.x | `git --version` |
 
 ### Extensiones PHP Requeridas
 ```
-php-pgsql php-mbstring php-xml php-curl php-zip php-bcmath php-gd php-intl
+php-pgsql php-mbstring php-xml php-curl php-zip php-bcmath php-gd php-intl php-redis
 ```
 
 Verificar extensiones instaladas:
@@ -21,20 +136,14 @@ Verificar extensiones instaladas:
 php -m | grep -E "pgsql|mbstring|xml|curl|zip|bcmath|gd|intl"
 ```
 
----
-
-## 1. Clonar el Repositorio
+### 1. Clonar el Repositorio
 
 ```bash
 git clone https://github.com/anton-01/amaranto-pos.git
 cd amaranto-pos
 ```
 
----
-
-## 2. Configurar PostgreSQL
-
-Crear la base de datos y el usuario:
+### 2. Configurar PostgreSQL
 
 ```bash
 sudo -u postgres psql
@@ -47,115 +156,41 @@ GRANT ALL PRIVILEGES ON DATABASE cronos_pos TO cronos_user;
 \q
 ```
 
----
-
-## 3. Configurar el Backend (Laravel)
-
-### 3.1 Instalar dependencias PHP
+### 3. Configurar el Backend
 
 ```bash
 cd backend
 composer install
-```
-
-### 3.2 Configurar el archivo de entorno
-
-```bash
 cp .env.example .env
 ```
 
-Editar `backend/.env` con los siguientes valores:
+Editar `backend/.env` — cambiar hosts a localhost:
 
 ```env
-APP_NAME="Cronos POS"
-APP_ENV=local
-APP_DEBUG=true
-APP_URL=http://localhost:8000
-
-DB_CONNECTION=pgsql
 DB_HOST=127.0.0.1
-DB_PORT=5432
-DB_DATABASE=cronos_pos
 DB_USERNAME=cronos_user
 DB_PASSWORD=tu_password_seguro
 
-BROADCAST_CONNECTION=log
-QUEUE_CONNECTION=database
+REDIS_HOST=127.0.0.1
+
+# Si no tienes Redis, usar database como fallback:
 CACHE_STORE=database
-SESSION_DRIVER=database
-
-MAIL_MAILER=log
-MAIL_FROM_ADDRESS="no-reply@cronos.pos"
-MAIL_FROM_NAME="Cronos POS"
+QUEUE_CONNECTION=database
 ```
-
-### 3.3 Generar clave de aplicacion
 
 ```bash
 php artisan key:generate
-```
-
-### 3.4 Ejecutar migraciones y seeder
-
-```bash
 php artisan migrate --seed
 ```
 
-Esto crea:
-- 18 tablas con ENUMs nativos de PostgreSQL
-- 3 roles base: `admin`, `manager`, `vendor`
-- Usuario administrador: `admin@cronos.pos` / `password`
-- 6 tipos de notificacion
-- Configuraciones globales (tax_rate, investment_split)
-
-### 3.5 Verificar que el backend arranca
-
-```bash
-php artisan serve
-```
-
-Debe responder en `http://localhost:8000`. Probar con:
-
-```bash
-curl http://localhost:8000/api/auth/login \
-  -X POST \
-  -H "Content-Type: application/json" \
-  -d '{"email":"admin@cronos.pos","password":"password"}'
-```
-
-Detener el servidor (Ctrl+C) antes de continuar.
-
----
-
-## 4. Configurar el Frontend (React)
-
-### 4.1 Instalar dependencias Node
+### 4. Configurar el Frontend
 
 ```bash
 cd ../frontend
 npm install
 ```
 
-### 4.2 Verificar la configuracion del proxy
-
-El archivo `vite.config.js` ya esta configurado para redirigir `/api` al backend:
-
-```js
-proxy: {
-  '/api': {
-    target: 'http://localhost:8000',
-    changeOrigin: true,
-  },
-},
-```
-
-No requiere archivo `.env` en el frontend. El proxy de Vite maneja la comunicacion con el backend.
-
----
-
-## 5. Levantar el Entorno Completo
-
-### Opcion A: Dos terminales separadas (recomendado para depuracion)
+### 5. Levantar el Entorno
 
 **Terminal 1 — Backend:**
 ```bash
@@ -169,32 +204,18 @@ cd frontend
 npm run dev
 ```
 
-### Opcion B: Script concurrente del backend
-
+**Terminal 3 — Queue Worker (opcional, para emails/notificaciones):**
 ```bash
 cd backend
-composer dev
+php artisan queue:work
 ```
 
-Este comando ejecuta en paralelo: `php artisan serve`, `php artisan queue:listen`, `php artisan pail` (logs), y `npm run dev` (Vite del backend, no del frontend SPA).
-
-**Nota:** Para el frontend SPA, siempre levantarlo desde la carpeta `frontend/`:
-
-```bash
-cd frontend
-npm run dev
-```
-
----
-
-## 6. Acceder a la Aplicacion
+### 6. Acceder a la Aplicacion
 
 | Servicio | URL |
 | :--- | :--- |
 | Frontend (React SPA) | http://localhost:3000 |
 | Backend API | http://localhost:8000/api |
-
-### Credenciales del Administrador
 
 | Campo | Valor |
 | :--- | :--- |
@@ -203,96 +224,33 @@ npm run dev
 
 ---
 
-## 7. Comandos Utiles
+## Resolucion de Problemas Comunes
 
-### Backend (desde `backend/`)
+### Docker: El backend no conecta a PostgreSQL
+
+Verificar que postgres este healthy:
+```bash
+docker compose ps
+```
+Si el estado no es "healthy", revisar logs:
+```bash
+docker compose logs postgres
+```
+
+### Docker: Cambios en composer.json no se reflejan
 
 ```bash
-# Ejecutar migraciones pendientes
-php artisan migrate
-
-# Revertir y re-ejecutar migraciones + seed (DESTRUCTIVO)
-php artisan migrate:fresh --seed
-
-# Limpiar caches
-php artisan config:clear && php artisan cache:clear && php artisan route:clear
-
-# Ver rutas API registradas
-php artisan route:list --path=api
-
-# Ejecutar tests
-php artisan test
-
-# Procesar cola de trabajos (emails, notificaciones)
-php artisan queue:work
-
-# Formatear codigo PHP
-./vendor/bin/pint
+docker compose exec backend composer install
 ```
 
-### Frontend (desde `frontend/`)
+### Docker: Permisos de storage en Linux
 
+Si Laravel reporta errores de escritura en storage/:
 ```bash
-# Servidor de desarrollo con HMR
-npm run dev
-
-# Build de produccion
-npm run build
-
-# Preview del build de produccion
-npm run preview
-
-# Linter
-npm run lint
+docker compose exec backend chown -R www-data:www-data storage bootstrap/cache
 ```
 
----
-
-## 8. Estructura del Proyecto
-
-```
-amaranto-pos/
-├── backend/                    # Laravel 13 API
-│   ├── app/
-│   │   ├── Events/             # PettyCashTransactionRegistered
-│   │   ├── Http/
-│   │   │   ├── Controllers/    # 13 controladores
-│   │   │   ├── Middleware/     # EnsureUserIsActive, EnsureUserHasRole
-│   │   │   └── Requests/      # 12 FormRequests
-│   │   ├── Listeners/          # NotifyPettyCashWithdrawal
-│   │   ├── Mail/               # PasswordResetLinkMail
-│   │   ├── Models/             # 15 modelos Eloquent
-│   │   ├── Notifications/      # PettyCashWithdrawalNotification
-│   │   └── Traits/             # AdvancedSoftDeletes
-│   ├── database/
-│   │   ├── migrations/         # 18 migraciones PostgreSQL
-│   │   └── seeders/            # DatabaseSeeder con roles, admin, settings
-│   ├── routes/
-│   │   ├── api.php             # ~53 endpoints RESTful
-│   │   └── web.php             # Ruta password.reset (URL firmada)
-│   └── .env.example
-│
-├── frontend/                   # React 19 SPA
-│   ├── src/
-│   │   ├── api/                # axios.js (interceptors, proxy)
-│   │   ├── components/
-│   │   │   ├── layout/         # AppLayout
-│   │   │   ├── finance/        # WithdrawModal, AuditTicket
-│   │   │   └── pos/            # TicketPreview, CheckoutModal
-│   │   ├── context/            # AuthContext (login, logout, fetchUser)
-│   │   └── pages/              # 14 paginas
-│   ├── vite.config.js          # Puerto 3000, proxy /api -> :8000
-│   └── package.json
-│
-├── CONTEXT.md                  # Documentacion tecnica completa del sistema
-└── README.md
-```
-
----
-
-## 9. Resolucion de Problemas Comunes
-
-### Error: "could not find driver" (PDO PostgreSQL)
+### Nativo: Error "could not find driver" (PDO PostgreSQL)
 
 ```bash
 # Ubuntu/Debian
@@ -306,19 +264,22 @@ brew install php@8.3
 ### Error: ENUM type already exists al re-migrar
 
 Los ENUMs nativos de PostgreSQL no se eliminan con `migrate:rollback`. Usar:
-
 ```bash
 php artisan migrate:fresh --seed
+# O en Docker:
+docker compose exec backend php artisan migrate:fresh --seed
 ```
 
 ### Error: CORS al hacer requests desde el frontend
 
-Verificar que el frontend se ejecuta en `http://localhost:3000` y que el proxy de Vite esta activo. No acceder directamente al backend en `:8000` desde el navegador para las paginas del SPA.
+Verificar que el frontend corre en `http://localhost:3000` y que el proxy de Vite esta activo. No acceder al backend `:8000` directamente desde el navegador para las paginas del SPA.
 
 ### El queue worker no procesa emails
 
 ```bash
+# Docker
+docker compose exec backend php artisan queue:work --tries=3
+
+# Nativo
 php artisan queue:work --tries=3
 ```
-
-Verificar `QUEUE_CONNECTION=database` en `.env` y que la tabla `jobs` exista (se crea con las migraciones).
