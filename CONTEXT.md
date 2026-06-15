@@ -18,7 +18,7 @@
 | Caja Chica, Retiros e Integridad| [🟢 Completado] | [🟢 Completado] | SHA256 inmutable, eventos, notificaciones, audit ticket |
 | Ventas, Ticket Config & Historico | [🟢 Completado] | [🟢 Completado] | Append-only versioning, OrderController, ticket preview 80mm, @media print |
 | Finanzas Avanzadas (70/30) & Stock | [🟢 Completado] | [🟢 Completado] | Recharts dashboard, 70/30 split, stock movements con merma validada |
-| Notificaciones Reverb (Push/Mail)| [⚪ Pendiente] | [⚪ Pendiente] | - |
+| Notificaciones Reverb (Push/Mail)| [🟢 Completado] | [🟢 Completado] | Preferencias matriciales mail/database por rol |
 | Papelera Global (Soft Deletes)| [⚪ Pendiente] | [⚪ Pendiente] | - |
 
 ## 3. Detalle del Modulo Completado: Migraciones & Modelos Base
@@ -543,7 +543,45 @@ Todas las tablas utilizan UUID como llave primaria. Tipos monetarios: `NUMERIC(1
 - `src/App.jsx` — Ruta /admin/usuarios
 - `src/components/layout/AppLayout.jsx` — NavLink "Usuarios"
 
-## 11. Reporte de Cierre General de la Arquitectura en Marcha
+## 11. Detalle del Modulo Completado: Notificaciones (Push/Mail)
+
+### Backend - API Endpoints (2 rutas nuevas)
+| Metodo | Ruta | Middleware | Descripcion |
+| :--- | :--- | :--- | :--- |
+| GET | /api/profile/notifications | auth, user.active | Lista tipos de notificacion filtrados por rol del usuario con preferencias actuales |
+| PUT | /api/profile/notifications | auth, user.active | Actualiza preferencias con upsert atomico en PK compuesto triple |
+
+### Controlador: NotificationPreferenceController (Profile)
+- `index()` — Obtiene NotificationType filtrados por interseccion de allowed_roles (JSONB) con los roles del usuario autenticado. Combina con UserNotificationPreference existentes para retornar canales {mail: bool, database: bool} por tipo.
+- `update()` — Valida array de preferences (notification_type_id, channel, is_enabled). Filtra por tipos permitidos para el rol. Ejecuta DB::transaction con DB::table()->upsert() sobre PK compuesto triple (user_id, notification_type_id, channel).
+
+### Seguridad RBAC
+- Cada usuario solo ve y modifica los tipos de notificacion cuyo `allowed_roles` JSONB incluya al menos uno de sus roles
+- El upsert ignora silenciosamente tipos no autorizados para el usuario
+
+### Frontend - NotificationPreferencesPage (`/profile/notifications`)
+- **Tabla matricial**: Filas = tipos de notificacion (nombre + descripcion), Columnas = canales (Correo Electronico, Alertas Push en Sistema)
+- **Toggle Switches**: InputSwitch de PrimeReact por cada combinacion tipo/canal
+- **Actualizacion asincrona**: Cada toggle dispara PUT individual con optimistic update. Rollback automatico si falla.
+- **Feedback instantaneo**: Sonner toast de exito/error por cada cambio
+- **Loading state**: ProgressSpinner micro (16px) junto al toggle durante la peticion
+- **Estado vacio**: Mensaje informativo si no hay tipos disponibles para el rol del usuario
+
+### Archivos Creados/Modificados en esta Fase
+**Backend (nuevos):**
+- `app/Http/Controllers/Profile/NotificationPreferenceController.php`
+
+**Backend (modificados):**
+- `routes/api.php` — 2 rutas nuevas bajo /profile/notifications
+
+**Frontend (nuevos):**
+- `src/pages/profile/NotificationPreferencesPage.jsx`
+
+**Frontend (modificados):**
+- `src/App.jsx` — Ruta /profile/notifications
+- `src/components/layout/AppLayout.jsx` — NavLink "Notificaciones"
+
+## 12. Reporte de Cierre General de la Arquitectura en Marcha
 
 ### Resumen de Progreso Global
 | # | Modulo | Backend | Frontend | Estado |
@@ -557,18 +595,18 @@ Todas las tablas utilizan UUID como llave primaria. Tipos monetarios: `NUMERIC(1
 | 7 | Ventas & Ticket Config | OrderController, Append-Only versioning | CheckoutModal + TicketPreview 80mm + @media print | 🟢 |
 | 8 | Finanzas 70/30 & Stock | AnalyticsController, StockMovementController | Recharts dashboard, StockMovementsPage | 🟢 |
 | 9 | Usuarios & Roles (RBAC) | UserController, Kill-Switch, URL firmada | UsersPage con TabView detail | 🟢 |
-| 10 | Notificaciones Reverb | Pendiente | Pendiente | ⚪ |
+| 10 | Notificaciones Reverb | NotificationPreferenceController, upsert PK triple | NotificationPreferencesPage matricial | 🟢 |
 | 11 | Papelera Global | Pendiente | Pendiente | ⚪ |
 
 ### Estadisticas de la Arquitectura
-- **Rutas API totales**: ~48 endpoints RESTful
-- **Controladores**: 11 (Auth, TwoFactor, Category, Product, Promotion, PettyCash, TicketConfig, Order, Analytics, StockMovement, UserAdmin)
+- **Rutas API totales**: ~50 endpoints RESTful
+- **Controladores**: 12 (Auth, TwoFactor, Category, Product, Promotion, PettyCash, TicketConfig, Order, Analytics, StockMovement, UserAdmin, NotificationPreference)
 - **FormRequests**: 12 clases de validacion estricta
 - **Modelos Eloquent**: 15 con relaciones completas
 - **Middleware custom**: 2 (EnsureUserIsActive, EnsureUserHasRole)
 - **Mailables**: 1 (PasswordResetLinkMail, ShouldQueue)
 - **Eventos/Listeners**: 1 evento broadcast + 1 listener + 1 notificacion queued
-- **Paginas React**: 12 (Login, Dashboard, Categories, Products, ProductForm, Promotions, POS, PettyCash, TicketConfig, Finance, StockMovements, UsersAdmin)
+- **Paginas React**: 13 (Login, Dashboard, Categories, Products, ProductForm, Promotions, POS, PettyCash, TicketConfig, Finance, StockMovements, UsersAdmin, NotificationPreferences)
 - **Componentes React**: 8 (AppLayout, DeleteDialog, TwoFactorModal, WithdrawModal, AuditTicket, TicketPreview, CheckoutModal)
 - **Librerias frontend**: React, Tailwind CSS v4, PrimeReact, Sonner, Recharts, Axios
 

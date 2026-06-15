@@ -8,6 +8,7 @@ use App\Http\Controllers\Catalog\ProductController;
 use App\Http\Controllers\Finance\AnalyticsController;
 use App\Http\Controllers\Finance\PettyCashController;
 use App\Http\Controllers\Logistics\StockMovementController;
+use App\Http\Controllers\Profile\NotificationPreferenceController;
 use App\Http\Controllers\Promotion\PromotionController;
 use App\Http\Controllers\Sales\OrderController;
 use App\Http\Controllers\Sales\TicketConfigController;
@@ -84,6 +85,11 @@ Route::middleware(['auth:sanctum', 'user.active'])->group(function () {
         Route::get('/sales-by-payment', [AnalyticsController::class, 'salesByPaymentMethod']);
         Route::get('/financial-summary', [AnalyticsController::class, 'financialSummary']);
         Route::get('/daily-trend', [AnalyticsController::class, 'dailyTrend']);
+    });
+
+    Route::prefix('profile/notifications')->group(function () {
+        Route::get('/', [NotificationPreferenceController::class, 'index']);
+        Route::put('/', [NotificationPreferenceController::class, 'update']);
     });
 
     Route::prefix('petty-cash')->group(function () {

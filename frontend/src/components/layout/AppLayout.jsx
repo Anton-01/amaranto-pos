@@ -13,6 +13,7 @@ const navItems = [
   { label: 'Almacen', path: '/stock-movements' },
   { label: 'Tickets', path: '/ticket-config' },
   { label: 'Usuarios', path: '/admin/usuarios' },
+  { label: 'Notificaciones', path: '/profile/notifications' },
 ];
 
 export default function AppLayout({ children }) {

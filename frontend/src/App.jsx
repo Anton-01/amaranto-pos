@@ -13,6 +13,7 @@ import FinanceDashboardPage from './pages/finance/FinanceDashboardPage';
 import StockMovementsPage from './pages/logistics/StockMovementsPage';
 import TicketConfigPage from './pages/settings/TicketConfigPage';
 import UsersPage from './pages/admin/UsersPage';
+import NotificationPreferencesPage from './pages/profile/NotificationPreferencesPage';
 
 function ProtectedRoute({ children }) {
   const { user, loading } = useAuth();
@@ -77,6 +78,7 @@ export default function App() {
           <Route path="/stock-movements" element={<ProtectedRoute><StockMovementsPage /></ProtectedRoute>} />
           <Route path="/ticket-config" element={<ProtectedRoute><TicketConfigPage /></ProtectedRoute>} />
           <Route path="/admin/usuarios" element={<ProtectedRoute><UsersPage /></ProtectedRoute>} />
+          <Route path="/profile/notifications" element={<ProtectedRoute><NotificationPreferencesPage /></ProtectedRoute>} />
           <Route path="*" element={<Navigate to="/login" replace />} />
         </Routes>
       </AuthProvider>
