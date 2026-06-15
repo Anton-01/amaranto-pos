@@ -19,6 +19,7 @@ body {
   .print\:hidden,
   header,
   nav,
+  aside,
   .p-dialog-mask {
     display: none !important;
   }
