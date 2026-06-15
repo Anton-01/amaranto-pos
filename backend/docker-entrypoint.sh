@@ -14,10 +14,10 @@ echo "→ Setting storage permissions..."
 chown -R www-data:www-data storage bootstrap/cache
 chmod -R 775 storage bootstrap/cache
 
-# 3. Environment file setup
-if [ ! -f ".env" ]; then
-    echo "→ Creating .env from .env.example..."
-    cp .env.example .env
+# 3. Environment file setup (always recreate in Docker for consistency)
+echo "→ Setting up .env..."
+cp .env.example .env
+if [ -z "$(grep '^APP_KEY=base64:' .env)" ]; then
     php artisan key:generate --force
 fi
 
