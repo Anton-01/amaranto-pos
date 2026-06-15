@@ -14,12 +14,12 @@
 | Autenticacion & 2FA (Sanctum) | [🟢 Completado] | [🟢 Completado] | Login, Logout, 2FA TOTP, Kill-Switch, Session Log |
 | Catalogo, Categorias y Variaciones| [🟢 Completado] | [🟢 Completado] | CRUD completo, DataTable filtros avanzados, variaciones en serie |
 | Promociones e Historicos | [🟢 Completado] | [🟢 Completado] | CRUD con RBAC, limite 1 promo/ticket, POS cart con validacion cruzada |
-| Usuarios, Roles y Permisos (RBAC)| [⚪ Pendiente] | [⚪ Pendiente] | - |
+| Usuarios, Roles y Permisos (RBAC)| [🟢 Completado] | [🟢 Completado] | CRUD con Kill-Switch, detail tabs (seguridad/sesiones/cajas), reset link |
 | Caja Chica, Retiros e Integridad| [🟢 Completado] | [🟢 Completado] | SHA256 inmutable, eventos, notificaciones, audit ticket |
 | Ventas, Ticket Config & Historico | [🟢 Completado] | [🟢 Completado] | Append-only versioning, OrderController, ticket preview 80mm, @media print |
 | Finanzas Avanzadas (70/30) & Stock | [🟢 Completado] | [🟢 Completado] | Recharts dashboard, 70/30 split, stock movements con merma validada |
-| Notificaciones Reverb (Push/Mail)| [⚪ Pendiente] | [⚪ Pendiente] | - |
-| Papelera Global (Soft Deletes)| [⚪ Pendiente] | [⚪ Pendiente] | - |
+| Notificaciones Reverb (Push/Mail)| [🟢 Completado] | [🟢 Completado] | Preferencias matriciales mail/database por rol |
+| Papelera Global (Soft Deletes)| [🟢 Completado] | [🟢 Completado] | Auditoria forense, restore/purge con RBAC admin-only |
 
 ## 3. Detalle del Modulo Completado: Migraciones & Modelos Base
 
@@ -465,9 +465,188 @@ Todas las tablas utilizan UUID como llave primaria. Tipos monetarios: `NUMERIC(1
 **Dependencias:**
 - `recharts` agregado a package.json
 
-## 10. Reporte de Cierre General de la Arquitectura en Marcha
+## 10. Detalle del Modulo Completado: Usuarios, Roles y Permisos (RBAC)
 
-### Resumen de Progreso Global
+### Backend - API Endpoints (8 rutas nuevas)
+| Metodo | Ruta | Middleware | Descripcion |
+| :--- | :--- | :--- | :--- |
+| GET | /api/admin/users | auth, user.active, **role:admin,manager** | Lista usuarios con filtros: status, role, has_active_session, search |
+| POST | /api/admin/users | auth, user.active, **role:admin,manager** | Crear usuario con asignacion de rol |
+| GET | /api/admin/users/roles | auth, user.active, **role:admin,manager** | Lista roles disponibles |
+| GET | /api/admin/users/{id} | auth, user.active, **role:admin,manager** | Detalle con seguridad, ultimas 3 sesiones, historial de cajas |
+| POST | /api/admin/users/{id}/toggle-status | auth, user.active, **role:admin,manager** | Suspender/Activar (Kill-Switch: revoca todos los tokens) |
+| DELETE | /api/admin/users/{id} | auth, user.active, **role:admin,manager** | Baja logica con motivo obligatorio (AdvancedSoftDeletes) |
+| POST | /api/admin/users/{id}/send-password-reset | auth, user.active, **role:admin,manager** | Genera URL firmada de 4 horas y envia Mailable |
+| POST | /api/admin/users/{id}/sessions/{sid}/revoke | auth, user.active, **role:admin,manager** | Fuerza cierre de sesion individual + revoca tokens |
+
+### Controlador: UserController (Admin)
+- `index()` — Filtros avanzados: status (active/suspended), role (admin/manager/vendor), has_active_session (users con sessionsLog sin logout_at), search (name/email con ilike). Incluye `active_tokens_count` via withCount.
+- `show()` — API Resource optimizado que retorna:
+  - User con roles
+  - Security: two_factor_enabled, two_factor_confirmed_at, password_restored_at, active_tokens count
+  - Sessions: ultimas 3 de user_sessions_log (login_at, logout_at, ip_address, user_agent)
+  - Cash Registers: ultimos 10 turnos (opened_at, closed_at, opening/expected/actual balance)
+- `store()` — Crea usuario en DB::transaction con asignacion de rol via pivot model_has_roles
+- `toggleStatus()` — Kill-Switch: cambia status via raw SQL (enum nativo PostgreSQL), revoca tokens si suspendido
+- `destroy()` — Baja logica con advancedDelete() que registra deleted_by y deletion_reason
+- `sendPasswordReset()` — URL::temporarySignedRoute de 4 horas + PasswordResetLinkMail (ShouldQueue)
+- `revokeSession()` — Cierra sesion individual (logout_at = now) y revoca todos los tokens del usuario
+
+### FormRequest: StoreUserRequest
+- name: required, string, max:150
+- email: required, email, max:150, unique:users
+- password: required, string, min:8, max:255
+- role: required, string, exists:roles,name
+
+### Mailable: PasswordResetLinkMail (ShouldQueue)
+- Email HTML inline con diseno corporativo Cronos POS
+- Boton de restauracion con URL firmada
+- Expiracion de 4 horas indicada en el cuerpo del email
+
+### Frontend - UsersPage (`/admin/usuarios`)
+
+#### DataTable con Filtros Avanzados
+- **Busqueda global**: InputText por nombre o email
+- **Filtro por estatus**: Dropdown (Todos/Activo/Suspendido) — consulta backend con param status
+- **Filtro por rol**: Dropdown (Todos/Admin/Manager/Vendor) — consulta backend con param role
+- **Filtro por sesion activa**: Dropdown (Todos/Con sesion/Sin sesion) — consulta backend con param has_active_session
+- Columnas: Usuario (nombre clickeable + email), Rol (Tag coloreado), Estatus (Tag), Sesion (indicador de conexion con punto animado), Creado, Acciones
+
+#### Acciones por Fila
+- **Suspender/Activar**: Boton toggle que invoca Kill-Switch (revoca tokens inmediatamente)
+- **Reset**: Envia enlace de restauracion de contraseña (URL firmada 4 horas) por email
+- **Eliminar**: Abre modal con textarea de motivo obligatorio, ejecuta advancedDelete
+
+#### Detalle de Usuario (Dialog con TabView)
+- **Tab 1 (Seguridad)**: Estado 2FA (HABILITADO/DESHABILITADO con fecha), ultima restauracion de contraseña, tokens activos
+- **Tab 2 (Sesiones)**: Ultimas 3 conexiones de user_sessions_log con IP, navegador (parseado de user_agent), fecha login/logout, indicador de sesion activa, boton "Forzar Cierre" para sesiones activas
+- **Tab 3 (Auditoria de Cajas)**: Historial de cash_registers con apertura/cierre, balances (apertura, esperado, real), calculo de diferencia con color (verde positivo, rojo negativo), Tag ABIERTA/CERRADA
+
+#### Crear Usuario (Dialog)
+- Campos: Nombre, Email, Contraseña, Rol (Dropdown)
+- Validacion frontend + backend con errores específicos de Sonner
+
+### Archivos Creados/Modificados en esta Fase
+**Backend (nuevos):**
+- `app/Http/Controllers/Admin/UserController.php`
+- `app/Http/Requests/User/StoreUserRequest.php`
+- `app/Mail/PasswordResetLinkMail.php`
+
+**Backend (modificados):**
+- `routes/api.php` — 8 rutas nuevas bajo /admin/users con role:admin,manager
+- `routes/web.php` — Ruta nombrada password.reset para URL firmada
+
+**Frontend (nuevos):**
+- `src/pages/admin/UsersPage.jsx`
+
+**Frontend (modificados):**
+- `src/App.jsx` — Ruta /admin/usuarios
+- `src/components/layout/AppLayout.jsx` — NavLink "Usuarios"
+
+## 11. Detalle del Modulo Completado: Notificaciones (Push/Mail)
+
+### Backend - API Endpoints (2 rutas nuevas)
+| Metodo | Ruta | Middleware | Descripcion |
+| :--- | :--- | :--- | :--- |
+| GET | /api/profile/notifications | auth, user.active | Lista tipos de notificacion filtrados por rol del usuario con preferencias actuales |
+| PUT | /api/profile/notifications | auth, user.active | Actualiza preferencias con upsert atomico en PK compuesto triple |
+
+### Controlador: NotificationPreferenceController (Profile)
+- `index()` — Obtiene NotificationType filtrados por interseccion de allowed_roles (JSONB) con los roles del usuario autenticado. Combina con UserNotificationPreference existentes para retornar canales {mail: bool, database: bool} por tipo.
+- `update()` — Valida array de preferences (notification_type_id, channel, is_enabled). Filtra por tipos permitidos para el rol. Ejecuta DB::transaction con DB::table()->upsert() sobre PK compuesto triple (user_id, notification_type_id, channel).
+
+### Seguridad RBAC
+- Cada usuario solo ve y modifica los tipos de notificacion cuyo `allowed_roles` JSONB incluya al menos uno de sus roles
+- El upsert ignora silenciosamente tipos no autorizados para el usuario
+
+### Frontend - NotificationPreferencesPage (`/profile/notifications`)
+- **Tabla matricial**: Filas = tipos de notificacion (nombre + descripcion), Columnas = canales (Correo Electronico, Alertas Push en Sistema)
+- **Toggle Switches**: InputSwitch de PrimeReact por cada combinacion tipo/canal
+- **Actualizacion asincrona**: Cada toggle dispara PUT individual con optimistic update. Rollback automatico si falla.
+- **Feedback instantaneo**: Sonner toast de exito/error por cada cambio
+- **Loading state**: ProgressSpinner micro (16px) junto al toggle durante la peticion
+- **Estado vacio**: Mensaje informativo si no hay tipos disponibles para el rol del usuario
+
+### Archivos Creados/Modificados en esta Fase
+**Backend (nuevos):**
+- `app/Http/Controllers/Profile/NotificationPreferenceController.php`
+
+**Backend (modificados):**
+- `routes/api.php` — 2 rutas nuevas bajo /profile/notifications
+
+**Frontend (nuevos):**
+- `src/pages/profile/NotificationPreferencesPage.jsx`
+
+**Frontend (modificados):**
+- `src/App.jsx` — Ruta /profile/notifications
+- `src/components/layout/AppLayout.jsx` — NavLink "Notificaciones"
+
+## 12. Detalle del Modulo Completado: Papelera Global (Soft Deletes)
+
+### Backend - API Endpoints (3 rutas nuevas)
+| Metodo | Ruta | Middleware | Descripcion |
+| :--- | :--- | :--- | :--- |
+| GET | /api/admin/trash/{type} | auth, user.active, **role:admin,manager** | Lista registros soft-deleted por tipo (products, categories, users, promotions) |
+| POST | /api/admin/trash/{type}/{id}/restore | auth, user.active, **role:admin,manager** | Restaura registro al catalogo activo via advancedRestore() |
+| DELETE | /api/admin/trash/{type}/{id} | auth, user.active, **role:admin,manager** | Purga permanente (forceDelete) — **exclusivo admin** con doble validacion |
+
+### Controlador: TrashController (Admin)
+- **Arquitectura unificada**: Un solo controlador maneja 4 modelos (Product, Category, User, Promotion) via constante MODELS con mapeo tipo->clase
+- `index()` — Usa `onlyTrashed()` de Eloquent con eager loading de `deletedByUser` (relacion del trait AdvancedSoftDeletes). Carga relaciones contextuales: category para productos, roles para usuarios, products para promociones. Filtro de busqueda con ilike (name, sku, email). Paginado de 15 registros ordenados por deleted_at descendente.
+- `restore()` — Ejecuta `advancedRestore()` del trait que limpia deleted_by y deletion_reason, luego llama restore() nativo de Laravel.
+- `forceDelete()` — **Triple capa de seguridad**:
+  1. Middleware `role:admin,manager` en la ruta (bloquea vendor)
+  2. Validacion de rol admin dentro del controlador (bloquea manager con ERR_TRASH_ADMIN_ONLY 403)
+  3. Campo `confirmation` obligatorio con valor exacto "ELIMINAR" (validacion request)
+  - Ejecuta `forceDelete()` nativo de Eloquent para purga fisica de PostgreSQL
+
+### Seguridad RBAC Granular
+- **Vendor**: Bloqueado completamente via middleware `role:admin,manager`
+- **Manager**: Puede ver papelera y restaurar registros. NO puede purgar (bloqueado por validacion interna de rol)
+- **Admin**: Acceso completo: ver, restaurar y purgar permanentemente con doble confirmacion
+
+### Frontend - TrashPage (`/admin/papelera`)
+
+#### Selector de Sub-modulo
+- Dropdown superior con 4 opciones: Productos Eliminados, Categorias Eliminadas, Usuarios Suspendidos/Bajas, Promociones Vencidas/Eliminadas
+- Cambio de modulo resetea busqueda y paginacion
+
+#### DataTable con Metadatos de Auditoria
+- **Registro**: Nombre/identificador con datos contextuales (SKU para productos, email para usuarios)
+- **Columna contextual**: Categoria (productos), Rol (usuarios con Tag coloreado), Tipo (promociones)
+- **Eliminado por**: Nombre y email del usuario que ejecuto la baja (via relacion deletedByUser del trait)
+- **Fecha de Baja**: deleted_at formateado localmente (es-MX)
+- **Motivo**: deletion_reason truncado a 50 chars con boton "Ver mas" que abre Dialog de PrimeReact con texto completo
+- Busqueda por nombre, SKU o email. Paginacion lazy server-side.
+
+#### Acciones de Recuperacion
+- **Restaurar** (Button success outlined): Disponible para Admin y Manager. Ejecuta advancedRestore() y notifica con Sonner.
+- **Purgar** (Button danger outlined): Deshabilitado para Manager (tooltip "Solo administradores"). Admin abre modal de doble confirmacion.
+
+#### Modal de Purga Permanente (Doble Validacion)
+- Banner de advertencia rojo con nombre del registro
+- Muestra motivo de baja original si existe
+- Input de confirmacion: debe escribir exactamente "ELIMINAR" para habilitar el boton
+- Boton de purga deshabilitado hasta que la confirmacion coincida
+- Loading state durante la operacion
+
+### Archivos Creados/Modificados en esta Fase
+**Backend (nuevos):**
+- `app/Http/Controllers/Admin/TrashController.php`
+
+**Backend (modificados):**
+- `routes/api.php` — 3 rutas nuevas bajo /admin/trash con role:admin,manager
+
+**Frontend (nuevos):**
+- `src/pages/admin/TrashPage.jsx`
+
+**Frontend (modificados):**
+- `src/App.jsx` — Ruta /admin/papelera
+- `src/components/layout/AppLayout.jsx` — NavLink "Papelera"
+
+## 13. Reporte Final de Cierre de Arquitectura
+
+### Resumen de Progreso Global — TODOS LOS MODULOS COMPLETADOS
 | # | Modulo | Backend | Frontend | Estado |
 | :--- | :--- | :--- | :--- | :--- |
 | 1 | Infraestructura Docker | PHP 8.3 Alpine + Nginx + Postgres | Vite + Tailwind v4 | 🟢 |
@@ -478,18 +657,20 @@ Todas las tablas utilizan UUID como llave primaria. Tipos monetarios: `NUMERIC(1
 | 6 | Caja Chica & Integridad | SHA256 seal, Events/Listeners/Notifications | WithdrawModal + AuditTicket termico | 🟢 |
 | 7 | Ventas & Ticket Config | OrderController, Append-Only versioning | CheckoutModal + TicketPreview 80mm + @media print | 🟢 |
 | 8 | Finanzas 70/30 & Stock | AnalyticsController, StockMovementController | Recharts dashboard, StockMovementsPage | 🟢 |
-| 9 | Usuarios & Roles (RBAC) | Pendiente | Pendiente | ⚪ |
-| 10 | Notificaciones Reverb | Pendiente | Pendiente | ⚪ |
-| 11 | Papelera Global | Pendiente | Pendiente | ⚪ |
+| 9 | Usuarios & Roles (RBAC) | UserController, Kill-Switch, URL firmada | UsersPage con TabView detail | 🟢 |
+| 10 | Notificaciones Reverb | NotificationPreferenceController, upsert PK triple | NotificationPreferencesPage matricial | 🟢 |
+| 11 | Papelera Global | TrashController unificado, restore/forceDelete RBAC | TrashPage con auditoria forense | 🟢 |
 
-### Estadisticas de la Arquitectura
-- **Rutas API totales**: ~40 endpoints RESTful
-- **Controladores**: 9 (Auth, TwoFactor, Category, Product, Promotion, PettyCash, TicketConfig, Order, Analytics, StockMovement)
-- **FormRequests**: 11 clases de validacion estricta
+### Estadisticas Finales de la Arquitectura
+- **Rutas API totales**: ~53 endpoints RESTful
+- **Controladores**: 13 (Auth, TwoFactor, Category, Product, Promotion, PettyCash, TicketConfig, Order, Analytics, StockMovement, UserAdmin, NotificationPreference, Trash)
+- **FormRequests**: 12 clases de validacion estricta
 - **Modelos Eloquent**: 15 con relaciones completas
 - **Middleware custom**: 2 (EnsureUserIsActive, EnsureUserHasRole)
+- **Trait custom**: 1 (AdvancedSoftDeletes con deleted_by, deletion_reason, advancedRestore)
+- **Mailables**: 1 (PasswordResetLinkMail, ShouldQueue)
 - **Eventos/Listeners**: 1 evento broadcast + 1 listener + 1 notificacion queued
-- **Paginas React**: 11 (Login, Dashboard, Categories, Products, ProductForm, Promotions, POS, PettyCash, TicketConfig, Finance, StockMovements)
+- **Paginas React**: 14 (Login, Dashboard, Categories, Products, ProductForm, Promotions, POS, PettyCash, TicketConfig, Finance, StockMovements, UsersAdmin, NotificationPreferences, Trash)
 - **Componentes React**: 8 (AppLayout, DeleteDialog, TwoFactorModal, WithdrawModal, AuditTicket, TicketPreview, CheckoutModal)
 - **Librerias frontend**: React, Tailwind CSS v4, PrimeReact, Sonner, Recharts, Axios
 
@@ -497,10 +678,25 @@ Todas las tablas utilizan UUID como llave primaria. Tipos monetarios: `NUMERIC(1
 1. **Inmutabilidad financiera**: order_items con _at_sale fields, petty_cash con JSONB snapshot + SHA256
 2. **Append-Only**: ticket_configs con versionado incremental
 3. **RBAC con middleware**: role:admin,manager para operaciones sensibles
-4. **Kill-Switch**: Suspension instantanea de usuarios con revocacion de tokens
-5. **Transacciones atomicas**: DB::transaction con lockForUpdate en stock, ordenes, caja chica
-6. **Segmentacion contable 70/30**: Configurable via global_settings, deducciones automaticas
-7. **Validacion dual**: Frontend reactivo + Backend FormRequest (ej: 1 promo por ticket)
+4. **RBAC granular en controlador**: forceDelete exclusivo admin con doble validacion (middleware + logica interna)
+5. **Kill-Switch**: Suspension instantanea de usuarios con revocacion de tokens (usado en UserController y EnsureUserIsActive)
+6. **Transacciones atomicas**: DB::transaction con lockForUpdate en stock, ordenes, caja chica
+7. **Segmentacion contable 70/30**: Configurable via global_settings, deducciones automaticas
+8. **Validacion dual**: Frontend reactivo + Backend FormRequest (ej: 1 promo por ticket)
+9. **URLs firmadas temporales**: URL::temporarySignedRoute para enlaces de restauracion de 4 horas
+10. **Auditoria forense centralizada**: Papelera Global con trazabilidad completa (quien elimino, cuando, por que) via AdvancedSoftDeletes trait
 
-### Proximo Paso Inmediato
-- Implementar el modulo de Usuarios, Roles y Permisos (RBAC) con gestion completa de usuarios, o Notificaciones Reverb para push en tiempo real.
+### Cobertura de Seguridad
+| Capa | Implementacion |
+| :--- | :--- |
+| Autenticacion | Sanctum tokens + 2FA TOTP |
+| Autorizacion | RBAC middleware (admin/manager/vendor) |
+| Kill-Switch | Suspension instantanea + revocacion de tokens |
+| Integridad financiera | HMAC-SHA256 en caja chica, _at_sale inmutables |
+| Borrado logico | AdvancedSoftDeletes con auditoria (who/when/why) |
+| Purga permanente | Admin-only + doble confirmacion textual |
+| URLs seguras | temporarySignedRoute con expiracion de 4 horas |
+| Concurrencia | lockForUpdate en transacciones de stock |
+
+### Estado del Sistema
+Todos los 11 modulos planificados han sido completados exitosamente. El sistema Cronos POS esta listo para pruebas de integracion y despliegue.

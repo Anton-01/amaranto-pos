@@ -1,5 +1,7 @@
 <?php
 
+use App\Http\Controllers\Admin\TrashController;
+use App\Http\Controllers\Admin\UserController;
 use App\Http\Controllers\Auth\AuthController;
 use App\Http\Controllers\Auth\TwoFactorController;
 use App\Http\Controllers\Catalog\CategoryController;
@@ -7,6 +9,7 @@ use App\Http\Controllers\Catalog\ProductController;
 use App\Http\Controllers\Finance\AnalyticsController;
 use App\Http\Controllers\Finance\PettyCashController;
 use App\Http\Controllers\Logistics\StockMovementController;
+use App\Http\Controllers\Profile\NotificationPreferenceController;
 use App\Http\Controllers\Promotion\PromotionController;
 use App\Http\Controllers\Sales\OrderController;
 use App\Http\Controllers\Sales\TicketConfigController;
@@ -68,10 +71,32 @@ Route::middleware(['auth:sanctum', 'user.active'])->group(function () {
         Route::get('/summary', [StockMovementController::class, 'summary']);
     });
 
+    Route::middleware('role:admin,manager')->prefix('admin/users')->group(function () {
+        Route::get('/', [UserController::class, 'index']);
+        Route::post('/', [UserController::class, 'store']);
+        Route::get('/roles', [UserController::class, 'roles']);
+        Route::get('/{user}', [UserController::class, 'show']);
+        Route::post('/{user}/toggle-status', [UserController::class, 'toggleStatus']);
+        Route::delete('/{user}', [UserController::class, 'destroy']);
+        Route::post('/{user}/send-password-reset', [UserController::class, 'sendPasswordReset']);
+        Route::post('/{user}/sessions/{sessionId}/revoke', [UserController::class, 'revokeSession']);
+    });
+
+    Route::middleware('role:admin,manager')->prefix('admin/trash')->group(function () {
+        Route::get('/{type}', [TrashController::class, 'index']);
+        Route::post('/{type}/{id}/restore', [TrashController::class, 'restore']);
+        Route::delete('/{type}/{id}', [TrashController::class, 'forceDelete']);
+    });
+
     Route::middleware('role:admin,manager')->prefix('analytics')->group(function () {
         Route::get('/sales-by-payment', [AnalyticsController::class, 'salesByPaymentMethod']);
         Route::get('/financial-summary', [AnalyticsController::class, 'financialSummary']);
         Route::get('/daily-trend', [AnalyticsController::class, 'dailyTrend']);
+    });
+
+    Route::prefix('profile/notifications')->group(function () {
+        Route::get('/', [NotificationPreferenceController::class, 'index']);
+        Route::put('/', [NotificationPreferenceController::class, 'update']);
     });
 
     Route::prefix('petty-cash')->group(function () {
