@@ -82,7 +82,7 @@ export default function UserProfileDropdown() {
 
         <div className="px-2 py-2">
           <button
-            onClick={() => handleNavigate('/profile/notifications')}
+            onClick={() => handleNavigate('/profile')}
             className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm text-slate-700 transition-colors hover:bg-slate-50"
           >
             <svg className="h-[18px] w-[18px] text-slate-400" fill="none" viewBox="0 0 24 24" strokeWidth={1.75} stroke="currentColor">

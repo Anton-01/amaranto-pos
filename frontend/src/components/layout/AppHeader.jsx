@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useLocation } from 'react-router-dom';
+import { Dialog } from 'primereact/dialog';
 import UserProfileDropdown from './UserProfileDropdown';
 import api from '../../api/axios';
 
@@ -17,12 +18,19 @@ const pageNames = {
   '/admin/usuarios': 'Gestion de Usuarios',
   '/profile/notifications': 'Preferencias de Notificaciones',
   '/admin/papelera': 'Papelera Global',
+  '/admin/configuracion': 'Configuracion del Sistema',
+  '/profile': 'Mi Perfil',
 };
 
-export default function AppHeader({ collapsed, onToggleSidebar }) {
+const fmt = (v) => `$${Number(v).toLocaleString('es-MX', { minimumFractionDigits: 2 })}`;
+
+export default function AppHeader({ onToggleSidebar }) {
   const location = useLocation();
   const [todaySales, setTodaySales] = useState(null);
   const [notificationCount] = useState(0);
+  const [showSalesModal, setShowSalesModal] = useState(false);
+  const [dailySummary, setDailySummary] = useState(null);
+  const [summaryLoading, setSummaryLoading] = useState(false);
 
   const currentPage = pageNames[location.pathname] || '';
 
@@ -41,54 +49,157 @@ export default function AppHeader({ collapsed, onToggleSidebar }) {
     return () => clearInterval(interval);
   }, []);
 
+  const openSalesModal = async () => {
+    setShowSalesModal(true);
+    setSummaryLoading(true);
+    try {
+      const res = await api.get('/sales/daily-summary');
+      setDailySummary(res.data.data);
+    } catch {
+      setDailySummary(null);
+    } finally {
+      setSummaryLoading(false);
+    }
+  };
+
   return (
-    <header className="sticky top-0 z-40 flex h-16 items-center justify-between border-b border-slate-200 bg-white/80 px-4 backdrop-blur-md sm:px-6">
-      <div className="flex items-center gap-3">
-        <button
-          onClick={onToggleSidebar}
-          className="flex h-9 w-9 items-center justify-center rounded-lg text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700"
-        >
-          <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.75} stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" />
-          </svg>
-        </button>
+    <>
+      <header className="sticky top-0 z-40 flex h-16 items-center justify-between border-b border-slate-200 bg-white/80 px-4 backdrop-blur-md sm:px-6">
+        <div className="flex items-center gap-3">
+          <button
+            onClick={onToggleSidebar}
+            className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-lg text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700"
+          >
+            <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.75} stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" />
+            </svg>
+          </button>
 
-        <div className="hidden items-center gap-3 sm:flex">
-          <h1 className="text-sm font-semibold text-slate-800">{currentPage}</h1>
+          <div className="hidden items-center gap-3 sm:flex">
+            <h1 className="text-sm font-semibold text-slate-800">{currentPage}</h1>
 
-          {todaySales !== null && (
-            <>
-              <div className="h-4 w-px bg-slate-200" />
-              <div className="flex items-center gap-1.5 rounded-lg bg-emerald-50 px-2.5 py-1">
-                <div className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-                <span className="text-[11px] font-semibold text-emerald-700">
-                  {todaySales} venta{todaySales !== 1 ? 's' : ''} hoy
-                </span>
+            {todaySales !== null && (
+              <>
+                <div className="h-4 w-px bg-slate-200" />
+                <div className="flex items-center gap-1.5 rounded-lg bg-emerald-50 px-2.5 py-1">
+                  <div className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                  <span className="text-[11px] font-semibold text-emerald-700">
+                    {todaySales} venta{todaySales !== 1 ? 's' : ''} hoy
+                  </span>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <button
+            onClick={openSalesModal}
+            className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-lg text-slate-500 transition-colors hover:bg-indigo-50 hover:text-indigo-600"
+            title="Resumen del dia"
+          >
+            <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.75} stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M21 12a2.25 2.25 0 0 0-2.25-2.25H15a3 3 0 1 1-6 0H5.25A2.25 2.25 0 0 0 3 12m18 0v6a2.25 2.25 0 0 1-2.25 2.25H5.25A2.25 2.25 0 0 1 3 18v-6m18 0V9M3 12V9m18 0a2.25 2.25 0 0 0-2.25-2.25H5.25A2.25 2.25 0 0 0 3 9m18 0V6a2.25 2.25 0 0 0-2.25-2.25H5.25A2.25 2.25 0 0 0 3 6v3" />
+            </svg>
+          </button>
+
+          <button
+            className="relative flex h-9 w-9 cursor-pointer items-center justify-center rounded-lg text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700"
+            title="Notificaciones"
+          >
+            <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.75} stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M14.857 17.082a23.848 23.848 0 0 0 5.454-1.31A8.967 8.967 0 0 1 18 9.75V9A6 6 0 0 0 6 9v.75a8.967 8.967 0 0 1-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 0 1-5.714 0m5.714 0a3 3 0 1 1-5.714 0" />
+            </svg>
+            {notificationCount > 0 && (
+              <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-rose-500 px-1 text-[10px] font-bold text-white">
+                {notificationCount > 9 ? '9+' : notificationCount}
+              </span>
+            )}
+          </button>
+
+          <div className="mx-1 h-6 w-px bg-slate-200" />
+
+          <UserProfileDropdown />
+        </div>
+      </header>
+
+      <Dialog
+        visible={showSalesModal}
+        onHide={() => setShowSalesModal(false)}
+        modal
+        header={null}
+        className="w-full max-w-md"
+        pt={{
+          mask: { className: 'backdrop-blur-sm bg-black/30' },
+          root: { className: 'rounded-2xl border-0 shadow-2xl' },
+          content: { className: 'p-0' },
+        }}
+      >
+        <div className="p-6">
+          <div className="mb-5 flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-50">
+              <svg className="h-5 w-5 text-indigo-600" fill="none" viewBox="0 0 24 24" strokeWidth={1.75} stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M21 12a2.25 2.25 0 0 0-2.25-2.25H15a3 3 0 1 1-6 0H5.25A2.25 2.25 0 0 0 3 12m18 0v6a2.25 2.25 0 0 1-2.25 2.25H5.25A2.25 2.25 0 0 1 3 18v-6m18 0V9M3 12V9m18 0a2.25 2.25 0 0 0-2.25-2.25H5.25A2.25 2.25 0 0 0 3 9m18 0V6a2.25 2.25 0 0 0-2.25-2.25H5.25A2.25 2.25 0 0 0 3 6v3" />
+              </svg>
+            </div>
+            <div>
+              <h3 className="text-lg font-semibold text-slate-900">Resumen del Dia</h3>
+              <p className="text-xs text-slate-500">{new Date().toLocaleDateString('es-MX', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</p>
+            </div>
+          </div>
+
+          {summaryLoading ? (
+            <div className="flex h-40 items-center justify-center">
+              <div className="h-6 w-6 animate-spin rounded-full border-3 border-indigo-600 border-t-transparent" />
+            </div>
+          ) : dailySummary ? (
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="rounded-xl bg-indigo-50 p-4">
+                  <p className="text-[11px] font-medium text-indigo-600">Ingreso Bruto</p>
+                  <p className="mt-1 text-xl font-bold text-indigo-900">{fmt(dailySummary.gross_income)}</p>
+                </div>
+                <div className="rounded-xl bg-emerald-50 p-4">
+                  <p className="text-[11px] font-medium text-emerald-600">Ingreso Neto</p>
+                  <p className="mt-1 text-xl font-bold text-emerald-900">{fmt(dailySummary.net_income)}</p>
+                </div>
               </div>
-            </>
+
+              <div className="rounded-xl border border-slate-200 p-4">
+                <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-400">Desglose por Metodo</p>
+                <div className="space-y-2">
+                  {[
+                    { label: 'Efectivo', value: dailySummary.by_payment.efectivo, color: 'bg-emerald-500' },
+                    { label: 'Tarjeta', value: dailySummary.by_payment.tarjeta, color: 'bg-indigo-500' },
+                    { label: 'Transferencia', value: dailySummary.by_payment.transferencia, color: 'bg-amber-500' },
+                  ].map((item) => (
+                    <div key={item.label} className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className={`h-2 w-2 rounded-full ${item.color}`} />
+                        <span className="text-sm text-slate-700">{item.label}</span>
+                      </div>
+                      <span className="text-sm font-semibold text-slate-900">{fmt(item.value)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between rounded-xl bg-rose-50 p-4">
+                <div>
+                  <p className="text-[11px] font-medium text-rose-600">Egresos Caja Chica</p>
+                  <p className="mt-0.5 text-lg font-bold text-rose-900">-{fmt(dailySummary.petty_cash_total)}</p>
+                </div>
+                <div className="text-right">
+                  <p className="text-[11px] font-medium text-slate-500">Ordenes</p>
+                  <p className="mt-0.5 text-lg font-bold text-slate-900">{dailySummary.order_count}</p>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <p className="py-8 text-center text-sm text-slate-400">No se pudieron cargar los datos.</p>
           )}
         </div>
-      </div>
-
-      <div className="flex items-center gap-2">
-        <button
-          className="relative flex h-9 w-9 items-center justify-center rounded-lg text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700"
-          title="Notificaciones"
-        >
-          <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.75} stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M14.857 17.082a23.848 23.848 0 0 0 5.454-1.31A8.967 8.967 0 0 1 18 9.75V9A6 6 0 0 0 6 9v.75a8.967 8.967 0 0 1-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 0 1-5.714 0m5.714 0a3 3 0 1 1-5.714 0" />
-          </svg>
-          {notificationCount > 0 && (
-            <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-rose-500 px-1 text-[10px] font-bold text-white">
-              {notificationCount > 9 ? '9+' : notificationCount}
-            </span>
-          )}
-        </button>
-
-        <div className="mx-1 h-6 w-px bg-slate-200" />
-
-        <UserProfileDropdown />
-      </div>
-    </header>
+      </Dialog>
+    </>
   );
 }

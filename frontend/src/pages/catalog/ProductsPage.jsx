@@ -97,19 +97,27 @@ export default function ProductsPage() {
   );
 
   const actionsTemplate = (row) => (
-    <div className="flex gap-2">
-      <button
+    <div className="flex gap-1">
+      <Button
+        icon="pi pi-pencil"
+        severity="info"
+        text
+        rounded
         onClick={() => navigate(`/products/${row.id}/edit`)}
-        className="text-indigo-600 hover:text-indigo-800 text-sm font-medium"
-      >
-        Editar
-      </button>
-      <button
+        className="cursor-pointer !h-8 !w-8"
+        tooltip="Editar"
+        tooltipOptions={{ position: 'top' }}
+      />
+      <Button
+        icon="pi pi-trash"
+        severity="danger"
+        text
+        rounded
         onClick={() => setDeleteTarget(row)}
-        className="text-rose-600 hover:text-rose-800 text-sm font-medium"
-      >
-        Eliminar
-      </button>
+        className="cursor-pointer !h-8 !w-8"
+        tooltip="Eliminar"
+        tooltipOptions={{ position: 'top' }}
+      />
     </div>
   );
 

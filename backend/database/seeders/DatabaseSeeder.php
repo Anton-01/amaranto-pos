@@ -79,5 +79,26 @@ class DatabaseSeeder extends Seeder
             'key' => 'investment_split',
             'value' => ['investment_pct' => 70, 'profit_pct' => 30],
         ]);
+
+        GlobalSetting::create([
+            'key' => 'timezone',
+            'value' => ['timezone' => 'America/Mexico_City', 'label' => 'Ciudad de México (UTC-6)'],
+        ]);
+
+        GlobalSetting::create([
+            'key' => 'currency',
+            'value' => ['code' => 'MXN', 'symbol' => '$', 'label' => 'Peso Mexicano'],
+        ]);
+
+        GlobalSetting::create([
+            'key' => 'fiscal_data',
+            'value' => [
+                'business_name' => 'Cronos Fast Food',
+                'rfc' => 'XAXX010101000',
+                'address' => 'Av. Principal #123, Col. Centro',
+                'city' => 'Ciudad de México',
+                'phone' => '55-1234-5678',
+            ],
+        ]);
     }
 }

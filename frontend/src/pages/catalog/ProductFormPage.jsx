@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { InputText } from 'primereact/inputtext';
 import { InputNumber } from 'primereact/inputnumber';
 import { Dropdown } from 'primereact/dropdown';
+import { FileUpload } from 'primereact/fileupload';
 import { Button } from 'primereact/button';
 import { toast } from 'sonner';
 import api from '../../api/axios';
@@ -31,6 +32,9 @@ export default function ProductFormPage() {
   const [saving, setSaving] = useState(false);
   const [loadingData, setLoadingData] = useState(true);
   const [variationCount, setVariationCount] = useState(0);
+  const [fieldErrors, setFieldErrors] = useState({});
+  const [imageUrl, setImageUrl] = useState(null);
+  const [uploadingImage, setUploadingImage] = useState(false);
 
   const fetchCategories = useCallback(async () => {
     try {
@@ -58,6 +62,7 @@ export default function ProductFormPage() {
         maximum_stock: p.maximum_stock,
         is_active: p.is_active,
       });
+      setImageUrl(p.image_url || null);
     } catch {
       toast.error('Error al cargar producto.');
       navigate('/products');
@@ -103,17 +108,18 @@ export default function ProductFormPage() {
     if (err) { toast.error(err); return; }
 
     setSaving(true);
+    setFieldErrors({});
     try {
       await submitProduct();
       toast.success(isEditing ? 'Producto actualizado.' : 'Producto creado.');
       navigate('/products');
     } catch (error) {
-      const msg = error.response?.data?.message || 'Error al guardar.';
-      const fieldErrors = error.response?.data?.errors;
-      if (fieldErrors) {
-        Object.values(fieldErrors).flat().forEach(e => toast.error(e));
+      const errors = error.response?.data?.errors;
+      if (errors) {
+        setFieldErrors(Object.fromEntries(Object.entries(errors).map(([k, v]) => [k, v[0]])));
+        toast.warning('Verifica los campos marcados.');
       } else {
-        toast.error(msg);
+        toast.error(error.response?.data?.message || 'Error al guardar.');
       }
     } finally {
       setSaving(false);
@@ -200,6 +206,7 @@ export default function ProductFormPage() {
                 className="w-full rounded-lg border-slate-200 px-3 py-2.5 text-sm font-mono"
                 pt={{ root: { className: 'w-full' } }}
               />
+              {fieldErrors.sku && <p className="mt-1 text-xs text-rose-500">{fieldErrors.sku}</p>}
             </div>
 
             <div>
@@ -240,6 +247,57 @@ export default function ProductFormPage() {
                 className="w-full rounded-lg border-slate-200 text-sm"
                 pt={{ root: { className: 'w-full' } }}
               />
+            </div>
+
+            <div>
+              <label className="mb-1.5 block text-sm font-medium text-slate-700">Imagen del Producto</label>
+              {imageUrl && (
+                <div className="mb-2 flex items-center gap-3">
+                  <img src={imageUrl} alt="Producto" className="h-16 w-16 rounded-lg object-cover ring-1 ring-slate-200" />
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      if (!id) return;
+                      try {
+                        await api.delete(`/products/${id}/image`);
+                        setImageUrl(null);
+                        toast.success('Imagen eliminada.');
+                      } catch { toast.error('Error al eliminar imagen.'); }
+                    }}
+                    className="text-xs text-rose-600 hover:text-rose-800 cursor-pointer"
+                  >
+                    Eliminar imagen
+                  </button>
+                </div>
+              )}
+              {isEditing && (
+                <FileUpload
+                  mode="basic"
+                  accept="image/jpeg,image/png"
+                  maxFileSize={2097152}
+                  chooseLabel={uploadingImage ? 'Subiendo...' : 'Seleccionar imagen'}
+                  disabled={uploadingImage || saving}
+                  auto
+                  customUpload
+                  uploadHandler={async (e) => {
+                    setUploadingImage(true);
+                    try {
+                      const fd = new FormData();
+                      fd.append('image', e.files[0]);
+                      const res = await api.post(`/products/${id}/image`, fd, { headers: { 'Content-Type': 'multipart/form-data' } });
+                      setImageUrl(res.data.data.image_url);
+                      toast.success('Imagen subida correctamente.');
+                    } catch (err) {
+                      toast.error(err.response?.data?.message || 'Error al subir imagen.');
+                    } finally {
+                      setUploadingImage(false);
+                      e.options.clear();
+                    }
+                  }}
+                  className="text-sm"
+                />
+              )}
+              {!isEditing && <p className="text-xs text-slate-400">Guarda el producto primero para subir una imagen.</p>}
             </div>
 
             <div className="flex items-center gap-2">

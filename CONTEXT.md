@@ -22,6 +22,13 @@
 | Finanzas Avanzadas (70/30) & Stock | [🟢 Completado] | [🟢 Completado] | Recharts dashboard, 70/30 split, stock movements con merma validada |
 | Notificaciones Reverb (Push/Mail)| [🟢 Completado] | [🟢 Completado] | Preferencias matriciales mail/database por rol |
 | Papelera Global (Soft Deletes)| [🟢 Completado] | [🟢 Completado] | Auditoria forense, restore/purge con RBAC admin-only |
+| Configuracion del Sistema | [🟢 Completado] | [🟢 Completado] | Settings globales (timezone, moneda, fiscal, IVA, split) |
+| Perfil de Usuario | [🟢 Completado] | [🟢 Completado] | Editar perfil, cambiar contraseña, auditoria sesiones |
+| Dashboard Avanzado | [🟢 Completado] | [🟢 Completado] | KPIs, tendencia horaria (LineChart), top productos (PieChart) |
+| Validaciones Anti-Duplicados | [🟢 Completado] | [🟢 Completado] | Unique constraints + field-level error display |
+| Upload Imagen Producto | [🟢 Completado] | [🟢 Completado] | Storage local, FileUpload PrimeReact, preview + delete |
+| Ventas Diarias (Header Modal) | [🟢 Completado] | [🟢 Completado] | Resumen diario con desglose por metodo de pago |
+| Botones Icono DataTables | N/A | [🟢 Completado] | Iconos PrimeReact con tooltips en todas las tablas |
 
 ## 3. Detalle del Modulo Completado: Migraciones & Modelos Base
 
@@ -817,3 +824,66 @@ Se refactorizo por completo el layout global del sistema, migrando de una barra 
 **Archivos modificados:**
 - `frontend/src/components/layout/AppLayout.jsx` — Reescrito como AppShell con Sidebar + Header
 - `frontend/src/index.css` — Agregado `aside` a reglas @media print para ocultar sidebar al imprimir
+
+#### Sprint de Optimizacion Masiva: 7 Deudas Tecnicas Resueltas (Post-Sidebar)
+
+##### Tarea 1: Validaciones Anti-Duplicados + Errores de Campo [🟢 Completado]
+- **Backend**: Agregadas reglas `unique` en FormRequests para categorias (`unique:categories,name`) y promociones (`unique:promotions,name`), con `Rule::unique()->ignore()` en updates. Productos ya tenian SKU unico, usuarios ya tenian email unico.
+- **Frontend**: Patron unificado de `fieldErrors` state en CategoriesPage, ProductFormPage, PromotionsPage y UsersPage. Parseo de `err.response.data.errors` en catch 422 para mostrar errores bajo cada campo con `text-rose-500`.
+
+##### Tarea 2: Modulo de Configuracion del Sistema [🟢 Completado]
+- **Backend**: `SystemSettingsController` con `index()` (retorna settings keyed by key) y `update()` (upsert en transaccion con `updated_by`). Migracion `add_system_columns` agrega `updated_by`, `created_at`, `updated_at` a `global_settings`. Modelo `GlobalSetting` actualizado con relacion `updatedByUser()`. Seeds: timezone, currency, fiscal_data.
+- **Frontend**: `SystemSettingsPage` (`/admin/configuracion`) con TabView de 3 tabs: Region (timezone + currency dropdowns), Datos Fiscales (razon social, RFC, direccion, ciudad, telefono), Impuestos & Finanzas (IVA %, split inversion/utilidad). Ruta protegida con role:admin,manager.
+
+##### Tarea 3: Modal de Ventas Diarias en Header [🟢 Completado]
+- **Backend**: `DailySummaryController` (invokable) en `GET /api/sales/daily-summary`. Retorna: gross_income, net_income, total_tax, order_count, desglose por metodo de pago, total caja chica del dia.
+- **Frontend**: Boton "billetera" en `AppHeader.jsx` que abre Dialog con resumen del dia: ingresos brutos/netos, IVA, ordenes, desglose por metodo de pago, total caja chica.
+
+##### Tarea 4: Botones de Icono en DataTables [🟢 Completado]
+- Reemplazo global de botones de texto ("Editar", "Eliminar", "Suspender", etc.) por Button con iconos PrimeReact (`pi-pencil`, `pi-trash`, `pi-ban`, `pi-key`, `pi-undo`, `pi-times-circle`, `pi-search`) con tooltips. Paginas actualizadas: CategoriesPage, ProductsPage, PromotionsPage, UsersPage, PettyCashPage, TrashPage.
+
+##### Tarea 5: Upload de Imagen de Producto (Storage Local) [🟢 Completado]
+- **Backend**: `ProductImageController` con `upload()` (valida jpeg/png max 2MB, almacena en disk 'public') y `destroy()` (elimina archivo y limpia image_url). Migracion agrega `image_url` (varchar 500) a products. `docker-entrypoint.sh` actualizado con `php artisan storage:link`.
+- **Frontend**: FileUpload de PrimeReact en `ProductFormPage` (solo en modo edicion). Preview de imagen con boton de eliminar. Envio multipart/form-data.
+
+##### Tarea 6: Pagina de Perfil de Usuario [🟢 Completado]
+- **Backend**: `ProfileController` con `show()`, `update()` (name, phone), `updatePassword()` (valida current_password con Hash::check), `sessions()` (ultimas 10 sesiones), `revokeSession()` (revoca sesion propia). Migracion agrega `phone` y `avatar_url` a users.
+- **Frontend**: `ProfilePage` (`/profile`) con 3 secciones: Datos Personales (avatar con iniciales, nombre, email read-only, telefono), Seguridad (cambio de contraseña con validacion, estado 2FA), Auditoria de Sesiones (grid con IP, navegador, indicador activa, boton revocar).
+
+##### Tarea 7: Dashboard Transformado con Graficas [🟢 Completado]
+- **Backend**: `DashboardController` con `stats()` (ventas mes, ordenes hoy, ticket promedio, alertas stock bajo), `hourlyTrend()` (array 24h con ventas por hora via PostgreSQL EXTRACT), `topProducts()` (top 5 productos por cantidad vendida con joins order_items+orders+products).
+- **Frontend**: `DashboardPage` reescrito con 4 KPI cards, LineChart (Recharts) para tendencia horaria de ventas, PieChart (donut) para top 5 productos del mes.
+
+**Archivos creados en este sprint:**
+- `backend/app/Http/Controllers/Admin/SystemSettingsController.php`
+- `backend/app/Http/Controllers/Sales/DailySummaryController.php`
+- `backend/app/Http/Controllers/Dashboard/DashboardController.php`
+- `backend/app/Http/Controllers/Catalog/ProductImageController.php`
+- `backend/app/Http/Controllers/Profile/ProfileController.php`
+- `backend/database/migrations/2026_06_16_000001_add_system_columns.php`
+- `frontend/src/pages/admin/SystemSettingsPage.jsx`
+- `frontend/src/pages/profile/ProfilePage.jsx`
+
+**Archivos modificados en este sprint:**
+- `backend/app/Http/Requests/Category/StoreCategoryRequest.php` — unique name
+- `backend/app/Http/Requests/Category/UpdateCategoryRequest.php` — unique name ignore
+- `backend/app/Http/Requests/Promotion/StorePromotionRequest.php` — unique name
+- `backend/app/Http/Requests/Promotion/UpdatePromotionRequest.php` — unique name ignore
+- `backend/app/Models/Product.php` — image_url fillable
+- `backend/app/Models/User.php` — phone, avatar_url fillable
+- `backend/app/Models/GlobalSetting.php` — updated_by, timestamps, updatedByUser relation
+- `backend/database/seeders/DatabaseSeeder.php` — timezone, currency, fiscal_data seeds
+- `backend/routes/api.php` — ~15 rutas nuevas (settings, daily-summary, dashboard, product image, profile)
+- `backend/docker-entrypoint.sh` — storage:link
+- `frontend/src/App.jsx` — Rutas /profile, /admin/configuracion
+- `frontend/src/components/layout/Sidebar.jsx` — Nav item "Configuracion"
+- `frontend/src/components/layout/AppHeader.jsx` — Modal ventas diarias
+- `frontend/src/components/layout/UserProfileDropdown.jsx` — Link "Mi Perfil" → /profile
+- `frontend/src/pages/DashboardPage.jsx` — Reescrito con KPIs + Recharts
+- `frontend/src/pages/catalog/CategoriesPage.jsx` — fieldErrors + icon buttons
+- `frontend/src/pages/catalog/ProductsPage.jsx` — icon buttons
+- `frontend/src/pages/catalog/ProductFormPage.jsx` — fieldErrors + image upload
+- `frontend/src/pages/promotions/PromotionsPage.jsx` — fieldErrors + icon buttons
+- `frontend/src/pages/admin/UsersPage.jsx` — fieldErrors + icon buttons
+- `frontend/src/pages/finance/PettyCashPage.jsx` — icon buttons
+- `frontend/src/pages/admin/TrashPage.jsx` — icon buttons

@@ -1,16 +1,21 @@
 <?php
 
+use App\Http\Controllers\Admin\SystemSettingsController;
 use App\Http\Controllers\Admin\TrashController;
 use App\Http\Controllers\Admin\UserController;
 use App\Http\Controllers\Auth\AuthController;
 use App\Http\Controllers\Auth\TwoFactorController;
 use App\Http\Controllers\Catalog\CategoryController;
 use App\Http\Controllers\Catalog\ProductController;
+use App\Http\Controllers\Catalog\ProductImageController;
+use App\Http\Controllers\Dashboard\DashboardController;
 use App\Http\Controllers\Finance\AnalyticsController;
 use App\Http\Controllers\Finance\PettyCashController;
 use App\Http\Controllers\Logistics\StockMovementController;
 use App\Http\Controllers\Profile\NotificationPreferenceController;
+use App\Http\Controllers\Profile\ProfileController;
 use App\Http\Controllers\Promotion\PromotionController;
+use App\Http\Controllers\Sales\DailySummaryController;
 use App\Http\Controllers\Sales\OrderController;
 use App\Http\Controllers\Sales\TicketConfigController;
 use Illuminate\Support\Facades\Route;
@@ -39,6 +44,8 @@ Route::middleware(['auth:sanctum', 'user.active'])->group(function () {
 
     Route::get('products/grouped', [ProductController::class, 'grouped']);
     Route::apiResource('products', ProductController::class);
+    Route::post('products/{product}/image', [ProductImageController::class, 'upload']);
+    Route::delete('products/{product}/image', [ProductImageController::class, 'destroy']);
 
     Route::get('promotions/active', [PromotionController::class, 'active']);
     Route::get('promotions', [PromotionController::class, 'index']);
@@ -65,6 +72,14 @@ Route::middleware(['auth:sanctum', 'user.active'])->group(function () {
     Route::post('orders', [OrderController::class, 'store']);
     Route::get('orders/{order}', [OrderController::class, 'show']);
 
+    Route::get('sales/daily-summary', DailySummaryController::class);
+
+    Route::prefix('dashboard')->group(function () {
+        Route::get('/stats', [DashboardController::class, 'stats']);
+        Route::get('/hourly-trend', [DashboardController::class, 'hourlyTrend']);
+        Route::get('/top-products', [DashboardController::class, 'topProducts']);
+    });
+
     Route::prefix('stock-movements')->group(function () {
         Route::get('/', [StockMovementController::class, 'index']);
         Route::post('/', [StockMovementController::class, 'store']);
@@ -82,10 +97,15 @@ Route::middleware(['auth:sanctum', 'user.active'])->group(function () {
         Route::post('/{user}/sessions/{sessionId}/revoke', [UserController::class, 'revokeSession']);
     });
 
-    Route::middleware('role:admin,manager')->prefix('admin/trash')->group(function () {
-        Route::get('/{type}', [TrashController::class, 'index']);
-        Route::post('/{type}/{id}/restore', [TrashController::class, 'restore']);
-        Route::delete('/{type}/{id}', [TrashController::class, 'forceDelete']);
+    Route::middleware('role:admin,manager')->prefix('admin')->group(function () {
+        Route::prefix('trash')->group(function () {
+            Route::get('/{type}', [TrashController::class, 'index']);
+            Route::post('/{type}/{id}/restore', [TrashController::class, 'restore']);
+            Route::delete('/{type}/{id}', [TrashController::class, 'forceDelete']);
+        });
+
+        Route::get('/settings', [SystemSettingsController::class, 'index']);
+        Route::put('/settings', [SystemSettingsController::class, 'update']);
     });
 
     Route::middleware('role:admin,manager')->prefix('analytics')->group(function () {
@@ -94,9 +114,17 @@ Route::middleware(['auth:sanctum', 'user.active'])->group(function () {
         Route::get('/daily-trend', [AnalyticsController::class, 'dailyTrend']);
     });
 
-    Route::prefix('profile/notifications')->group(function () {
-        Route::get('/', [NotificationPreferenceController::class, 'index']);
-        Route::put('/', [NotificationPreferenceController::class, 'update']);
+    Route::prefix('profile')->group(function () {
+        Route::get('/', [ProfileController::class, 'show']);
+        Route::put('/', [ProfileController::class, 'update']);
+        Route::put('/password', [ProfileController::class, 'updatePassword']);
+        Route::get('/sessions', [ProfileController::class, 'sessions']);
+        Route::post('/sessions/{sessionId}/revoke', [ProfileController::class, 'revokeSession']);
+
+        Route::prefix('notifications')->group(function () {
+            Route::get('/', [NotificationPreferenceController::class, 'index']);
+            Route::put('/', [NotificationPreferenceController::class, 'update']);
+        });
     });
 
     Route::prefix('petty-cash')->group(function () {
