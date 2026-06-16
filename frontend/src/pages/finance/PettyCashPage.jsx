@@ -89,12 +89,16 @@ export default function PettyCashPage() {
   };
 
   const actionsTemplate = (row) => (
-    <button
+    <Button
+      icon="pi pi-search"
+      severity="info"
+      text
+      rounded
       onClick={() => setAuditTarget(row.id)}
-      className="text-indigo-600 hover:text-indigo-800 text-sm font-medium"
-    >
-      Auditar
-    </button>
+      className="cursor-pointer !h-8 !w-8"
+      tooltip="Auditar"
+      tooltipOptions={{ position: 'top' }}
+    />
   );
 
   return (

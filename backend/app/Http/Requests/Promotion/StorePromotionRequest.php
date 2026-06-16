@@ -14,7 +14,7 @@ class StorePromotionRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'name' => 'required|string|max:100',
+            'name' => 'required|string|max:100|unique:promotions,name',
             'type' => 'required|string|in:percentage,fixed_amount,freebie_100',
             'value' => 'required|numeric|min:0|max:9999999999.99',
             'start_date' => 'required|date',
@@ -22,6 +22,13 @@ class StorePromotionRequest extends FormRequest
             'is_active' => 'boolean',
             'product_ids' => 'sometimes|array',
             'product_ids.*' => 'uuid|exists:products,id',
+        ];
+    }
+
+    public function messages(): array
+    {
+        return [
+            'name.unique' => 'Ya existe una promoción con este nombre.',
         ];
     }
 }

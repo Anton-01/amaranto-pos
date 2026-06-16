@@ -28,7 +28,13 @@ if ! composer show laravel/reverb > /dev/null 2>&1; then
     php artisan vendor:publish --provider="Laravel\Reverb\ReverbServiceProvider" --force 2>/dev/null || true
 fi
 
-# 5. Run migrations and seeders
+# 5. Create storage symlink for public file serving
+if [ ! -L "public/storage" ]; then
+    echo "→ Creating storage symlink..."
+    php artisan storage:link
+fi
+
+# 6. Run migrations and seeders
 echo "→ Running migrations with seed..."
 php artisan migrate:fresh --seed --force
 

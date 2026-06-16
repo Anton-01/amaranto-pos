@@ -24,6 +24,7 @@ class Product extends Model
         'minimum_stock',
         'maximum_stock',
         'is_active',
+        'image_url',
     ];
 
     protected function casts(): array

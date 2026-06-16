@@ -49,6 +49,7 @@ export default function PromotionsPage() {
 
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [deleting, setDeleting] = useState(false);
+  const [fieldErrors, setFieldErrors] = useState({});
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -73,6 +74,7 @@ export default function PromotionsPage() {
   const openCreate = () => {
     setEditingPromo(null);
     setFormData({ ...emptyForm });
+    setFieldErrors({});
     setShowForm(true);
   };
 
@@ -110,9 +112,10 @@ export default function PromotionsPage() {
       setShowForm(false);
       fetchData();
     } catch (err) {
-      const fieldErrors = err.response?.data?.errors;
-      if (fieldErrors) {
-        Object.values(fieldErrors).flat().forEach(e => toast.error(e));
+      const errors = err.response?.data?.errors;
+      if (errors) {
+        setFieldErrors(Object.fromEntries(Object.entries(errors).map(([k, v]) => [k, v[0]])));
+        toast.warning('Verifica los campos marcados.');
       } else {
         toast.error(err.response?.data?.message || 'Error al guardar.');
       }
@@ -175,9 +178,27 @@ export default function PromotionsPage() {
   const actionsTemplate = (row) => {
     if (!canManage) return null;
     return (
-      <div className="flex gap-2">
-        <button onClick={() => openEdit(row)} className="text-indigo-600 hover:text-indigo-800 text-sm font-medium">Editar</button>
-        <button onClick={() => setDeleteTarget(row)} className="text-rose-600 hover:text-rose-800 text-sm font-medium">Eliminar</button>
+      <div className="flex gap-1">
+        <Button
+          icon="pi pi-pencil"
+          severity="info"
+          text
+          rounded
+          onClick={() => openEdit(row)}
+          className="cursor-pointer !h-8 !w-8"
+          tooltip="Editar"
+          tooltipOptions={{ position: 'top' }}
+        />
+        <Button
+          icon="pi pi-trash"
+          severity="danger"
+          text
+          rounded
+          onClick={() => setDeleteTarget(row)}
+          className="cursor-pointer !h-8 !w-8"
+          tooltip="Eliminar"
+          tooltipOptions={{ position: 'top' }}
+        />
       </div>
     );
   };
@@ -263,6 +284,7 @@ export default function PromotionsPage() {
                 className="w-full rounded-lg border-slate-200 px-3 py-2 text-sm"
                 pt={{ root: { className: 'w-full' } }}
               />
+              {fieldErrors.name && <p className="mt-1 text-xs text-rose-500">{fieldErrors.name}</p>}
             </div>
 
             <div className="grid grid-cols-2 gap-4">

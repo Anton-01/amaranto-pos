@@ -184,28 +184,30 @@ export default function TrashPage() {
   };
 
   const actionsColumn = (rowData) => (
-    <div className="flex items-center gap-2">
+    <div className="flex items-center gap-1">
       <Button
-        label="Restaurar"
-        size="small"
+        icon="pi pi-undo"
         severity="success"
-        outlined
+        text
+        rounded
         loading={actionLoading === rowData.id}
         onClick={() => handleRestore(rowData)}
-        className="text-xs"
+        className="cursor-pointer !h-8 !w-8"
+        tooltip="Restaurar"
+        tooltipOptions={{ position: 'top' }}
       />
       <Button
-        label="Purgar"
-        size="small"
+        icon="pi pi-times-circle"
         severity="danger"
-        outlined
+        text
+        rounded
         disabled={!isAdmin}
         onClick={() => {
           setPurgeModal({ visible: true, item: rowData });
           setPurgeConfirmation('');
         }}
-        className="text-xs"
-        tooltip={!isAdmin ? 'Solo administradores' : undefined}
+        className="cursor-pointer !h-8 !w-8"
+        tooltip={!isAdmin ? 'Solo administradores' : 'Purgar permanentemente'}
         tooltipOptions={{ position: 'top' }}
       />
     </div>

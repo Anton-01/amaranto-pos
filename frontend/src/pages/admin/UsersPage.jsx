@@ -69,6 +69,7 @@ export default function UsersPage() {
   const [showDelete, setShowDelete] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [deleteReason, setDeleteReason] = useState('');
+  const [fieldErrors, setFieldErrors] = useState({});
 
   const [detailUser, setDetailUser] = useState(null);
   const [detailData, setDetailData] = useState(null);
@@ -160,6 +161,7 @@ export default function UsersPage() {
   const handleCreateUser = async (e) => {
     e.preventDefault();
     setSaving(true);
+    setFieldErrors({});
     try {
       await api.post('/admin/users', formData);
       toast.success('Usuario creado exitosamente.');
@@ -167,12 +169,12 @@ export default function UsersPage() {
       setFormData({ ...emptyForm });
       fetchUsers();
     } catch (err) {
-      const data = err.response?.data;
-      const fieldErrors = data?.errors;
-      if (fieldErrors) {
-        Object.values(fieldErrors).flat().forEach(e => toast.error(e));
+      const errors = err.response?.data?.errors;
+      if (errors) {
+        setFieldErrors(Object.fromEntries(Object.entries(errors).map(([k, v]) => [k, v[0]])));
+        toast.warning('Verifica los campos marcados.');
       } else {
-        toast.error(data?.message || 'Error al crear usuario.');
+        toast.error(err.response?.data?.message || 'Error al crear usuario.');
       }
     } finally {
       setSaving(false);
@@ -211,32 +213,37 @@ export default function UsersPage() {
   };
 
   const actionsTemplate = (row) => (
-    <div className="flex items-center gap-1">
-      <button
+    <div className="flex items-center gap-0.5">
+      <Button
+        icon={row.status === 'active' ? 'pi pi-ban' : 'pi pi-check-circle'}
+        severity={row.status === 'active' ? 'warning' : 'success'}
+        text
+        rounded
         onClick={() => handleToggleStatus(row)}
-        title={row.status === 'active' ? 'Suspender' : 'Activar'}
-        className={`rounded-md px-2 py-1 text-xs font-medium transition-colors ${
-          row.status === 'active'
-            ? 'text-amber-700 bg-amber-50 hover:bg-amber-100'
-            : 'text-emerald-700 bg-emerald-50 hover:bg-emerald-100'
-        }`}
-      >
-        {row.status === 'active' ? 'Suspender' : 'Activar'}
-      </button>
-      <button
+        className="cursor-pointer !h-8 !w-8"
+        tooltip={row.status === 'active' ? 'Suspender' : 'Activar'}
+        tooltipOptions={{ position: 'top' }}
+      />
+      <Button
+        icon="pi pi-key"
+        severity="info"
+        text
+        rounded
         onClick={() => handleSendReset(row)}
-        title="Enviar enlace de restauracion"
-        className="rounded-md bg-indigo-50 px-2 py-1 text-xs font-medium text-indigo-700 hover:bg-indigo-100 transition-colors"
-      >
-        Reset
-      </button>
-      <button
+        className="cursor-pointer !h-8 !w-8"
+        tooltip="Reset contraseña"
+        tooltipOptions={{ position: 'top' }}
+      />
+      <Button
+        icon="pi pi-trash"
+        severity="danger"
+        text
+        rounded
         onClick={() => { setDeleteTarget(row); setShowDelete(true); }}
-        title="Eliminar usuario"
-        className="rounded-md bg-rose-50 px-2 py-1 text-xs font-medium text-rose-700 hover:bg-rose-100 transition-colors"
-      >
-        Eliminar
-      </button>
+        className="cursor-pointer !h-8 !w-8"
+        tooltip="Eliminar"
+        tooltipOptions={{ position: 'top' }}
+      />
     </div>
   );
 
@@ -538,6 +545,7 @@ export default function UsersPage() {
               <label className="mb-1.5 block text-sm font-medium text-slate-700">Email *</label>
               <InputText value={formData.email} onChange={(e) => set('email', e.target.value)} disabled={saving}
                 className="w-full rounded-lg border-slate-200 px-3 py-2.5 text-sm" pt={{ root: { className: 'w-full' } }} />
+              {fieldErrors.email && <p className="mt-1 text-xs text-rose-500">{fieldErrors.email}</p>}
             </div>
             <div>
               <label className="mb-1.5 block text-sm font-medium text-slate-700">Contraseña *</label>
