@@ -7,6 +7,7 @@ return new class extends Migration
 {
     public function up(): void
     {
+        DB::statement('DROP TYPE IF EXISTS user_status, payment_method, promotion_type, stock_movement_type, stock_movement_reason, petty_cash_reason');
         DB::statement("CREATE TYPE user_status AS ENUM ('active', 'suspended')");
         DB::statement("CREATE TYPE payment_method AS ENUM ('efectivo', 'tarjeta', 'transferencia')");
         DB::statement("CREATE TYPE promotion_type AS ENUM ('percentage', 'fixed_amount', 'freebie_100')");
