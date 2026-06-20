@@ -18,6 +18,7 @@ import ProfilePage from './pages/profile/ProfilePage';
 import TrashPage from './pages/admin/TrashPage';
 import SystemSettingsPage from './pages/admin/SystemSettingsPage';
 import SalesHistoryPage from './pages/sales/SalesHistoryPage';
+import PaymentMethodsPage from './pages/admin/PaymentMethodsPage';
 
 function ProtectedRoute({ children }) {
   const { user, loading } = useAuth();
@@ -86,6 +87,7 @@ export default function App() {
           <Route path="/profile/notifications" element={<ProtectedRoute><NotificationPreferencesPage /></ProtectedRoute>} />
           <Route path="/admin/configuracion" element={<ProtectedRoute><SystemSettingsPage /></ProtectedRoute>} />
           <Route path="/admin/ventas" element={<ProtectedRoute><SalesHistoryPage /></ProtectedRoute>} />
+          <Route path="/admin/metodos-pago" element={<ProtectedRoute><PaymentMethodsPage /></ProtectedRoute>} />
           <Route path="/admin/papelera" element={<ProtectedRoute><TrashPage /></ProtectedRoute>} />
           <Route path="*" element={<Navigate to="/login" replace />} />
         </Routes>

@@ -13,7 +13,7 @@ class PaymentMethodController extends Controller
     {
         $query = PaymentMethod::orderBy('name');
 
-        if ($request->filled('status')) {
+        if ($request->filled('status') && $request->status !== 'all') {
             $query->where('status', $request->status);
         }
 

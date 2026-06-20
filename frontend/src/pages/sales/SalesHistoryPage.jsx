@@ -10,7 +10,6 @@ import { InputText } from 'primereact/inputtext';
 import { Password } from 'primereact/password';
 import { SelectButton } from 'primereact/selectbutton';
 import { Tag } from 'primereact/tag';
-import { Tooltip } from 'primereact/tooltip';
 import { toast } from 'sonner';
 import api from '../../api/axios';
 import AppLayout from '../../components/layout/AppLayout';
@@ -24,7 +23,7 @@ const quickFilters = [
 ];
 
 const statusOptions = [
-  { label: 'Todos', value: '' },
+  { label: 'Todos', value: null },
   { label: 'Completado', value: 'completed' },
   { label: 'Cancelado', value: 'canceled' },
 ];
@@ -51,7 +50,7 @@ export default function SalesHistoryPage() {
   const [selectedUser, setSelectedUser] = useState(null);
   const [totalMin, setTotalMin] = useState(null);
   const [totalMax, setTotalMax] = useState(null);
-  const [selectedStatus, setSelectedStatus] = useState('');
+  const [selectedStatus, setSelectedStatus] = useState(null);
 
   const [detailOrder, setDetailOrder] = useState(null);
   const [showDetail, setShowDetail] = useState(false);
@@ -264,25 +263,37 @@ export default function SalesHistoryPage() {
   );
 
   const actionsTemplate = (row) => (
-    <div className="flex items-center gap-1">
-      <i
-        className="pi pi-eye cursor-pointer text-indigo-600 hover:text-indigo-800"
+    <div className="flex gap-1">
+      <Button
+        icon="pi pi-eye"
+        severity="info"
+        text
+        rounded
         onClick={() => openDetail(row)}
-        data-pr-tooltip="Ver detalle"
-        data-pr-position="top"
+        className="cursor-pointer !h-8 !w-8"
+        tooltip="Ver detalle"
+        tooltipOptions={{ position: 'top' }}
       />
-      <i
-        className="pi pi-print cursor-pointer text-slate-600 hover:text-slate-800 ml-2"
+      <Button
+        icon="pi pi-print"
+        severity="secondary"
+        text
+        rounded
         onClick={() => openPrint(row)}
-        data-pr-tooltip="Reimprimir ticket"
-        data-pr-position="top"
+        className="cursor-pointer !h-8 !w-8"
+        tooltip="Reimprimir ticket"
+        tooltipOptions={{ position: 'top' }}
       />
       {isAdminOrManager && row.status !== 'canceled' && (
-        <i
-          className="pi pi-ban cursor-pointer text-rose-500 hover:text-rose-700 ml-2"
+        <Button
+          icon="pi pi-ban"
+          severity="danger"
+          text
+          rounded
           onClick={() => openCancel(row)}
-          data-pr-tooltip="Cancelar orden"
-          data-pr-position="top"
+          className="cursor-pointer !h-8 !w-8"
+          tooltip="Cancelar orden"
+          tooltipOptions={{ position: 'top' }}
         />
       )}
     </div>
@@ -290,8 +301,6 @@ export default function SalesHistoryPage() {
 
   return (
     <AppLayout>
-      <Tooltip target=".pi" />
-
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-slate-900">Historial de Ventas</h1>
         <p className="mt-1 text-sm text-slate-500">Consulta y audita todas las transacciones del POS.</p>
