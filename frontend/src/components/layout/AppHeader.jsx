@@ -19,6 +19,7 @@ const pageNames = {
   '/admin/ventas': 'Historial de Ventas',
   '/profile/notifications': 'Preferencias de Notificaciones',
   '/admin/papelera': 'Papelera Global',
+  '/admin/metodos-pago': 'Métodos de Pago',
   '/admin/configuracion': 'Configuracion del Sistema',
   '/profile': 'Mi Perfil',
 };
