@@ -200,7 +200,7 @@ export default function ProductFormPage() {
               <label className="mb-1.5 block text-sm font-medium text-slate-700">SKU *</label>
               <InputText
                 value={formData.sku}
-                onChange={(e) => set('sku', e.target.value)}
+                onChange={(e) => set('sku', e.target.value.toUpperCase())}
                 placeholder="Ej: REF-500ML"
                 disabled={saving}
                 className="w-full rounded-lg border-slate-200 px-3 py-2.5 text-sm font-mono"
@@ -213,7 +213,7 @@ export default function ProductFormPage() {
               <label className="mb-1.5 block text-sm font-medium text-slate-700">Grupo de Variaciones (parent_sku)</label>
               <InputText
                 value={formData.parent_sku}
-                onChange={(e) => set('parent_sku', e.target.value)}
+                onChange={(e) => set('parent_sku', e.target.value.toUpperCase())}
                 placeholder="Ej: REFRESCO (agrupa variaciones)"
                 disabled={saving}
                 className="w-full rounded-lg border-slate-200 px-3 py-2.5 text-sm font-mono"

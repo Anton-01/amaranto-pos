@@ -16,15 +16,18 @@ class AnalyticsController extends Controller
         $dateTo = $request->input('date_to', now()->endOfDay()->toDateTimeString());
 
         $daily = DB::table('orders')
+            ->join('payment_methods', 'orders.payment_method_id', '=', 'payment_methods.id')
             ->select(
-                DB::raw("DATE(created_at) as date"),
-                'payment_method',
-                DB::raw('SUM(subtotal) as total_net'),
-                DB::raw('SUM(total) as total_gross'),
+                DB::raw("DATE(orders.created_at) as date"),
+                'payment_methods.slug as payment_slug',
+                'payment_methods.name as payment_name',
+                DB::raw('SUM(orders.subtotal) as total_net'),
+                DB::raw('SUM(orders.total) as total_gross'),
                 DB::raw('COUNT(*) as order_count')
             )
-            ->whereBetween('created_at', [$dateFrom, $dateTo])
-            ->groupBy(DB::raw('DATE(created_at)'), 'payment_method')
+            ->where('orders.status', 'completed')
+            ->whereBetween('orders.created_at', [$dateFrom, $dateTo])
+            ->groupBy(DB::raw('DATE(orders.created_at)'), 'payment_methods.slug', 'payment_methods.name')
             ->orderBy('date')
             ->get();
 
@@ -34,14 +37,15 @@ class AnalyticsController extends Controller
             if (!isset($grouped[$date])) {
                 $grouped[$date] = [
                     'date' => $date,
-                    'efectivo' => 0,
-                    'tarjeta' => 0,
-                    'transferencia' => 0,
+                    'methods' => [],
                     'total' => 0,
                     'orders' => 0,
                 ];
             }
-            $grouped[$date][$row->payment_method] = round((float) $row->total_net, 2);
+            $grouped[$date]['methods'][$row->payment_slug] = [
+                'name' => $row->payment_name,
+                'net' => round((float) $row->total_net, 2),
+            ];
             $grouped[$date]['total'] += round((float) $row->total_net, 2);
             $grouped[$date]['orders'] += (int) $row->order_count;
         }
@@ -72,6 +76,7 @@ class AnalyticsController extends Controller
                 DB::raw('COALESCE(SUM(total), 0) as gross_income'),
                 DB::raw('COUNT(*) as order_count')
             )
+            ->where('status', 'completed')
             ->whereBetween('created_at', [$dateFrom, $dateTo])
             ->first();
 
@@ -136,6 +141,7 @@ class AnalyticsController extends Controller
                 DB::raw('SUM(total) as gross_income'),
                 DB::raw('COUNT(*) as order_count')
             )
+            ->where('status', 'completed')
             ->whereBetween('created_at', [$dateFrom, $dateTo])
             ->groupBy(DB::raw('DATE(created_at)'))
             ->orderBy('date')

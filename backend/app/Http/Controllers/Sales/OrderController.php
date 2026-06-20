@@ -9,25 +9,39 @@ use App\Models\Order;
 use App\Models\Product;
 use App\Models\Promotion;
 use App\Models\TicketConfig;
+use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Hash;
 
 class OrderController extends Controller
 {
     public function index(Request $request): JsonResponse
     {
-        $query = Order::with(['items.product', 'items.promotion', 'ticketConfig'])
+        $query = Order::with(['items.product', 'items.promotion', 'ticketConfig', 'paymentMethod', 'cashRegister.user'])
             ->orderByDesc('created_at');
 
         if ($request->filled('date_from')) {
             $query->where('created_at', '>=', $request->date_from);
         }
         if ($request->filled('date_to')) {
-            $query->where('created_at', '<=', $request->date_to);
+            $query->where('created_at', '<=', $request->date_to . ' 23:59:59');
         }
-        if ($request->filled('payment_method')) {
-            $query->where('payment_method', $request->payment_method);
+        if ($request->filled('payment_method_id')) {
+            $query->where('payment_method_id', $request->payment_method_id);
+        }
+        if ($request->filled('status')) {
+            $query->where('status', $request->status);
+        }
+        if ($request->filled('user_id')) {
+            $query->whereHas('cashRegister', fn ($q) => $q->where('user_id', $request->user_id));
+        }
+        if ($request->filled('total_min')) {
+            $query->where('total', '>=', $request->total_min);
+        }
+        if ($request->filled('total_max')) {
+            $query->where('total', '<=', $request->total_max);
         }
 
         $orders = $query->paginate($request->input('per_page', 20));
@@ -45,7 +59,7 @@ class OrderController extends Controller
 
     public function show(Order $order): JsonResponse
     {
-        $order->load(['items.product', 'items.promotion', 'ticketConfig', 'cashRegister']);
+        $order->load(['items.product', 'items.promotion', 'ticketConfig', 'cashRegister.user', 'paymentMethod', 'canceledByUser']);
 
         return response()->json([
             'status' => 'success',
@@ -130,11 +144,12 @@ class OrderController extends Controller
             $order = Order::create([
                 'cash_register_id' => $cashRegister->id,
                 'ticket_config_id' => $activeConfig->id,
-                'payment_method' => $request->payment_method,
+                'payment_method_id' => $request->payment_method_id,
                 'subtotal' => round($subtotal, 2),
                 'iva_total' => $ivaTotal,
                 'total' => $total,
                 'custom_legend' => $request->custom_legend,
+                'status' => 'completed',
             ]);
 
             foreach ($itemsData as $itemData) {
@@ -146,12 +161,64 @@ class OrderController extends Controller
             return $order;
         });
 
-        $order->load(['items.product', 'items.promotion', 'ticketConfig']);
+        $order->load(['items.product', 'items.promotion', 'ticketConfig', 'paymentMethod']);
 
         return response()->json([
             'status' => 'success',
             'data' => $order,
             'metadata' => ['message' => 'Orden procesada exitosamente.'],
         ], 201);
+    }
+
+    public function cancel(Request $request, Order $order): JsonResponse
+    {
+        $request->validate([
+            'admin_password' => 'required|string',
+            'reason' => 'required|string|max:500',
+        ]);
+
+        if ($order->status === 'canceled') {
+            return response()->json([
+                'status' => 'error',
+                'code' => 'ERR_ORDER_ALREADY_CANCELED',
+                'message' => 'Esta orden ya fue cancelada previamente.',
+            ], 422);
+        }
+
+        $admin = User::whereHas('roles', fn ($q) => $q->where('name', 'admin'))->first();
+
+        if (!$admin || !Hash::check($request->admin_password, $admin->password)) {
+            return response()->json([
+                'status' => 'error',
+                'code' => 'ERR_ORDER_CANCEL_UNAUTHORIZED',
+                'message' => 'La contraseña de administrador es incorrecta.',
+            ], 403);
+        }
+
+        DB::transaction(function () use ($order, $request, $admin) {
+            $order->load('items');
+
+            foreach ($order->items as $item) {
+                if ($item->product_id) {
+                    Product::where('id', $item->product_id)
+                        ->increment('current_stock', $item->quantity);
+                }
+            }
+
+            $order->update([
+                'status' => 'canceled',
+                'canceled_by' => $admin->id,
+                'canceled_at' => now(),
+                'cancellation_reason' => $request->reason,
+            ]);
+        });
+
+        $order->load(['items.product', 'paymentMethod', 'canceledByUser']);
+
+        return response()->json([
+            'status' => 'success',
+            'data' => $order,
+            'metadata' => ['message' => 'Orden cancelada exitosamente. El stock ha sido revertido.'],
+        ]);
     }
 }

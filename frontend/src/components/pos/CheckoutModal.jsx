@@ -6,14 +6,9 @@ import { toast } from 'sonner';
 import api from '../../api/axios';
 import TicketPreview from './TicketPreview';
 
-const paymentMethods = [
-  { label: 'Efectivo', value: 'efectivo' },
-  { label: 'Tarjeta', value: 'tarjeta' },
-  { label: 'Transferencia', value: 'transferencia' },
-];
-
 export default function CheckoutModal({ visible, onHide, cart, onSuccess }) {
-  const [paymentMethod, setPaymentMethod] = useState('efectivo');
+  const [paymentMethodId, setPaymentMethodId] = useState(null);
+  const [paymentMethods, setPaymentMethods] = useState([]);
   const [customLegend, setCustomLegend] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [ticketConfig, setTicketConfig] = useState(null);
@@ -22,12 +17,21 @@ export default function CheckoutModal({ visible, onHide, cart, onSuccess }) {
 
   useEffect(() => {
     if (visible) {
-      setPaymentMethod('efectivo');
       setCustomLegend('');
       setCompletedOrder(null);
-      api.get('/ticket-configs/active')
-        .then(res => setTicketConfig(res.data.data))
-        .catch(() => setTicketConfig(null));
+      Promise.all([
+        api.get('/ticket-configs/active'),
+        api.get('/payment-methods', { params: { status: 'active' } }),
+      ]).then(([configRes, pmRes]) => {
+        setTicketConfig(configRes.data.data);
+        const methods = pmRes.data.data;
+        setPaymentMethods(methods);
+        if (methods.length > 0 && !paymentMethodId) {
+          setPaymentMethodId(methods[0].id);
+        }
+      }).catch(() => {
+        setTicketConfig(null);
+      });
     }
   }, [visible]);
 
@@ -35,12 +39,14 @@ export default function CheckoutModal({ visible, onHide, cart, onSuccess }) {
   const ivaTotal = subtotal * 0.16;
   const total = subtotal + ivaTotal;
 
+  const selectedMethod = paymentMethods.find(pm => pm.id === paymentMethodId);
+
   const previewOrder = {
     items: cart,
     subtotal,
     iva_total: ivaTotal,
     total,
-    payment_method: paymentMethod,
+    payment_method: selectedMethod || { name: 'N/A', slug: '' },
     created_at: new Date().toISOString(),
   };
 
@@ -53,7 +59,7 @@ export default function CheckoutModal({ visible, onHide, cart, onSuccess }) {
     setSubmitting(true);
     try {
       const payload = {
-        payment_method: paymentMethod,
+        payment_method_id: paymentMethodId,
         custom_legend: customLegend || null,
         items: cart.map(i => ({
           product_id: i.product_id,
@@ -91,6 +97,8 @@ export default function CheckoutModal({ visible, onHide, cart, onSuccess }) {
   };
 
   const displayOrder = completedOrder || previewOrder;
+
+  const paymentMethodOptions = paymentMethods.map(pm => ({ label: pm.name, value: pm.id }));
 
   return (
     <Dialog
@@ -135,9 +143,9 @@ export default function CheckoutModal({ visible, onHide, cart, onSuccess }) {
               <div>
                 <label className="mb-1.5 block text-sm font-medium text-slate-700">Metodo de Pago</label>
                 <Dropdown
-                  value={paymentMethod}
-                  options={paymentMethods}
-                  onChange={(e) => setPaymentMethod(e.value)}
+                  value={paymentMethodId}
+                  options={paymentMethodOptions}
+                  onChange={(e) => setPaymentMethodId(e.value)}
                   disabled={submitting}
                   className="w-full text-sm"
                   pt={{ root: { className: 'w-full' } }}
@@ -195,7 +203,7 @@ export default function CheckoutModal({ visible, onHide, cart, onSuccess }) {
                   type="button"
                   label={submitting ? 'Procesando...' : 'Confirmar Cobro'}
                   onClick={handleSubmit}
-                  disabled={submitting || !ticketConfig}
+                  disabled={submitting || !ticketConfig || !paymentMethodId}
                   loading={submitting}
                   className="flex-1 rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
                   pt={{ root: { className: 'border-0' } }}

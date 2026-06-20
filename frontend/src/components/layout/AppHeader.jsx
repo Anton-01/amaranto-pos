@@ -16,6 +16,7 @@ const pageNames = {
   '/petty-cash': 'Caja Chica',
   '/finance': 'Panel Financiero',
   '/admin/usuarios': 'Gestion de Usuarios',
+  '/admin/ventas': 'Historial de Ventas',
   '/profile/notifications': 'Preferencias de Notificaciones',
   '/admin/papelera': 'Papelera Global',
   '/admin/configuracion': 'Configuracion del Sistema',
@@ -23,6 +24,12 @@ const pageNames = {
 };
 
 const fmt = (v) => `$${Number(v).toLocaleString('es-MX', { minimumFractionDigits: 2 })}`;
+
+const paymentColors = {
+  cash: 'bg-emerald-500',
+  card: 'bg-indigo-500',
+  transfer: 'bg-amber-500',
+};
 
 export default function AppHeader({ onToggleSidebar }) {
   const location = useLocation();
@@ -39,7 +46,7 @@ export default function AppHeader({ onToggleSidebar }) {
       try {
         const today = new Date().toISOString().split('T')[0];
         const res = await api.get('/orders', { params: { date_from: today, date_to: today, per_page: 1 } });
-        setTodaySales(res.data?.meta?.total ?? null);
+        setTodaySales(res.data?.metadata?.total ?? null);
       } catch {
         // silently fail
       }
@@ -168,19 +175,17 @@ export default function AppHeader({ onToggleSidebar }) {
               <div className="rounded-xl border border-slate-200 p-4">
                 <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-400">Desglose por Metodo</p>
                 <div className="space-y-2">
-                  {[
-                    { label: 'Efectivo', value: dailySummary.by_payment.efectivo, color: 'bg-emerald-500' },
-                    { label: 'Tarjeta', value: dailySummary.by_payment.tarjeta, color: 'bg-indigo-500' },
-                    { label: 'Transferencia', value: dailySummary.by_payment.transferencia, color: 'bg-amber-500' },
-                  ].map((item) => (
-                    <div key={item.label} className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <span className={`h-2 w-2 rounded-full ${item.color}`} />
-                        <span className="text-sm text-slate-700">{item.label}</span>
+                  {dailySummary.by_payment && typeof dailySummary.by_payment === 'object' &&
+                    Object.entries(dailySummary.by_payment).map(([slug, data]) => (
+                      <div key={slug} className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <span className={`h-2 w-2 rounded-full ${paymentColors[slug] || 'bg-slate-400'}`} />
+                          <span className="text-sm text-slate-700">{data.name || slug}</span>
+                        </div>
+                        <span className="text-sm font-semibold text-slate-900">{fmt(data.total)}</span>
                       </div>
-                      <span className="text-sm font-semibold text-slate-900">{fmt(item.value)}</span>
-                    </div>
-                  ))}
+                    ))
+                  }
                 </div>
               </div>
 

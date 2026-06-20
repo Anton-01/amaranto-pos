@@ -12,7 +12,7 @@
 | Modulo | Estado Backend | Estado Frontend | Observaciones |
 | :--- | :--- | :--- | :--- |
 | Infraestructura & Docker | [🟢 Completado y Operativo] | [🟢 Completado y Operativo] | Docker Compose multi-contenedor, Alpine, Hot-Reload, Reverb WS :8080 |
-| Migraciones & Modelos Base (BD) | [🟢 Completado] | N/A | 18 migraciones, 15 modelos, Trait AdvancedSoftDeletes, Seeder base |
+| Migraciones & Modelos Base (BD) | [🟢 Completado] | N/A | 23 migraciones, 16 modelos, Trait AdvancedSoftDeletes, Seeder base |
 | Autenticacion & 2FA (Sanctum) | [🟢 Completado] | [🟢 Completado] | Login, Logout, 2FA TOTP, Kill-Switch, Session Log |
 | Catalogo, Categorias y Variaciones| [🟢 Completado] | [🟢 Completado] | CRUD completo, DataTable filtros avanzados, variaciones en serie |
 | Promociones e Historicos | [🟢 Completado] | [🟢 Completado] | CRUD con RBAC, limite 1 promo/ticket, POS cart con validacion cruzada |
@@ -29,6 +29,9 @@
 | Upload Imagen Producto | [🟢 Completado] | [🟢 Completado] | Storage local, FileUpload PrimeReact, preview + delete |
 | Ventas Diarias (Header Modal) | [🟢 Completado] | [🟢 Completado] | Resumen diario con desglose por metodo de pago |
 | Botones Icono DataTables | N/A | [🟢 Completado] | Iconos PrimeReact con tooltips en todas las tablas |
+| Historial de Ventas | [🟢 Completado] | [🟢 Completado] | DataTable con filtros (quick+avanzados), detalle modal, cancelacion con admin password, reimpresion, exportacion CSV |
+| Metodos de Pago Dinamicos | [🟢 Completado] | [🟢 Completado] | CRUD payment_methods, FK restrictOnDelete, seeder base (cash/card/transfer), despliegue dinamico en POS/checkout/historial |
+| Transformacion SKU Mayusculas | [🟢 Completado] | [🟢 Completado] | Mutadores en modelo Product + onChange uppercase en frontend |
 
 ## 3. Detalle del Modulo Completado: Migraciones & Modelos Base
 
@@ -887,3 +890,124 @@ Se refactorizo por completo el layout global del sistema, migrando de una barra 
 - `frontend/src/pages/admin/UsersPage.jsx` — fieldErrors + icon buttons
 - `frontend/src/pages/finance/PettyCashPage.jsx` — icon buttons
 - `frontend/src/pages/admin/TrashPage.jsx` — icon buttons
+
+## 15. Detalle del Modulo Completado: Historial de Ventas & Metodos de Pago Dinamicos
+
+### Cambio Arquitectonico: Metodos de Pago Dinamicos
+Se reemplazo el ENUM nativo de PostgreSQL `payment_method` por una tabla relacional `payment_methods` con FK restrictiva, permitiendo gestion dinamica (CRUD) de metodos de pago sin alterar la estructura de la BD.
+
+### Migracion: payment_methods (0001_01_01_000011a)
+- `id` (UUID, PK), `name` (varchar 100), `slug` (varchar 50, unique), `status` (active/inactive), `is_system` (boolean), timestamps
+- Ubicada entre cash_registers (000011) y orders (000012) para respetar dependencias FK
+
+### Migracion: orders (000012) — Modificada
+- Reemplazado `payment_method` ENUM por `payment_method_id` UUID FK → `payment_methods(id) ON DELETE RESTRICT`
+- Agregado `status` (order_status ENUM: completed/canceled, default completed)
+- Agregado `canceled_by` UUID FK → users(id) ON DELETE SET NULL
+- Agregado `canceled_at` timestampTz nullable
+- Agregado `cancellation_reason` text nullable
+
+### ENUM: order_status (Nuevo)
+- Agregado en migracion 000000: `CREATE TYPE order_status AS ENUM ('completed', 'canceled')`
+- Removido ENUM `payment_method` (reemplazado por tabla relacional)
+
+### Modelo: PaymentMethod (Nuevo)
+- HasUuids, fillable: name, slug, status, is_system
+- Relacion: `orders()` HasMany
+
+### Modelo: Order (Modificado)
+- Reemplazado `payment_method` string por `payment_method_id` FK
+- Agregado `status`, `canceled_by`, `canceled_at`, `cancellation_reason` a fillable
+- Nuevas relaciones: `paymentMethod()` BelongsTo, `canceledByUser()` BelongsTo
+
+### Modelo: Product (Modificado)
+- Agregados mutadores `setSkuAttribute()` y `setParentSkuAttribute()` que convierten a MAYUSCULAS automaticamente
+
+### Seeder: DatabaseSeeder (Modificado)
+- Seed de 3 metodos de pago base: Efectivo (cash), Tarjeta de Credito/Debito (card), Transferencia (transfer) — todos con `is_system: true`
+
+### Backend - API Endpoints Nuevos (8 rutas)
+| Metodo | Ruta | Middleware | Descripcion |
+| :--- | :--- | :--- | :--- |
+| GET | /api/payment-methods | auth, user.active | Lista metodos de pago (filtro por status) |
+| POST | /api/payment-methods | auth, user.active, role:admin,manager | Crear metodo de pago |
+| PUT | /api/payment-methods/{id} | auth, user.active, role:admin,manager | Actualizar metodo de pago |
+| DELETE | /api/payment-methods/{id} | auth, user.active, role:admin,manager | Eliminar (bloqueado si tiene ventas) |
+| POST | /api/orders/{id}/cancel | auth, user.active | Cancelar orden con password admin |
+| GET | /api/sales/export | auth, user.active | Exportar ventas a CSV |
+| GET | /api/orders | auth, user.active | Lista ordenes con filtros avanzados (payment_method_id, status, user_id, total_min/max) |
+
+### Controlador: PaymentMethodController (Nuevo)
+- `index()` — Lista metodos con filtro por status
+- `store()` — Crea metodo con validacion unique name/slug, is_system=false
+- `update()` — Actualiza name/slug/status
+- `destroy()` — Validacion estricta: si tiene ventas asociadas retorna 422 (ERR_PAYMENT_METHOD_HAS_SALES) con sugerencia de cambiar a inactive
+
+### Controlador: OrderController (Modificado)
+- `index()` — Filtros expandidos: payment_method_id, status, user_id, total_min, total_max + eager load paymentMethod y cashRegister.user
+- `store()` — Usa payment_method_id FK, status='completed' por defecto
+- `show()` — Carga paymentMethod y canceledByUser
+- `cancel()` (Nuevo) — Valida password admin con Hash::check, revierte stock de todos los items, actualiza status/canceled_by/canceled_at/cancellation_reason en transaccion atomica
+
+### Controlador: SalesExportController (Nuevo)
+- `export()` — Genera CSV con cabecera institucional (Cronos POS, fecha generacion, periodo), BOM UTF-8 para compatibilidad Excel. Recibe mismos filtros que index(). StreamedResponse sin dependencias externas.
+
+### Controladores Modificados (Filtro status=completed)
+- `DailySummaryController` — Solo suma ordenes completed, by_payment usa JOIN payment_methods
+- `AnalyticsController` — salesByPaymentMethod/financialSummary/dailyTrend filtran por status=completed
+- `DashboardController` — stats/hourlyTrend/topProducts filtran por status=completed
+
+### Frontend - SalesHistoryPage (`/admin/ventas`) (Nuevo)
+- **Quick Filters**: SelectButton (Hoy, Ultima Semana, Ultimo Mes)
+- **Advanced Filters**: Panel colapsable con Calendar range, Dropdown metodo de pago (dinamico desde API), Dropdown operador (solo admin/manager), InputNumber monto minimo, Dropdown estatus
+- **DataTable lazy paginated**: ID Ticket (mono), Fecha/Hora, Vendedor, Metodo de Pago (Tag), Total Neto, Estatus (Tag success/danger), Acciones (iconos)
+- **Modal Detalle** (pi-eye): Desglose completo con tabla de items, cantidades, precios unitarios, descuentos, info de cancelacion si aplica
+- **Modal Reimprimir** (pi-print): Renderiza TicketPreview con ticket config activo
+- **Modal Cancelacion** (pi-ban): Solo admin/manager, requiere motivo + password admin, banner de advertencia, Password con toggleMask
+
+### Frontend - CheckoutModal (Modificado)
+- Dropdown de metodo de pago ahora consume GET /api/payment-methods dinamicamente
+- Envia `payment_method_id` UUID en lugar de string enum
+
+### Frontend - TicketPreview (Modificado)
+- Soporta payment_method como objeto {name, slug} (dinamico) o string (legacy)
+
+### Frontend - AppHeader (Modificado)
+- Daily summary renderiza desglose por metodo de pago dinamicamente desde API (slug keyed)
+
+### Frontend - ProductFormPage (Modificado)
+- SKU y parent_sku se convierten a MAYUSCULAS en tiempo real via `e.target.value.toUpperCase()` en onChange
+
+### Frontend - Sidebar (Modificado)
+- Agregado nav item "Historial" bajo grupo VENTAS con ruta /admin/ventas
+
+### Archivos Creados en esta Fase
+**Backend (nuevos):**
+- `database/migrations/0001_01_01_000011a_create_payment_methods_table.php`
+- `app/Models/PaymentMethod.php`
+- `app/Http/Controllers/Catalog/PaymentMethodController.php`
+- `app/Http/Controllers/Sales/SalesExportController.php`
+
+**Frontend (nuevos):**
+- `src/pages/sales/SalesHistoryPage.jsx`
+
+**Backend (modificados):**
+- `database/migrations/0001_01_01_000000_create_enums.php` — Removido payment_method enum, agregado order_status enum
+- `database/migrations/0001_01_01_000012_create_orders_table.php` — payment_method_id FK, status, cancel fields
+- `app/Models/Order.php` — payment_method_id, status, cancel fields, nuevas relaciones
+- `app/Models/Product.php` — Mutadores SKU uppercase
+- `database/seeders/DatabaseSeeder.php` — Seed payment_methods
+- `app/Http/Controllers/Sales/OrderController.php` — Filtros expandidos, cancel(), payment_method_id
+- `app/Http/Requests/Order/StoreOrderRequest.php` — payment_method_id UUID validation
+- `app/Http/Controllers/Sales/DailySummaryController.php` — JOIN payment_methods, status filter
+- `app/Http/Controllers/Finance/AnalyticsController.php` — JOIN payment_methods, status filter
+- `app/Http/Controllers/Dashboard/DashboardController.php` — status=completed filter
+- `routes/api.php` — 8 rutas nuevas
+
+**Frontend (modificados):**
+- `src/App.jsx` — Ruta /admin/ventas
+- `src/components/layout/Sidebar.jsx` — Nav item "Historial"
+- `src/components/layout/AppHeader.jsx` — Dynamic payment methods en daily summary
+- `src/components/pos/CheckoutModal.jsx` — Dynamic payment methods via API
+- `src/components/pos/TicketPreview.jsx` — Soporta payment method como objeto
+- `src/pages/catalog/ProductFormPage.jsx` — SKU/parent_sku uppercase onChange

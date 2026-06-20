@@ -17,6 +17,7 @@ import NotificationPreferencesPage from './pages/profile/NotificationPreferences
 import ProfilePage from './pages/profile/ProfilePage';
 import TrashPage from './pages/admin/TrashPage';
 import SystemSettingsPage from './pages/admin/SystemSettingsPage';
+import SalesHistoryPage from './pages/sales/SalesHistoryPage';
 
 function ProtectedRoute({ children }) {
   const { user, loading } = useAuth();
@@ -84,6 +85,7 @@ export default function App() {
           <Route path="/profile" element={<ProtectedRoute><ProfilePage /></ProtectedRoute>} />
           <Route path="/profile/notifications" element={<ProtectedRoute><NotificationPreferencesPage /></ProtectedRoute>} />
           <Route path="/admin/configuracion" element={<ProtectedRoute><SystemSettingsPage /></ProtectedRoute>} />
+          <Route path="/admin/ventas" element={<ProtectedRoute><SalesHistoryPage /></ProtectedRoute>} />
           <Route path="/admin/papelera" element={<ProtectedRoute><TrashPage /></ProtectedRoute>} />
           <Route path="*" element={<Navigate to="/login" replace />} />
         </Routes>
