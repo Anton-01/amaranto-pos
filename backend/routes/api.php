@@ -11,6 +11,7 @@ use App\Http\Controllers\Catalog\ProductController;
 use App\Http\Controllers\Catalog\ProductImageController;
 use App\Http\Controllers\Dashboard\DashboardController;
 use App\Http\Controllers\Finance\AnalyticsController;
+use App\Http\Controllers\Finance\CashRegisterClosingController;
 use App\Http\Controllers\Finance\PettyCashController;
 use App\Http\Controllers\Logistics\StockMovementController;
 use App\Http\Controllers\Profile\NotificationPreferenceController;
@@ -145,5 +146,14 @@ Route::middleware(['auth:sanctum', 'user.active'])->group(function () {
         Route::get('/summary', [PettyCashController::class, 'summary']);
         Route::get('/{pettyCashTransaction}', [PettyCashController::class, 'show']);
         Route::get('/{pettyCashTransaction}/verify', [PettyCashController::class, 'verify']);
+    });
+
+    Route::prefix('cash-registers')->group(function () {
+        Route::get('/current', [CashRegisterClosingController::class, 'current']);
+        Route::post('/close', [CashRegisterClosingController::class, 'store']);
+        Route::get('/closings/export-excel', [CashRegisterClosingController::class, 'exportExcel']);
+        Route::post('/closings/send-email', [CashRegisterClosingController::class, 'sendEmail']);
+        Route::get('/closings/{closing}/pdf', [CashRegisterClosingController::class, 'exportPdf']);
+        Route::get('/closings', [CashRegisterClosingController::class, 'index']);
     });
 });

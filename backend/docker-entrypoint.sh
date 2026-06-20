@@ -3,11 +3,9 @@ set -e
 
 echo "=== Cronos POS Backend - Docker Entrypoint ==="
 
-# 1. Install dependencies if vendor is missing or incomplete
-if [ ! -f "vendor/autoload.php" ]; then
-    echo "→ Installing Composer dependencies..."
-    composer install --optimize-autoloader
-fi
+# 1. Install/update Composer dependencies (always run to pick up new packages)
+echo "→ Installing Composer dependencies..."
+composer install --optimize-autoloader --no-interaction
 
 # 2. Fix storage permissions for Laravel
 echo "→ Setting storage permissions..."
