@@ -135,7 +135,9 @@ class OrderController extends Controller
 
                 $subtotal += $finalLineTotal;
 
-                $product->decrement('current_stock', $quantity);
+                if ($product->track_stock) {
+                    $product->decrement('current_stock', $quantity);
+                }
             }
 
             $ivaTotal = round($subtotal * 0.16, 2);
@@ -200,8 +202,10 @@ class OrderController extends Controller
 
             foreach ($order->items as $item) {
                 if ($item->product_id) {
-                    Product::where('id', $item->product_id)
-                        ->increment('current_stock', $item->quantity);
+                    $product = Product::find($item->product_id);
+                    if ($product && $product->track_stock) {
+                        $product->increment('current_stock', $item->quantity);
+                    }
                 }
             }
 

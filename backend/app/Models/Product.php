@@ -24,6 +24,7 @@ class Product extends Model
         'minimum_stock',
         'maximum_stock',
         'is_active',
+        'track_stock',
         'image_url',
     ];
 
@@ -40,12 +41,13 @@ class Product extends Model
     protected function casts(): array
     {
         return [
-            'cost_price' => 'decimal:2',
-            'sale_price' => 'decimal:2',
+            'cost_price'    => 'decimal:2',
+            'sale_price'    => 'decimal:2',
             'current_stock' => 'integer',
             'minimum_stock' => 'integer',
             'maximum_stock' => 'integer',
-            'is_active' => 'boolean',
+            'is_active'     => 'boolean',
+            'track_stock'   => 'boolean',
         ];
     }
 

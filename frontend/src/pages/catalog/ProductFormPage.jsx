@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { InputText } from 'primereact/inputtext';
 import { InputNumber } from 'primereact/inputnumber';
+import { InputSwitch } from 'primereact/inputswitch';
 import { Dropdown } from 'primereact/dropdown';
 import { FileUpload } from 'primereact/fileupload';
 import { Button } from 'primereact/button';
@@ -20,6 +21,7 @@ const emptyForm = {
   minimum_stock: 0,
   maximum_stock: 0,
   is_active: true,
+  track_stock: true,
 };
 
 export default function ProductFormPage() {
@@ -61,6 +63,7 @@ export default function ProductFormPage() {
         minimum_stock: p.minimum_stock,
         maximum_stock: p.maximum_stock,
         is_active: p.is_active,
+        track_stock: p.track_stock !== undefined ? p.track_stock : true,
       });
       setImageUrl(p.image_url || null);
     } catch {
@@ -362,39 +365,57 @@ export default function ProductFormPage() {
           </div>
 
           <div className="rounded-xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
-            <h2 className="mb-4 text-base font-semibold text-slate-900">Inventario</h2>
-            <div className="grid grid-cols-3 gap-4">
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="text-base font-semibold text-slate-900">Inventario</h2>
+              <div className="flex items-center gap-3">
+                <span className="text-sm font-medium text-slate-600">¿Llevar control de Stock?</span>
+                <InputSwitch
+                  checked={formData.track_stock}
+                  onChange={(e) => set('track_stock', e.value)}
+                  disabled={saving}
+                  className="cursor-pointer"
+                />
+              </div>
+            </div>
+
+            {!formData.track_stock && (
+              <div className="mb-4 rounded-lg bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-700">
+                <strong>Modo Paquete/Combo:</strong> Este producto no controlará existencias físicas. Útil para combos, servicios o productos sin inventario.
+              </div>
+            )}
+
+            <div className={`grid grid-cols-3 gap-4 transition-all duration-300 ${!formData.track_stock ? 'pointer-events-none opacity-30' : 'opacity-100'}`}>
               <div>
-                <label className="mb-1.5 block text-sm font-medium text-slate-700">Stock Actual</label>
+                <label className="mb-1.5 block text-sm font-medium text-slate-700">Stock Inicial</label>
                 <InputNumber
                   value={formData.current_stock}
                   onValueChange={(e) => set('current_stock', e.value ?? 0)}
                   min={0}
-                  disabled={saving}
+                  disabled={saving || !formData.track_stock}
                   className="w-full"
                   inputClassName="w-full rounded-lg border-slate-200 px-3 py-2.5 text-sm"
                   pt={{ root: { className: 'w-full' } }}
                 />
               </div>
               <div>
-                <label className="mb-1.5 block text-sm font-medium text-slate-700">Minimo</label>
+                <label className="mb-1.5 block text-sm font-medium text-slate-700">Stock Mínimo</label>
                 <InputNumber
                   value={formData.minimum_stock}
                   onValueChange={(e) => set('minimum_stock', e.value ?? 0)}
                   min={0}
-                  disabled={saving}
+                  disabled={saving || !formData.track_stock}
                   className="w-full"
                   inputClassName="w-full rounded-lg border-slate-200 px-3 py-2.5 text-sm"
                   pt={{ root: { className: 'w-full' } }}
                 />
               </div>
               <div>
-                <label className="mb-1.5 block text-sm font-medium text-slate-700">Maximo</label>
+                <label className="mb-1.5 block text-sm font-medium text-slate-700">Stock Máximo</label>
                 <InputNumber
                   value={formData.maximum_stock}
                   onValueChange={(e) => set('maximum_stock', e.value ?? 0)}
                   min={0}
-                  disabled={saving}
+                  disabled={saving || !formData.track_stock}
                   className="w-full"
                   inputClassName="w-full rounded-lg border-slate-200 px-3 py-2.5 text-sm"
                   pt={{ root: { className: 'w-full' } }}
