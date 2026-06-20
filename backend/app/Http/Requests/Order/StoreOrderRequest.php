@@ -14,7 +14,7 @@ class StoreOrderRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'payment_method' => 'required|string|in:efectivo,tarjeta,transferencia',
+            'payment_method_id' => 'required|uuid|exists:payment_methods,id',
             'custom_legend' => 'nullable|string|max:500',
             'items' => 'required|array|min:1',
             'items.*.product_id' => 'required|uuid|exists:products,id',

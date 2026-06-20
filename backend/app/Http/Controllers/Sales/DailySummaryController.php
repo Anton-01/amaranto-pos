@@ -20,15 +20,18 @@ class DailySummaryController extends Controller
                 DB::raw('COALESCE(SUM(iva_total), 0) as total_tax'),
                 DB::raw('COUNT(*) as order_count')
             )
+            ->where('status', 'completed')
             ->whereBetween('created_at', [$today, $endOfDay])
             ->first();
 
         $byPayment = DB::table('orders')
-            ->select('payment_method', DB::raw('COUNT(*) as count'), DB::raw('COALESCE(SUM(total), 0) as total'))
-            ->whereBetween('created_at', [$today, $endOfDay])
-            ->groupBy('payment_method')
+            ->join('payment_methods', 'orders.payment_method_id', '=', 'payment_methods.id')
+            ->select('payment_methods.slug', 'payment_methods.name', DB::raw('COUNT(*) as count'), DB::raw('COALESCE(SUM(orders.total), 0) as total'))
+            ->where('orders.status', 'completed')
+            ->whereBetween('orders.created_at', [$today, $endOfDay])
+            ->groupBy('payment_methods.slug', 'payment_methods.name')
             ->get()
-            ->keyBy('payment_method');
+            ->keyBy('slug');
 
         $pettyCash = (float) DB::table('petty_cash_transactions')
             ->whereBetween('created_at', [$today, $endOfDay])
@@ -41,11 +44,11 @@ class DailySummaryController extends Controller
                 'net_income' => round((float) $sales->net_income, 2),
                 'total_tax' => round((float) $sales->total_tax, 2),
                 'order_count' => (int) $sales->order_count,
-                'by_payment' => [
-                    'efectivo' => round((float) ($byPayment['efectivo']->total ?? 0), 2),
-                    'tarjeta' => round((float) ($byPayment['tarjeta']->total ?? 0), 2),
-                    'transferencia' => round((float) ($byPayment['transferencia']->total ?? 0), 2),
-                ],
+                'by_payment' => $byPayment->map(fn ($row) => [
+                    'name' => $row->name,
+                    'count' => (int) $row->count,
+                    'total' => round((float) $row->total, 2),
+                ]),
                 'petty_cash_total' => round($pettyCash, 2),
             ],
         ]);

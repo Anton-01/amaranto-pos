@@ -6,6 +6,7 @@ use App\Http\Controllers\Admin\UserController;
 use App\Http\Controllers\Auth\AuthController;
 use App\Http\Controllers\Auth\TwoFactorController;
 use App\Http\Controllers\Catalog\CategoryController;
+use App\Http\Controllers\Catalog\PaymentMethodController;
 use App\Http\Controllers\Catalog\ProductController;
 use App\Http\Controllers\Catalog\ProductImageController;
 use App\Http\Controllers\Dashboard\DashboardController;
@@ -17,6 +18,7 @@ use App\Http\Controllers\Profile\ProfileController;
 use App\Http\Controllers\Promotion\PromotionController;
 use App\Http\Controllers\Sales\DailySummaryController;
 use App\Http\Controllers\Sales\OrderController;
+use App\Http\Controllers\Sales\SalesExportController;
 use App\Http\Controllers\Sales\TicketConfigController;
 use Illuminate\Support\Facades\Route;
 
@@ -71,8 +73,18 @@ Route::middleware(['auth:sanctum', 'user.active'])->group(function () {
     Route::get('orders', [OrderController::class, 'index']);
     Route::post('orders', [OrderController::class, 'store']);
     Route::get('orders/{order}', [OrderController::class, 'show']);
+    Route::post('orders/{order}/cancel', [OrderController::class, 'cancel']);
 
     Route::get('sales/daily-summary', DailySummaryController::class);
+    Route::get('sales/export', [SalesExportController::class, 'export']);
+
+    Route::get('payment-methods', [PaymentMethodController::class, 'index']);
+
+    Route::middleware('role:admin,manager')->prefix('payment-methods')->group(function () {
+        Route::post('/', [PaymentMethodController::class, 'store']);
+        Route::put('/{paymentMethod}', [PaymentMethodController::class, 'update']);
+        Route::delete('/{paymentMethod}', [PaymentMethodController::class, 'destroy']);
+    });
 
     Route::prefix('dashboard')->group(function () {
         Route::get('/stats', [DashboardController::class, 'stats']);

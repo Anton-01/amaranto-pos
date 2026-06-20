@@ -1,11 +1,5 @@
 import { forwardRef } from 'react';
 
-const paymentLabels = {
-  efectivo: 'EFECTIVO',
-  tarjeta: 'TARJETA',
-  transferencia: 'TRANSFERENCIA',
-};
-
 const TicketPreview = forwardRef(function TicketPreview({ order, ticketConfig, customLegend }, ref) {
   if (!ticketConfig) return null;
 
@@ -13,7 +7,10 @@ const TicketPreview = forwardRef(function TicketPreview({ order, ticketConfig, c
   const subtotal = order?.subtotal ?? 0;
   const ivaTotal = order?.iva_total ?? 0;
   const total = order?.total ?? 0;
-  const paymentMethod = order?.payment_method || 'efectivo';
+  const paymentMethod = order?.payment_method;
+  const paymentLabel = typeof paymentMethod === 'object'
+    ? (paymentMethod?.name || 'N/A').toUpperCase()
+    : (paymentMethod || 'N/A').toUpperCase();
   const legend = customLegend ?? order?.custom_legend ?? '';
   const orderId = order?.id || '';
   const createdAt = order?.created_at ? new Date(order.created_at) : new Date();
@@ -51,7 +48,7 @@ const TicketPreview = forwardRef(function TicketPreview({ order, ticketConfig, c
           </div>
           <div className="flex justify-between">
             <span className="text-slate-500">Pago:</span>
-            <span className="font-semibold">{paymentLabels[paymentMethod] || paymentMethod}</span>
+            <span className="font-semibold">{paymentLabel}</span>
           </div>
         </div>
 

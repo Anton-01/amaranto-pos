@@ -4,6 +4,7 @@ namespace Database\Seeders;
 
 use App\Models\GlobalSetting;
 use App\Models\NotificationType;
+use App\Models\PaymentMethod;
 use App\Models\Role;
 use App\Models\User;
 use Illuminate\Database\Seeder;
@@ -26,6 +27,25 @@ class DatabaseSeeder extends Seeder
         ]);
 
         $user->roles()->attach($admin->id);
+
+        PaymentMethod::create([
+            'name' => 'Efectivo',
+            'slug' => 'cash',
+            'status' => 'active',
+            'is_system' => true,
+        ]);
+        PaymentMethod::create([
+            'name' => 'Tarjeta de Crédito/Débito',
+            'slug' => 'card',
+            'status' => 'active',
+            'is_system' => true,
+        ]);
+        PaymentMethod::create([
+            'name' => 'Transferencia',
+            'slug' => 'transfer',
+            'status' => 'active',
+            'is_system' => true,
+        ]);
 
         $notificationTypes = [
             [

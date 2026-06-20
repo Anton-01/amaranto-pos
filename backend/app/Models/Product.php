@@ -27,6 +27,16 @@ class Product extends Model
         'image_url',
     ];
 
+    public function setSkuAttribute($value): void
+    {
+        $this->attributes['sku'] = strtoupper(trim($value));
+    }
+
+    public function setParentSkuAttribute($value): void
+    {
+        $this->attributes['parent_sku'] = $value ? strtoupper(trim($value)) : null;
+    }
+
     protected function casts(): array
     {
         return [

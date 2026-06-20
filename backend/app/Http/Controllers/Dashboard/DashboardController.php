@@ -16,15 +16,18 @@ class DashboardController extends Controller
         $endOfDay = now()->endOfDay();
 
         $monthlySales = DB::table('orders')
+            ->where('status', 'completed')
             ->whereBetween('created_at', [$startOfMonth, $endOfDay])
             ->selectRaw('COALESCE(SUM(total), 0) as total')
             ->value('total');
 
         $todayOrders = DB::table('orders')
+            ->where('status', 'completed')
             ->whereBetween('created_at', [$today, $endOfDay])
             ->count();
 
         $avgTicket = DB::table('orders')
+            ->where('status', 'completed')
             ->whereBetween('created_at', [$startOfMonth, $endOfDay])
             ->selectRaw('COALESCE(AVG(total), 0) as avg_total')
             ->value('avg_total');
@@ -58,6 +61,7 @@ class DashboardController extends Controller
                 DB::raw('COALESCE(SUM(total), 0) as total'),
                 DB::raw('COUNT(*) as orders')
             )
+            ->where('status', 'completed')
             ->whereBetween('created_at', [$today, $endOfDay])
             ->groupBy(DB::raw("EXTRACT(HOUR FROM created_at)::int"))
             ->orderBy('hour')
@@ -93,6 +97,7 @@ class DashboardController extends Controller
                 DB::raw('SUM(order_items.quantity) as total_qty'),
                 DB::raw('SUM(order_items.final_price_at_sale) as total_revenue')
             )
+            ->where('orders.status', 'completed')
             ->whereBetween('orders.created_at', [$startOfMonth, $endOfDay])
             ->groupBy('order_items.product_id', 'products.name')
             ->orderByDesc('total_qty')

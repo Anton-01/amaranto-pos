@@ -14,11 +14,15 @@ class Order extends Model
     protected $fillable = [
         'cash_register_id',
         'ticket_config_id',
-        'payment_method',
+        'payment_method_id',
         'subtotal',
         'iva_total',
         'total',
         'custom_legend',
+        'status',
+        'canceled_by',
+        'canceled_at',
+        'cancellation_reason',
     ];
 
     protected function casts(): array
@@ -27,6 +31,7 @@ class Order extends Model
             'subtotal' => 'decimal:2',
             'iva_total' => 'decimal:2',
             'total' => 'decimal:2',
+            'canceled_at' => 'datetime',
         ];
     }
 
@@ -38,6 +43,16 @@ class Order extends Model
     public function ticketConfig(): BelongsTo
     {
         return $this->belongsTo(TicketConfig::class);
+    }
+
+    public function paymentMethod(): BelongsTo
+    {
+        return $this->belongsTo(PaymentMethod::class);
+    }
+
+    public function canceledByUser(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'canceled_by');
     }
 
     public function items(): HasMany
