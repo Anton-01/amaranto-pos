@@ -356,6 +356,8 @@ export default function SalesHistoryPage() {
               <Dropdown
                 value={selectedPaymentMethod}
                 options={paymentMethodOptions}
+                optionLabel="label"
+                optionValue="value"
                 onChange={(e) => setSelectedPaymentMethod(e.value)}
                 placeholder="Todos"
                 className="w-full text-sm"
@@ -395,7 +397,10 @@ export default function SalesHistoryPage() {
               <Dropdown
                 value={selectedStatus}
                 options={statusOptions}
+                optionLabel="label"
+                optionValue="value"
                 onChange={(e) => setSelectedStatus(e.value)}
+                placeholder="Todos"
                 className="w-full text-sm"
                 pt={{ root: { className: 'w-full' } }}
               />

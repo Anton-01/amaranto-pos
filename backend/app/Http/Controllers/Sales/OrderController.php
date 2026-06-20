@@ -31,7 +31,7 @@ class OrderController extends Controller
         if ($request->filled('payment_method_id')) {
             $query->where('payment_method_id', $request->payment_method_id);
         }
-        if ($request->filled('status')) {
+        if ($request->filled('status') && in_array($request->status, ['completed', 'canceled'])) {
             $query->where('status', $request->status);
         }
         if ($request->filled('user_id')) {
