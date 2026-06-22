@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { InputText } from 'primereact/inputtext';
 import { InputNumber } from 'primereact/inputnumber';
 import { Dropdown } from 'primereact/dropdown';
@@ -7,8 +8,11 @@ import { toast } from 'sonner';
 import api from '../../api/axios';
 import AppLayout from '../../components/layout/AppLayout';
 import CheckoutModal from '../../components/pos/CheckoutModal';
+import TicketPreview from '../../components/pos/TicketPreview';
 
 export default function POSPage() {
+  const navigate = useNavigate();
+
   const [productGroups, setProductGroups] = useState([]);
   const [promotions, setPromotions] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -21,6 +25,9 @@ export default function POSPage() {
   const [openingBalance, setOpeningBalance] = useState(0);
   const [openingCash, setOpeningCash] = useState(false);
   const [taxRate, setTaxRate] = useState(0.16);
+
+  const [activeOrderForPrinting, setActiveOrderForPrinting] = useState(null);
+  const [activeTicketConfigForPrinting, setActiveTicketConfigForPrinting] = useState(null);
 
   const checkCashRegister = useCallback(async () => {
     try {
@@ -185,9 +192,17 @@ export default function POSPage() {
   const ivaTotal = totalGross - subtotal;
   const total = totalGross;
 
-  const handleCheckoutSuccess = () => {
+  const handleCheckoutSuccess = (order, ticketConfig) => {
+    setActiveOrderForPrinting(order);
+    setActiveTicketConfigForPrinting(ticketConfig);
+
+    setShowCheckout(false);
     setCart([]);
     fetchData();
+
+    setTimeout(() => {
+      window.print();
+    }, 350);
   };
 
   if (cashRegister === undefined) {
@@ -240,14 +255,23 @@ export default function POSPage() {
               </p>
             </div>
 
-            <Button
-              label={openingCash ? 'Abriendo Caja...' : 'Abrir Caja'}
-              onClick={handleOpenCash}
-              disabled={openingCash}
-              loading={openingCash}
-              className="w-full cursor-pointer rounded-lg bg-indigo-600 px-4 py-3 text-sm font-bold text-white shadow-sm hover:bg-indigo-500 disabled:opacity-50"
-              pt={{ root: { className: 'border-0' } }}
-            />
+            <div className="flex gap-3">
+              <Button
+                label="Regresar al Panel"
+                onClick={() => navigate('/dashboard')}
+                disabled={openingCash}
+                className="flex-1 cursor-pointer rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                pt={{ root: { className: 'border border-slate-200' } }}
+              />
+              <Button
+                label={openingCash ? 'Abriendo Caja...' : 'Abrir Caja'}
+                onClick={handleOpenCash}
+                disabled={openingCash}
+                loading={openingCash}
+                className="flex-1 cursor-pointer rounded-lg bg-indigo-600 px-4 py-3 text-sm font-bold text-white shadow-sm hover:bg-indigo-500 disabled:opacity-50"
+                pt={{ root: { className: 'border-0' } }}
+              />
+            </div>
 
             <div className="mt-4 rounded-lg bg-amber-50 border border-amber-200 px-4 py-3 text-xs text-amber-700">
               <strong>Nota:</strong> Este registro es obligatorio y quedará auditado con tu usuario, IP y hora del servidor.
@@ -464,6 +488,17 @@ export default function POSPage() {
         taxRate={taxRate}
         onSuccess={handleCheckoutSuccess}
       />
+
+      {/* Hidden print-only ticket rendered outside any Dialog */}
+      {activeOrderForPrinting && activeTicketConfigForPrinting && (
+        <div className="hidden print:block">
+          <TicketPreview
+            order={activeOrderForPrinting}
+            ticketConfig={activeTicketConfigForPrinting}
+            taxRate={taxRate}
+          />
+        </div>
+      )}
     </AppLayout>
   );
 }

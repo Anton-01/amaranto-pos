@@ -1094,3 +1094,38 @@ Se reemplazo el ENUM nativo de PostgreSQL `payment_method` por una tabla relacio
 - `src/components/pos/CheckoutModal.jsx` — taxRate prop, formula inversa, auto-print post-venta
 - `src/pages/pos/POSPage.jsx` — Fetch taxRate de API, formula inversa, taxRate prop a CheckoutModal
 - `src/pages/sales/SalesHistoryPage.jsx` — Fetch taxRate de API, IVA label dinamico, taxRate prop a TicketPreview
+
+---
+
+## 17. Correcciones de Sincronizacion Asincrona y UX — Flujo de Ventas [🟢 Completado]
+
+### Fix 1: Ciclo de Vida del Checkout Modal [🟢 Completado]
+**Problema**: La modal de cobro no se cerraba tras el pago exitoso, y la impresion se disparaba antes de hidratar los datos.
+**Solucion**: CheckoutModal ahora cierra inmediatamente tras exito y delega la impresion al componente padre (POSPage).
+- Secuencia estricta: API POST → toast.success → onSuccess(order, ticketConfig) → onHide() → parent clearCart → setTimeout(350ms) → window.print()
+- Se elimino el estado `completedOrder` del modal — ya no muestra vista post-venta
+- `onSuccess` signature cambiada a `(order, ticketConfig)` para que POSPage pueda renderizar el ticket independientemente
+
+### Fix 2: Impresion con Datos Reales (Blank Ticket Fix) [🟢 Completado]
+**Problema**: TicketPreview con `id="ticket-print-area"` se renderizaba DENTRO del Dialog de PrimeReact. El CSS `body * { visibility: hidden }` ocultaba el overlay del Dialog, dejando el ticket invisible durante la impresion.
+**Solucion**: El ticket de impresion se renderiza ahora a nivel de POSPage, FUERA de cualquier Dialog, en un `<div className="hidden print:block">`.
+- Nuevos estados en POSPage: `activeOrderForPrinting`, `activeTicketConfigForPrinting`
+- `handleCheckoutSuccess` guarda order+config, limpia carrito, espera 350ms, luego invoca window.print()
+- El TicketPreview de impresion usa `position: absolute` via CSS para posicionarse en top-left durante print
+
+### Fix 3: Boton de Cancelacion en Historial de Ventas [🟢 Completado]
+**Verificacion**: El boton de cancelar (pi pi-ban) ya existia en SalesHistoryPage con modal de contrasena admin, campo de razon, y llamada a `/orders/{id}/cancel`. Funcionalidad confirmada intacta.
+
+### Fix 4: Ruta de Escape en Apertura de Caja [🟢 Completado]
+**Problema**: La pantalla de apertura de caja no tenia forma de regresar al dashboard sin abrir una caja.
+**Solucion**: Agregado boton "Regresar al Panel" con `useNavigate('/dashboard')` en la pantalla de apertura de caja de POSPage.
+
+### Fix 5: setTimeout en Reimprimir Ticket del Historial [🟢 Completado]
+**Problema**: La funcion handlePrint en SalesHistoryPage ejecutaba `window.print()` directamente, arriesgando impresion en blanco.
+**Solucion**: Envuelto en `setTimeout(() => window.print(), 350)` para permitir hidratacion del DOM.
+
+### Archivos Modificados en esta Fase
+**Frontend:**
+- `src/components/pos/CheckoutModal.jsx` — Reescrito: cierra inmediatamente, onSuccess(order, ticketConfig), sin vista post-venta
+- `src/pages/pos/POSPage.jsx` — Reescrito: print ticket fuera de Dialog, handleCheckoutSuccess con setTimeout, boton "Regresar al Panel"
+- `src/pages/sales/SalesHistoryPage.jsx` — handlePrint con setTimeout(350ms)
