@@ -10,6 +10,7 @@ use App\Models\CashRegister;
 use App\Models\CashRegisterClosing;
 use App\Models\Order;
 use App\Models\PaymentMethod;
+use App\Models\PettyCashTransaction;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -36,11 +37,19 @@ class CashRegisterClosingController extends Controller
             ->orderBy('name')
             ->get(['id', 'name', 'slug']);
 
+        $pettyCashTotal = 0;
+        if ($cashRegister) {
+            $pettyCashTotal = (float) PettyCashTransaction::where('user_id', $cashRegister->user_id)
+                ->where('created_at', '>=', $cashRegister->opened_at)
+                ->sum('amount');
+        }
+
         return response()->json([
             'status' => 'success',
             'data'   => [
-                'cash_register'  => $cashRegister,
-                'payment_methods' => $paymentMethods,
+                'cash_register'    => $cashRegister,
+                'payment_methods'  => $paymentMethods,
+                'petty_cash_total' => round($pettyCashTotal, 2),
             ],
         ]);
     }
@@ -104,28 +113,35 @@ class CashRegisterClosingController extends Controller
 
             $declarations = $request->declarations ?? [];
 
+            $openingBalance = (float) $cashRegister->opening_balance;
+
+            $pettyCashTotal = (float) PettyCashTransaction::where('user_id', $cashRegister->user_id)
+                ->where('created_at', '>=', $cashRegister->opened_at)
+                ->sum('amount');
+
             $breakdown    = [];
-            $expectedTotal = 0.0;
+            $salesTotal   = 0.0;
             $declaredTotal = 0.0;
 
             foreach ($paymentMethods as $pm) {
-                $expected  = (float) ($expectedByMethod[$pm->id]->total ?? 0);
-                $declared  = (float) ($declarations[$pm->id] ?? 0);
-                $diff      = round($declared - $expected, 2);
+                $salesAmount = (float) ($expectedByMethod[$pm->id]->total ?? 0);
+                $declared    = (float) ($declarations[$pm->id] ?? 0);
+
+                $salesTotal += $salesAmount;
 
                 $breakdown[] = [
                     'payment_method_id' => $pm->id,
                     'name'              => $pm->name,
                     'slug'              => $pm->slug,
-                    'expected'          => round($expected, 2),
+                    'expected'          => round($salesAmount, 2),
                     'declared'          => round($declared, 2),
-                    'difference'        => $diff,
+                    'difference'        => round($declared - $salesAmount, 2),
                 ];
 
-                $expectedTotal += $expected;
                 $declaredTotal += $declared;
             }
 
+            $expectedTotal = round($openingBalance + $salesTotal - $pettyCashTotal, 2);
             $differenceTotal = round($declaredTotal - $expectedTotal, 2);
 
             $closing = CashRegisterClosing::create([

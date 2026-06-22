@@ -12,6 +12,7 @@ use App\Http\Controllers\Catalog\ProductImageController;
 use App\Http\Controllers\Dashboard\DashboardController;
 use App\Http\Controllers\Finance\AnalyticsController;
 use App\Http\Controllers\Finance\CashRegisterClosingController;
+use App\Http\Controllers\Finance\CashRegisterController;
 use App\Http\Controllers\Finance\PettyCashController;
 use App\Http\Controllers\Logistics\StockMovementController;
 use App\Http\Controllers\Profile\NotificationPreferenceController;
@@ -149,6 +150,8 @@ Route::middleware(['auth:sanctum', 'user.active'])->group(function () {
     });
 
     Route::prefix('cash-registers')->group(function () {
+        Route::get('/active', [CashRegisterController::class, 'active']);
+        Route::post('/open', [CashRegisterController::class, 'open']);
         Route::get('/current', [CashRegisterClosingController::class, 'current']);
         Route::post('/close', [CashRegisterClosingController::class, 'store']);
         Route::get('/closings/export-excel', [CashRegisterClosingController::class, 'exportExcel']);

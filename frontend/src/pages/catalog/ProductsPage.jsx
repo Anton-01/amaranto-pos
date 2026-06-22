@@ -73,6 +73,9 @@ export default function ProductsPage() {
   };
 
   const stockTemplate = (row) => {
+    if (row.track_stock === false) {
+      return <Tag value="ILIMITADO" severity="info" className="text-xs" />;
+    }
     const isLow = row.current_stock <= row.minimum_stock;
     return (
       <span className={isLow ? 'font-semibold text-rose-600' : 'text-slate-900'}>
