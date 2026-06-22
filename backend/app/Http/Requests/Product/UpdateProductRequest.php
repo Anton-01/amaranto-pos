@@ -25,6 +25,7 @@ class UpdateProductRequest extends FormRequest
             'minimum_stock' => 'sometimes|integer|min:0',
             'maximum_stock' => 'sometimes|integer|min:0',
             'is_active' => 'sometimes|boolean',
+            'track_stock' => 'sometimes|boolean',
         ];
     }
 }

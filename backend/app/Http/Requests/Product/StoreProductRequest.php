@@ -24,6 +24,7 @@ class StoreProductRequest extends FormRequest
             'minimum_stock' => 'integer|min:0',
             'maximum_stock' => 'integer|min:0',
             'is_active' => 'boolean',
+            'track_stock' => 'boolean',
         ];
     }
 }
