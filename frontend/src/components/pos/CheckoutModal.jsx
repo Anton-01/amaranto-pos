@@ -6,7 +6,7 @@ import { toast } from 'sonner';
 import api from '../../api/axios';
 import TicketPreview from './TicketPreview';
 
-export default function CheckoutModal({ visible, onHide, cart, onSuccess }) {
+export default function CheckoutModal({ visible, onHide, cart, taxRate = 0.16, onSuccess }) {
   const [paymentMethodId, setPaymentMethodId] = useState(null);
   const [paymentMethods, setPaymentMethods] = useState([]);
   const [customLegend, setCustomLegend] = useState('');
@@ -35,9 +35,10 @@ export default function CheckoutModal({ visible, onHide, cart, onSuccess }) {
     }
   }, [visible]);
 
-  const subtotal = cart.reduce((sum, i) => sum + (i.sale_price * i.quantity) - i.discount, 0);
-  const ivaTotal = subtotal * 0.16;
-  const total = subtotal + ivaTotal;
+  const totalGross = cart.reduce((sum, i) => sum + (i.sale_price * i.quantity) - i.discount, 0);
+  const subtotal = totalGross / (1 + taxRate);
+  const ivaTotal = totalGross - subtotal;
+  const total = totalGross;
 
   const selectedMethod = paymentMethods.find(pm => pm.id === paymentMethodId);
 
@@ -73,6 +74,7 @@ export default function CheckoutModal({ visible, onHide, cart, onSuccess }) {
       setCompletedOrder(order);
       toast.success('Orden registrada exitosamente.');
       onSuccess?.(order);
+      setTimeout(() => window.print(), 400);
     } catch (err) {
       const data = err.response?.data;
       if (data?.code === 'ERR_POS_CASH_REGISTER_REQUIRED') {
@@ -177,7 +179,7 @@ export default function CheckoutModal({ visible, onHide, cart, onSuccess }) {
                   <span>${subtotal.toLocaleString('es-MX', { minimumFractionDigits: 2 })}</span>
                 </div>
                 <div className="flex justify-between text-slate-600">
-                  <span>IVA (16%)</span>
+                  <span>IVA ({(taxRate * 100).toFixed(0)}%)</span>
                   <span>${ivaTotal.toLocaleString('es-MX', { minimumFractionDigits: 2 })}</span>
                 </div>
                 <div className="mt-2 flex justify-between border-t border-slate-200 pt-2 text-lg font-bold text-slate-900">
@@ -241,6 +243,7 @@ export default function CheckoutModal({ visible, onHide, cart, onSuccess }) {
             order={displayOrder}
             ticketConfig={ticketConfig}
             customLegend={customLegend}
+            taxRate={taxRate}
           />
         </div>
       </div>

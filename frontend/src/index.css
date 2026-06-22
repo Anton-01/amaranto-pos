@@ -8,22 +8,30 @@ body {
 }
 
 @media print {
-  body {
+  body * {
+    visibility: hidden;
+  }
+
+  #ticket-print-area,
+  #ticket-print-area * {
+    visibility: visible;
+  }
+
+  #ticket-print-area {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 80mm;
+    max-width: 80mm;
     margin: 0;
     padding: 0;
-    background: white;
   }
 
-  .print\:hidden,
-  header,
-  nav,
-  aside,
-  .p-dialog-mask {
-    display: none !important;
-  }
-
-  .print\:block {
-    display: block !important;
+  #ticket-print-area > div {
+    border: none !important;
+    border-radius: 0 !important;
+    padding: 2mm 3mm !important;
+    box-shadow: none !important;
   }
 
   .ticket-preview {
@@ -34,13 +42,6 @@ body {
     border: none !important;
     box-shadow: none !important;
     page-break-inside: avoid;
-  }
-
-  .ticket-preview > div {
-    border: none !important;
-    border-radius: 0 !important;
-    padding: 2mm 3mm !important;
-    box-shadow: none !important;
   }
 
   @page {

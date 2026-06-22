@@ -1,6 +1,6 @@
 import { forwardRef } from 'react';
 
-const TicketPreview = forwardRef(function TicketPreview({ order, ticketConfig, customLegend }, ref) {
+const TicketPreview = forwardRef(function TicketPreview({ order, ticketConfig, customLegend, taxRate = 0.16 }, ref) {
   if (!ticketConfig) return null;
 
   const items = order?.items || [];
@@ -19,7 +19,7 @@ const TicketPreview = forwardRef(function TicketPreview({ order, ticketConfig, c
   const dash = '-'.repeat(40);
 
   return (
-    <div ref={ref} className="ticket-preview mx-auto font-mono text-xs leading-relaxed" style={{ width: '302px' }}>
+    <div ref={ref} id="ticket-print-area" className="ticket-preview mx-auto font-mono text-xs leading-relaxed" style={{ width: '302px' }}>
       <div className="rounded-lg border-2 border-dashed border-slate-300 bg-white px-5 py-6">
         {/* Header */}
         <div className="mb-3 text-center">
@@ -99,7 +99,7 @@ const TicketPreview = forwardRef(function TicketPreview({ order, ticketConfig, c
             <span>${parseFloat(subtotal).toLocaleString('es-MX', { minimumFractionDigits: 2 })}</span>
           </div>
           <div className="flex justify-between text-slate-600">
-            <span>IVA (16%):</span>
+            <span>IVA ({(taxRate * 100).toFixed(0)}%):</span>
             <span>${parseFloat(ivaTotal).toLocaleString('es-MX', { minimumFractionDigits: 2 })}</span>
           </div>
           <div className="flex justify-between text-sm font-bold text-slate-900 pt-1">
