@@ -1015,3 +1015,82 @@ Se reemplazo el ENUM nativo de PostgreSQL `payment_method` por una tabla relacio
 - `src/components/pos/CheckoutModal.jsx` — Dynamic payment methods via API
 - `src/components/pos/TicketPreview.jsx` — Soporta payment method como objeto
 - `src/pages/catalog/ProductFormPage.jsx` — SKU/parent_sku uppercase onChange
+
+## 16. Refactorizacion Critica: Cancelacion Auditable, Impresion CSS Aislada & Motor Financiero Tax-Inclusive [🟢 Completado]
+
+### Tarea 1: Cancelacion de Ventas Auditable [🟢 Completado]
+
+#### Backend
+- **OrderController::cancel()** refactorizado para validar contraseña contra usuarios con rol `admin` O `manager` (no solo admin) usando `Hash::check` iterativo
+- **Transaccion atomica** con `DB::transaction`:
+  1. Revierte stock de productos con `track_stock == true` via `Product::increment()`
+  2. Registra contra-movimiento en `stock_movements` de tipo `adjustment` por cada producto revertido
+  3. Actualiza orden con status `canceled`, `canceled_by`, `canceled_at`, `cancellation_reason`
+  4. Inserta traza forense en nueva tabla `audit_logs` con metadata JSONB (autorizador, IP, user_agent, razon, total, items)
+
+#### Migracion: audit_logs (2026_06_22_000001)
+- `id` UUID PK, `action` varchar, `auditable_type` + `auditable_id` (polimorfismo), `user_id` FK nullable, `metadata` JSONB, `ip_address`, `user_agent`, `created_at` timestampTz
+- Indices en `(auditable_type, auditable_id)` y `action`
+
+#### Modelo: AuditLog (Nuevo)
+- HasUuids, timestamps deshabilitados, cast metadata a array
+
+#### Frontend (SalesHistoryPage)
+- Modal de cancelacion ya existente funciona correctamente con la nueva logica backend
+- Acepta contraseña de admin O manager para autorizar
+
+### Tarea 2: Solucion Definitiva al Flujo de Impresion [🟢 Completado]
+
+#### CSS Print Isolation (index.css)
+- Implementada directiva `@media print` con aislamiento estricto:
+  - `body * { visibility: hidden }` — Oculta todo el AppShell
+  - `#ticket-print-area, #ticket-print-area * { visibility: visible }` — Solo muestra el ticket
+  - `#ticket-print-area { position: absolute; left: 0; top: 0; width: 80mm }` — Dimensionamiento para papel termico
+  - `@page { size: 80mm auto; margin: 0 }` — Configuracion de pagina para ticketera
+
+#### TicketPreview (Modificado)
+- Agregado `id="ticket-print-area"` al contenedor raiz del ticket
+- Funciona tanto en CheckoutModal (POS) como en SalesHistoryPage (reimprimir)
+
+#### CheckoutModal (Modificado)
+- Auto-disparo de `window.print()` 400ms despues de confirmar cobro exitoso
+- Flujo completo: API -> limpiar carrito -> mostrar ticket -> auto-imprimir
+- Boton manual "Imprimir Ticket" preservado para reimpresion
+
+### Tarea 3: Motor Financiero Tax-Inclusive (Desglose IVA Invertido) [🟢 Completado]
+
+#### Formulas Matematicas Implementadas
+- **Precio Neto (Subtotal)** = Precio Final / (1 + IVA%)
+- **Monto IVA** = Precio Final - Precio Neto
+- Ejemplo: Precio publico $90 con IVA 16% → Subtotal $77.59, IVA $12.41, Total $90.00
+
+#### Backend (OrderController::store)
+- Lee `tax_rate` dinamicamente de `global_settings` (fallback 0.16)
+- Calcula desglose inverso: `base_price_at_sale` = precio neto por unidad, `tax_amount_at_sale` = IVA extraido, `final_price_at_sale` = precio publico original
+- `orders.subtotal` = total bruto / (1 + tasa), `orders.iva_total` = total - subtotal, `orders.total` = precio publico cobrado
+
+#### API: GET /api/tax-rate (Nueva)
+- Endpoint publico (autenticado) que retorna la tasa de IVA configurada en `global_settings`
+- Respuesta: `{ rate: 0.16, label: "IVA 16%" }`
+
+#### Frontend
+- **POSPage**: Obtiene `taxRate` de API al montar, calcula subtotal/IVA con formula inversa, label dinamico "IVA (X%)"
+- **CheckoutModal**: Recibe `taxRate` como prop, calcula desglose inverso, pasa a TicketPreview
+- **TicketPreview**: Recibe `taxRate` como prop, muestra label dinamico "IVA (X%):"
+- **SalesHistoryPage**: Obtiene `taxRate` de API, muestra label dinamico en detalle modal y pasa a TicketPreview en reimprimir
+
+### Archivos Creados en esta Fase
+**Backend (nuevos):**
+- `database/migrations/2026_06_22_000001_create_audit_logs_table.php`
+- `app/Models/AuditLog.php`
+
+**Backend (modificados):**
+- `app/Http/Controllers/Sales/OrderController.php` — Tax-inclusive store(), auditable cancel() con stock_movements + audit_logs
+- `routes/api.php` — Endpoint GET /api/tax-rate
+
+**Frontend (modificados):**
+- `src/index.css` — @media print con #ticket-print-area isolation estricto 80mm
+- `src/components/pos/TicketPreview.jsx` — id="ticket-print-area", taxRate prop, IVA label dinamico
+- `src/components/pos/CheckoutModal.jsx` — taxRate prop, formula inversa, auto-print post-venta
+- `src/pages/pos/POSPage.jsx` — Fetch taxRate de API, formula inversa, taxRate prop a CheckoutModal
+- `src/pages/sales/SalesHistoryPage.jsx` — Fetch taxRate de API, IVA label dinamico, taxRate prop a TicketPreview

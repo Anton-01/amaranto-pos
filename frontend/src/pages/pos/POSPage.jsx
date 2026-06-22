@@ -20,6 +20,7 @@ export default function POSPage() {
   const [cashRegister, setCashRegister] = useState(undefined);
   const [openingBalance, setOpeningBalance] = useState(0);
   const [openingCash, setOpeningCash] = useState(false);
+  const [taxRate, setTaxRate] = useState(0.16);
 
   const checkCashRegister = useCallback(async () => {
     try {
@@ -48,6 +49,9 @@ export default function POSPage() {
 
   useEffect(() => { checkCashRegister(); }, [checkCashRegister]);
   useEffect(() => { if (cashRegister) fetchData(); }, [cashRegister, fetchData]);
+  useEffect(() => {
+    api.get('/tax-rate').then(res => setTaxRate(res.data.data.rate)).catch(() => {});
+  }, []);
 
   const handleOpenCash = async () => {
     setOpeningCash(true);
@@ -173,13 +177,13 @@ export default function POSPage() {
     ));
   };
 
-  const subtotal = useMemo(() =>
+  const totalGross = useMemo(() =>
     cart.reduce((sum, i) => sum + (i.sale_price * i.quantity) - i.discount, 0),
   [cart]);
 
-  const ivaRate = 0.16;
-  const ivaTotal = subtotal * ivaRate;
-  const total = subtotal + ivaTotal;
+  const subtotal = totalGross / (1 + taxRate);
+  const ivaTotal = totalGross - subtotal;
+  const total = totalGross;
 
   const handleCheckoutSuccess = () => {
     setCart([]);
@@ -432,7 +436,7 @@ export default function POSPage() {
                     <span>${subtotal.toLocaleString('es-MX', { minimumFractionDigits: 2 })}</span>
                   </div>
                   <div className="flex justify-between text-slate-600">
-                    <span>IVA (16%)</span>
+                    <span>IVA ({(taxRate * 100).toFixed(0)}%)</span>
                     <span>${ivaTotal.toLocaleString('es-MX', { minimumFractionDigits: 2 })}</span>
                   </div>
                   <div className="flex justify-between text-lg font-bold text-slate-900 pt-2 border-t border-slate-100">
@@ -457,6 +461,7 @@ export default function POSPage() {
         visible={showCheckout}
         onHide={() => setShowCheckout(false)}
         cart={cart}
+        taxRate={taxRate}
         onSuccess={handleCheckoutSuccess}
       />
     </AppLayout>

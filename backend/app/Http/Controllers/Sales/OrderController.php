@@ -4,10 +4,13 @@ namespace App\Http\Controllers\Sales;
 
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Order\StoreOrderRequest;
+use App\Models\AuditLog;
 use App\Models\CashRegister;
+use App\Models\GlobalSetting;
 use App\Models\Order;
 use App\Models\Product;
 use App\Models\Promotion;
+use App\Models\StockMovement;
 use App\Models\TicketConfig;
 use App\Models\User;
 use Illuminate\Http\JsonResponse;
@@ -99,58 +102,63 @@ class OrderController extends Controller
 
         $order = DB::transaction(function () use ($request, $activeConfig, $user, $cashRegister) {
 
-            $subtotal = 0;
+            $taxSetting = GlobalSetting::where('key', 'tax_rate')->first();
+            $taxRate = $taxSetting ? (float) ($taxSetting->value['rate'] ?? 0.16) : 0.16;
+
+            $totalGross = 0;
             $itemsData = [];
 
             foreach ($request->items as $item) {
                 $product = Product::findOrFail($item['product_id']);
                 $promotionId = $item['promotion_id'] ?? null;
 
-                $basePrice = (float) $product->sale_price;
+                $publicPrice = (float) $product->sale_price;
                 $quantity = (int) $item['quantity'];
-                $lineTotal = $basePrice * $quantity;
+                $lineGross = $publicPrice * $quantity;
                 $discount = 0;
 
                 if ($promotionId) {
                     $promotion = Promotion::findOrFail($promotionId);
 
                     if ($promotion->type === 'percentage') {
-                        $discount = $lineTotal * ((float) $promotion->value / 100);
+                        $discount = $lineGross * ((float) $promotion->value / 100);
                     } elseif ($promotion->type === 'fixed_amount') {
-                        $discount = min((float) $promotion->value, $lineTotal);
+                        $discount = min((float) $promotion->value, $lineGross);
                     } elseif ($promotion->type === 'freebie_100') {
-                        $discount = $lineTotal;
+                        $discount = $lineGross;
                     }
                 }
 
-                $finalLineTotal = $lineTotal - $discount;
-                $tax = $finalLineTotal * 0.16;
+                $finalLineTotal = $lineGross - $discount;
+                $netPrice = $finalLineTotal / (1 + $taxRate);
+                $tax = $finalLineTotal - $netPrice;
 
                 $itemsData[] = [
                     'product_id' => $product->id,
                     'promotion_id' => $promotionId,
                     'quantity' => $quantity,
-                    'base_price_at_sale' => $basePrice,
+                    'base_price_at_sale' => round($netPrice / $quantity, 2),
                     'discount_amount_at_sale' => round($discount, 2),
                     'final_price_at_sale' => round($finalLineTotal, 2),
                     'tax_amount_at_sale' => round($tax, 2),
                 ];
 
-                $subtotal += $finalLineTotal;
+                $totalGross += $finalLineTotal;
 
                 if ($product->track_stock) {
                     $product->decrement('current_stock', $quantity);
                 }
             }
 
-            $ivaTotal = round($subtotal * 0.16, 2);
-            $total = round($subtotal + $ivaTotal, 2);
+            $subtotal = round($totalGross / (1 + $taxRate), 2);
+            $ivaTotal = round($totalGross - $subtotal, 2);
+            $total = round($totalGross, 2);
 
             $order = Order::create([
                 'cash_register_id' => $cashRegister->id,
                 'ticket_config_id' => $activeConfig->id,
                 'payment_method_id' => $request->payment_method_id,
-                'subtotal' => round($subtotal, 2),
+                'subtotal' => $subtotal,
                 'iva_total' => $ivaTotal,
                 'total' => $total,
                 'custom_legend' => $request->custom_legend,
@@ -190,9 +198,11 @@ class OrderController extends Controller
             ], 422);
         }
 
-        $admin = User::whereHas('roles', fn ($q) => $q->where('name', 'admin'))->first();
+        $authorizer = User::whereHas('roles', fn ($q) => $q->whereIn('name', ['admin', 'manager']))
+            ->get()
+            ->first(fn ($u) => Hash::check($request->admin_password, $u->password));
 
-        if (!$admin || !Hash::check($request->admin_password, $admin->password)) {
+        if (!$authorizer) {
             return response()->json([
                 'status' => 'error',
                 'code' => 'ERR_ORDER_CANCEL_UNAUTHORIZED',
@@ -200,7 +210,7 @@ class OrderController extends Controller
             ], 403);
         }
 
-        DB::transaction(function () use ($order, $request, $admin) {
+        DB::transaction(function () use ($order, $request, $authorizer) {
             $order->load('items');
 
             foreach ($order->items as $item) {
@@ -208,15 +218,43 @@ class OrderController extends Controller
                     $product = Product::find($item->product_id);
                     if ($product && $product->track_stock) {
                         $product->increment('current_stock', $item->quantity);
+
+                        StockMovement::create([
+                            'product_id' => $product->id,
+                            'user_id' => $authorizer->id,
+                            'type' => 'adjustment',
+                            'quantity' => $item->quantity,
+                            'cost_price_at_movement' => $item->base_price_at_sale ?? 0,
+                            'reason' => null,
+                        ]);
                     }
                 }
             }
 
             $order->update([
                 'status' => 'canceled',
-                'canceled_by' => $admin->id,
+                'canceled_by' => $authorizer->id,
                 'canceled_at' => now(),
                 'cancellation_reason' => $request->reason,
+            ]);
+
+            AuditLog::create([
+                'action' => 'order_canceled',
+                'auditable_type' => 'Order',
+                'auditable_id' => $order->id,
+                'user_id' => $authorizer->id,
+                'metadata' => [
+                    'order_id' => $order->id,
+                    'order_total' => $order->total,
+                    'reason' => $request->reason,
+                    'authorizer_name' => $authorizer->name,
+                    'authorizer_email' => $authorizer->email,
+                    'items_count' => $order->items->count(),
+                    'stock_reverted' => $order->items->filter(fn ($i) => $i->product_id && optional(Product::find($i->product_id))->track_stock)->count() > 0,
+                ],
+                'ip_address' => $request->ip(),
+                'user_agent' => $request->userAgent(),
+                'created_at' => now(),
             ]);
         });
 

@@ -67,9 +67,11 @@ export default function SalesHistoryPage() {
   const [canceling, setCanceling] = useState(false);
 
   const [exporting, setExporting] = useState(false);
+  const [taxRate, setTaxRate] = useState(0.16);
 
   useEffect(() => {
     api.get('/payment-methods').then(res => setPaymentMethods(res.data.data)).catch(() => {});
+    api.get('/tax-rate').then(res => setTaxRate(res.data.data.rate)).catch(() => {});
     if (isAdminOrManager) {
       api.get('/admin/users').then(res => setUsers(res.data.data.map(u => ({ label: u.name, value: u.id })))).catch(() => {});
     }
@@ -547,7 +549,7 @@ export default function SalesHistoryPage() {
                   <span>Subtotal</span><span>{fmt(detailOrder.subtotal)}</span>
                 </div>
                 <div className="flex justify-between text-sm text-slate-600">
-                  <span>IVA (16%)</span><span>{fmt(detailOrder.iva_total)}</span>
+                  <span>IVA ({(taxRate * 100).toFixed(0)}%)</span><span>{fmt(detailOrder.iva_total)}</span>
                 </div>
                 <div className="mt-2 flex justify-between border-t border-slate-200 pt-2 text-lg font-bold text-slate-900">
                   <span>Total</span><span>{fmt(detailOrder.total)}</span>
@@ -583,7 +585,7 @@ export default function SalesHistoryPage() {
             />
           </div>
           {printOrder && printTicketConfig && (
-            <TicketPreview order={printOrder} ticketConfig={printTicketConfig} />
+            <TicketPreview order={printOrder} ticketConfig={printTicketConfig} taxRate={taxRate} />
           )}
         </div>
       </Dialog>

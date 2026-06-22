@@ -77,6 +77,13 @@ Route::middleware(['auth:sanctum', 'user.active'])->group(function () {
     Route::get('orders/{order}', [OrderController::class, 'show']);
     Route::post('orders/{order}/cancel', [OrderController::class, 'cancel']);
 
+    Route::get('tax-rate', function () {
+        $setting = \App\Models\GlobalSetting::where('key', 'tax_rate')->first();
+        $rate = $setting ? (float) ($setting->value['rate'] ?? 0.16) : 0.16;
+        $label = $setting ? ($setting->value['label'] ?? 'IVA 16%') : 'IVA 16%';
+        return response()->json(['status' => 'success', 'data' => ['rate' => $rate, 'label' => $label]]);
+    });
+
     Route::get('sales/daily-summary', DailySummaryController::class);
     Route::get('sales/export', [SalesExportController::class, 'export']);
 
