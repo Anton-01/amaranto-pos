@@ -32,7 +32,7 @@ const fmt = (v) => `$${Number(v).toLocaleString('es-MX', { minimumFractionDigits
 
 export default function SalesHistoryPage() {
   const { user } = useAuth();
-  const userRoles = user?.roles?.map(r => r.name) || [];
+  const userRoles = user?.roles || [];
   const isAdminOrManager = userRoles.includes('admin') || userRoles.includes('manager');
 
   const [orders, setOrders] = useState([]);
