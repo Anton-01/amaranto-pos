@@ -164,7 +164,7 @@ export default function SalesHistoryPage() {
   };
 
   const handlePrint = () => {
-    window.print();
+    setTimeout(() => window.print(), 350);
   };
 
   const openCancel = (order) => {
