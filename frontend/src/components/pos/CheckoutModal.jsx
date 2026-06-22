@@ -75,7 +75,9 @@ export default function CheckoutModal({ visible, onHide, cart, onSuccess }) {
       onSuccess?.(order);
     } catch (err) {
       const data = err.response?.data;
-      if (data?.code === 'ERR_POS_PROMOTION_LIMIT_EXCEEDED') {
+      if (data?.code === 'ERR_POS_CASH_REGISTER_REQUIRED') {
+        toast.error('Caja no abierta', { description: data.message });
+      } else if (data?.code === 'ERR_POS_PROMOTION_LIMIT_EXCEEDED') {
         toast.error('Limite de promociones excedido', { description: data.message });
       } else if (data?.code === 'ERR_TICKET_NO_ACTIVE_CONFIG') {
         toast.error('Sin configuracion de ticket', { description: data.message });
@@ -205,7 +207,7 @@ export default function CheckoutModal({ visible, onHide, cart, onSuccess }) {
                   onClick={handleSubmit}
                   disabled={submitting || !ticketConfig || !paymentMethodId}
                   loading={submitting}
-                  className="flex-1 rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
+                  className="flex-1 cursor-pointer rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
                   pt={{ root: { className: 'border-0' } }}
                 />
               </div>
@@ -225,7 +227,7 @@ export default function CheckoutModal({ visible, onHide, cart, onSuccess }) {
                 type="button"
                 label="Imprimir Ticket"
                 onClick={handlePrint}
-                className="flex-1 rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-indigo-500"
+                className="flex-1 cursor-pointer rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-indigo-500"
                 pt={{ root: { className: 'border-0' } }}
               />
             </div>

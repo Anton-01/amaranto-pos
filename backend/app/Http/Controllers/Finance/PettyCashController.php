@@ -43,6 +43,21 @@ class PettyCashController extends Controller
     public function store(StorePettyCashRequest $request): JsonResponse
     {
         $user = $request->user();
+
+        $hasOpenRegister = \App\Models\CashRegister::where('user_id', $user->id)
+            ->whereNull('closed_at')
+            ->exists();
+
+        if (!$hasOpenRegister) {
+            return response()->json([
+                'status' => 'error',
+                'code' => 'ERR_POS_CASH_REGISTER_REQUIRED',
+                'message' => 'Debes abrir una caja antes de registrar retiros de caja chica.',
+                'errors' => null,
+                'metadata' => null,
+            ], 422);
+        }
+
         $validated = $request->validated();
 
         $transaction = DB::transaction(function () use ($user, $validated) {

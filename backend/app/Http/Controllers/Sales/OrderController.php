@@ -83,18 +83,21 @@ class OrderController extends Controller
 
         $user = $request->user();
 
-        $order = DB::transaction(function () use ($request, $activeConfig, $user) {
-            $cashRegister = CashRegister::where('user_id', $user->id)
-                ->whereNull('closed_at')
-                ->first();
+        $cashRegister = CashRegister::where('user_id', $user->id)
+            ->whereNull('closed_at')
+            ->first();
 
-            if (!$cashRegister) {
-                $cashRegister = CashRegister::create([
-                    'user_id' => $user->id,
-                    'opened_at' => now(),
-                    'opening_balance' => 0,
-                ]);
-            }
+        if (!$cashRegister) {
+            return response()->json([
+                'status' => 'error',
+                'code' => 'ERR_POS_CASH_REGISTER_REQUIRED',
+                'message' => 'Debes abrir una caja antes de procesar ventas. Realiza la apertura de turno desde el Punto de Venta.',
+                'errors' => null,
+                'metadata' => null,
+            ], 422);
+        }
+
+        $order = DB::transaction(function () use ($request, $activeConfig, $user, $cashRegister) {
 
             $subtotal = 0;
             $itemsData = [];

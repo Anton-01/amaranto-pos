@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { InputText } from 'primereact/inputtext';
+import { InputNumber } from 'primereact/inputnumber';
 import { Dropdown } from 'primereact/dropdown';
 import { Button } from 'primereact/button';
 import { toast } from 'sonner';
@@ -15,6 +16,19 @@ export default function POSPage() {
 
   const [cart, setCart] = useState([]);
   const [showCheckout, setShowCheckout] = useState(false);
+
+  const [cashRegister, setCashRegister] = useState(undefined);
+  const [openingBalance, setOpeningBalance] = useState(0);
+  const [openingCash, setOpeningCash] = useState(false);
+
+  const checkCashRegister = useCallback(async () => {
+    try {
+      const res = await api.get('/cash-registers/active');
+      setCashRegister(res.data.data);
+    } catch {
+      setCashRegister(null);
+    }
+  }, []);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -32,7 +46,27 @@ export default function POSPage() {
     }
   }, []);
 
-  useEffect(() => { fetchData(); }, [fetchData]);
+  useEffect(() => { checkCashRegister(); }, [checkCashRegister]);
+  useEffect(() => { if (cashRegister) fetchData(); }, [cashRegister, fetchData]);
+
+  const handleOpenCash = async () => {
+    setOpeningCash(true);
+    try {
+      const res = await api.post('/cash-registers/open', { opening_balance: openingBalance ?? 0 });
+      setCashRegister(res.data.data);
+      toast.success('Caja abierta exitosamente. ¡Buen turno!');
+    } catch (err) {
+      const data = err.response?.data;
+      if (data?.code === 'ERR_POS_CASH_REGISTER_ALREADY_OPEN') {
+        setCashRegister(data.data);
+        toast.info('Ya tienes una caja abierta.');
+      } else {
+        toast.error(data?.message || 'Error al abrir la caja.');
+      }
+    } finally {
+      setOpeningCash(false);
+    }
+  };
 
   const activePromotionId = useMemo(() => {
     const ids = cart.map(item => item.promotion_id).filter(Boolean);
@@ -152,6 +186,74 @@ export default function POSPage() {
     fetchData();
   };
 
+  if (cashRegister === undefined) {
+    return (
+      <AppLayout>
+        <div className="flex h-64 items-center justify-center">
+          <div className="h-8 w-8 animate-spin rounded-full border-4 border-indigo-600 border-t-transparent" />
+        </div>
+      </AppLayout>
+    );
+  }
+
+  if (!cashRegister) {
+    return (
+      <AppLayout>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-md">
+          <div className="w-full max-w-md rounded-2xl bg-white p-8 shadow-2xl ring-1 ring-slate-200">
+            <div className="mb-6 flex flex-col items-center text-center">
+              <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-indigo-50">
+                <svg className="h-8 w-8 text-indigo-600" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 18.75a60.07 60.07 0 0 1 15.797 2.101c.727.198 1.453-.342 1.453-1.096V18.75M3.75 4.5v.75A.75.75 0 0 1 3 6h-.75m0 0v-.375c0-.621.504-1.125 1.125-1.125H20.25M2.25 6v9m18-10.5v.75c0 .414.336.75.75.75h.75m-1.5-1.5h.375c.621 0 1.125.504 1.125 1.125v9.75c0 .621-.504 1.125-1.125 1.125h-.375m1.5-1.5H21a.75.75 0 0 0-.75.75v.75m0 0H3.75m0 0h-.375a1.125 1.125 0 0 1-1.125-1.125V15m1.5 1.5v-.75A.75.75 0 0 0 3 15h-.75M15 10.5a3 3 0 1 1-6 0 3 3 0 0 1 6 0Zm3 0h.008v.008H18V10.5Zm-12 0h.008v.008H6V10.5Z" />
+                </svg>
+              </div>
+              <h2 className="text-xl font-bold text-slate-900">Apertura de Turno de Caja</h2>
+              <p className="mt-2 text-sm text-slate-500">
+                Para comenzar a operar en el Punto de Venta, es necesario registrar el fondo inicial de caja.
+              </p>
+            </div>
+
+            <div className="mb-6">
+              <label className="mb-2 block text-sm font-medium text-slate-700">
+                Monto Inicial de Caja (Fondo de Operación) *
+              </label>
+              <InputNumber
+                value={openingBalance}
+                onValueChange={(e) => setOpeningBalance(e.value)}
+                mode="currency"
+                currency="MXN"
+                locale="es-MX"
+                minFractionDigits={2}
+                maxFractionDigits={2}
+                min={0}
+                disabled={openingCash}
+                className="w-full"
+                inputClassName="w-full rounded-lg border-slate-200 px-4 py-3 text-lg font-semibold text-center"
+                pt={{ root: { className: 'w-full' } }}
+              />
+              <p className="mt-1.5 text-xs text-slate-400">
+                Cuenta el efectivo físico en la caja e ingresa el monto exacto.
+              </p>
+            </div>
+
+            <Button
+              label={openingCash ? 'Abriendo Caja...' : 'Abrir Caja'}
+              onClick={handleOpenCash}
+              disabled={openingCash}
+              loading={openingCash}
+              className="w-full cursor-pointer rounded-lg bg-indigo-600 px-4 py-3 text-sm font-bold text-white shadow-sm hover:bg-indigo-500 disabled:opacity-50"
+              pt={{ root: { className: 'border-0' } }}
+            />
+
+            <div className="mt-4 rounded-lg bg-amber-50 border border-amber-200 px-4 py-3 text-xs text-amber-700">
+              <strong>Nota:</strong> Este registro es obligatorio y quedará auditado con tu usuario, IP y hora del servidor.
+            </div>
+          </div>
+        </div>
+      </AppLayout>
+    );
+  }
+
   if (loading) {
     return (
       <AppLayout>
@@ -186,25 +288,32 @@ export default function POSPage() {
                   </h3>
                 )}
                 <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4">
-                  {group.items.map((product) => (
-                    <button
-                      key={product.id}
-                      onClick={() => addToCart(product)}
-                      disabled={product.current_stock <= 0}
-                      className="group relative rounded-lg border border-slate-200 p-3 text-left transition-all hover:border-indigo-300 hover:shadow-md disabled:opacity-40 disabled:cursor-not-allowed"
-                    >
-                      <p className="text-sm font-medium text-slate-900 truncate">{product.name}</p>
-                      <p className="text-xs text-slate-500 font-mono">{product.sku}</p>
-                      <div className="mt-2 flex items-center justify-between">
-                        <span className="text-sm font-bold text-indigo-600">
-                          ${parseFloat(product.sale_price).toLocaleString('es-MX', { minimumFractionDigits: 2 })}
-                        </span>
-                        <span className={`text-xs ${product.current_stock <= product.minimum_stock ? 'text-rose-500 font-semibold' : 'text-slate-400'}`}>
-                          {product.current_stock} uds
-                        </span>
-                      </div>
-                    </button>
-                  ))}
+                  {group.items.map((product) => {
+                    const isUnavailable = product.track_stock && product.current_stock <= 0;
+                    return (
+                      <button
+                        key={product.id}
+                        onClick={() => addToCart(product)}
+                        disabled={isUnavailable}
+                        className="cursor-pointer group relative rounded-lg border border-slate-200 p-3 text-left transition-all hover:border-indigo-300 hover:shadow-md disabled:opacity-40 disabled:cursor-not-allowed"
+                      >
+                        <p className="text-sm font-medium text-slate-900 truncate">{product.name}</p>
+                        <p className="text-xs text-slate-500 font-mono">{product.sku}</p>
+                        <div className="mt-2 flex items-center justify-between">
+                          <span className="text-sm font-bold text-indigo-600">
+                            ${parseFloat(product.sale_price).toLocaleString('es-MX', { minimumFractionDigits: 2 })}
+                          </span>
+                          {product.track_stock === false ? (
+                            <span className="rounded bg-blue-50 px-1.5 py-0.5 text-xs font-medium text-blue-600">∞</span>
+                          ) : (
+                            <span className={`text-xs ${product.current_stock <= product.minimum_stock ? 'text-rose-500 font-semibold' : 'text-slate-400'}`}>
+                              {product.current_stock} uds
+                            </span>
+                          )}
+                        </div>
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
             ))}
@@ -335,7 +444,7 @@ export default function POSPage() {
                 <Button
                   label="Cobrar"
                   onClick={() => setShowCheckout(true)}
-                  className="w-full rounded-lg bg-emerald-600 px-4 py-3 text-sm font-bold text-white shadow-sm hover:bg-emerald-500"
+                  className="w-full cursor-pointer rounded-lg bg-emerald-600 px-4 py-3 text-sm font-bold text-white shadow-sm hover:bg-emerald-500"
                   pt={{ root: { className: 'border-0' } }}
                 />
               </div>
