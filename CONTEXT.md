@@ -37,6 +37,7 @@
 | Apertura de Caja (Fondo de Caja) | [🟢 Completado] | [🟢 Completado] | Apertura obligatoria con fondo inicial, bloqueo POS reactivo, auditoria forense (IP/UA/token), validacion en ordenes y caja chica, cierre alineado con formula (Fondo + Ventas - Retiros) |
 | Bugs Track Stock (Inventario Flexible) | [🟢 Completado] | [🟢 Completado] | DataTable muestra Tag ILIMITADO, POS no bloquea productos sin control stock, formulario edicion sincroniza boolean correctamente |
 | Resiliencia Local-First (Offline) | [🟢 Completado] | [🟢 Completado] | Hook useOnlineStatus, buffer LocalStorage, background sync, indicador amber en TopBar |
+| Correos Corporativos Centralizados | [🟢 Completado] | N/A | Master layout Blade, 4 Mailables ShouldQueue (Redis), preview routes local-only |
 
 ## 3. Detalle del Modulo Completado: Migraciones & Modelos Base
 
@@ -765,7 +766,7 @@ Secuencia de ejecucion al levantar el contenedor:
 - **Modelos Eloquent**: 15 con relaciones completas
 - **Middleware custom**: 2 (EnsureUserIsActive, EnsureUserHasRole)
 - **Trait custom**: 1 (AdvancedSoftDeletes con deleted_by, deletion_reason, advancedRestore)
-- **Mailables**: 1 (PasswordResetLinkMail, ShouldQueue)
+- **Mailables**: 5 (UserPasswordResetMail, LowStockAlertMail, PettyCashWithdrawalMail, CashRegisterClosingReportMail, PasswordResetLinkMail — todas ShouldQueue)
 - **Eventos/Listeners**: 1 evento broadcast + 1 listener + 1 notificacion queued
 - **Paginas React**: 14 (Login, Dashboard, Categories, Products, ProductForm, Promotions, POS, PettyCash, TicketConfig, Finance, StockMovements, UsersAdmin, NotificationPreferences, Trash)
 - **Componentes React**: 8 (AppLayout, DeleteDialog, TwoFactorModal, WithdrawModal, AuditTicket, TicketPreview, CheckoutModal)
@@ -1215,3 +1216,82 @@ Se reemplazo el ENUM nativo de PostgreSQL `payment_method` por una tabla relacio
 - `src/components/pos/CheckoutModal.jsx` — Prop isOnline, buffer offline con addToOfflineQueue, fallback offline en catch
 - `src/pages/pos/POSPage.jsx` — useOnlineStatus, background sync con getOfflineQueue/clearOfflineQueue, prop isOnline a CheckoutModal
 - `src/pages/admin/UsersPage.jsx` — useAuth para self-guard, modals doble confirmación (suspender, reset, dar de baja), botón pi-user detalle
+
+---
+
+## 19. Modulo de Correos Corporativos Centralizados [🟢 Completado]
+
+### Arquitectura de Email
+
+#### Master Layout: corporate.blade.php
+- Template Blade base (`resources/views/mail/layouts/corporate.blade.php`) con estructura de tablas HTML para compatibilidad universal con clientes de email
+- **Header**: Badge "Cronos POS" con fondo indigo (#4f46e5) y texto blanco, tipografia Inter/Segoe UI/sans-serif
+- **Body**: Tarjeta blanca de 600px max-width sobre fondo #f8fafc con `@yield('content')` para contenido dinamico
+- **Footer Legal**: Datos fiscales dinamicos desde `GlobalSetting::where('key', 'fiscal_data')`, disclaimers de confidencialidad y procesamiento automatizado
+- **Design Tokens**: bg #f8fafc, card white 600px, text #0f172a/#475569, CTA #4f46e5, footer #94a3b8, SIN emojis
+- MSO conditional comments para compatibilidad con Outlook
+
+#### Mailables (4 clases, todas ShouldQueue via Redis)
+
+##### UserPasswordResetMail
+- **Archivo**: `app/Mail/UserPasswordResetMail.php`
+- **Vista**: `mail.password-reset`
+- Recibe `User $user` y `string $resetUrl`
+- Contenido: saludo personalizado, boton CTA indigo con URL firmada, aviso de vigencia 4 horas, URL alternativa en texto plano
+- Integrado en `UserController::sendPasswordReset()` reemplazando `PasswordResetLinkMail` con `Mail::to()->queue()`
+
+##### LowStockAlertMail
+- **Archivo**: `app/Mail/LowStockAlertMail.php`
+- **Vista**: `mail.low-stock-alert`
+- Recibe `array $products` con estructura: sku, name, category, minimum_stock, current_stock
+- Subject dinamico: "Cronos POS - Alerta de Stock Critico (N producto/s)"
+- Tabla HTML con columnas SKU, Producto, Categoria, Minimo, Actual
+- Stock actual color-coded: rojo (#dc2626) si <=0, amber (#d97706) si >0
+- Banner de advertencia con conteo total de productos afectados
+
+##### PettyCashWithdrawalMail
+- **Archivo**: `app/Mail/PettyCashWithdrawalMail.php`
+- **Vista**: `mail.petty-cash-withdrawal`
+- Recibe `PettyCashTransaction $transaction`
+- Mapeo de razones: provider_payment, supplies_purchase, change_delivery, emergency → etiquetas en espanol
+- Tabla key-value: monto (rojo con formato MXN), concepto, justificacion, operador, email operador, fecha/hora
+- Sello SHA256 en monospace con fondo slate
+- Disclaimer de inmutabilidad criptografica
+- Integrado en `PettyCashWithdrawalNotification::toMail()` retornando instancia del Mailable
+
+##### CashRegisterClosingReportMail
+- **Archivo**: `app/Mail/CashRegisterClosingReportMail.php`
+- **Vista**: `mail.cash-register-closing-report`
+- Recibe parametros escalares: closingId, operatorName, closingDate, expectedAmount, declaredAmount, differenceAmount, paymentBreakdown[], pdfPath?
+- Metricas principales: operador, fecha, esperado, declarado, diferencia
+- Diferencia color-coded con badges: FALTANTE (rojo), SOBRANTE (amber), EXACTO (verde)
+- Seccion de desglose por metodo de pago (condicional)
+- Adjunto PDF opcional via `attachments()` con nombre `arqueo-caja-{ID}.pdf`
+
+### Rutas de Preview Local (Solo Entorno 'local')
+- **Archivo**: `routes/web.php`
+- Protegidas con `if (app()->environment('local'))`
+- 4 endpoints bajo prefijo `/mail-preview/`:
+  - `GET /mail-preview/password-reset` — Renderiza UserPasswordResetMail con usuario existente o dummy
+  - `GET /mail-preview/low-stock` — Renderiza LowStockAlertMail con 4 productos ficticios
+  - `GET /mail-preview/petty-cash` — Renderiza PettyCashWithdrawalMail con transaccion real o dummy con snapshot
+  - `GET /mail-preview/cash-register-closing` — Renderiza CashRegisterClosingReportMail con datos ficticios de cierre con diferencia negativa
+- Retornan directamente la instancia Mailable para preview en navegador sin disparar envio real
+
+### Archivos Creados en esta Fase
+**Backend (nuevos):**
+- `resources/views/mail/layouts/corporate.blade.php` — Master layout corporativo
+- `resources/views/mail/password-reset.blade.php` — Vista email reset de contraseña
+- `resources/views/mail/low-stock-alert.blade.php` — Vista email alerta stock bajo
+- `resources/views/mail/petty-cash-withdrawal.blade.php` — Vista email retiro caja chica
+- `resources/views/mail/cash-register-closing-report.blade.php` — Vista email cierre de caja
+- `app/Mail/UserPasswordResetMail.php` — Mailable ShouldQueue
+- `app/Mail/CashRegisterClosingReportMail.php` — Mailable ShouldQueue con PDF attachment
+
+### Archivos Modificados en esta Fase
+**Backend (modificados):**
+- `app/Mail/LowStockAlertMail.php` — Actualizado para usar vista `mail.low-stock-alert` con layout corporativo
+- `app/Mail/PettyCashWithdrawalMail.php` — Actualizado para usar vista `mail.petty-cash-withdrawal` con layout corporativo
+- `app/Http/Controllers/Admin/UserController.php` — Usa `UserPasswordResetMail` con `Mail::to()->queue()` en lugar de `send()`
+- `app/Notifications/PettyCashWithdrawalNotification.php` — `toMail()` retorna instancia de `PettyCashWithdrawalMail`
+- `routes/web.php` — 4 rutas de preview local bajo `/mail-preview/`

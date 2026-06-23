@@ -2,10 +2,10 @@
 
 namespace App\Notifications;
 
+use App\Mail\PettyCashWithdrawalMail;
 use App\Models\PettyCashTransaction;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
-use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Notifications\Notification;
 
 class PettyCashWithdrawalNotification extends Notification implements ShouldQueue
@@ -33,24 +33,9 @@ class PettyCashWithdrawalNotification extends Notification implements ShouldQueu
         return $channels;
     }
 
-    public function toMail(object $notifiable): MailMessage
+    public function toMail(object $notifiable): PettyCashWithdrawalMail
     {
-        $reasonLabels = [
-            'provider_payment' => 'Pago a proveedor',
-            'supplies_purchase' => 'Compra de insumos',
-            'change_delivery' => 'Entrega de cambio',
-            'emergency' => 'Emergencia',
-        ];
-
-        return (new MailMessage)
-            ->subject('Alerta: Retiro de Caja Chica - Cronos POS')
-            ->greeting('Retiro de Caja Chica Registrado')
-            ->line("Operador: {$this->transaction->user->name}")
-            ->line("Monto: \${$this->transaction->amount}")
-            ->line("Motivo: " . ($reasonLabels[$this->transaction->reason] ?? $this->transaction->reason))
-            ->line("Descripcion: {$this->transaction->description}")
-            ->line("Fecha: {$this->transaction->created_at->format('d/m/Y H:i:s')}")
-            ->action('Ver Auditoria', url('/petty-cash'));
+        return (new PettyCashWithdrawalMail($this->transaction))->to($notifiable->email);
     }
 
     public function toArray(object $notifiable): array
