@@ -4,7 +4,7 @@ namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Http\Requests\User\StoreUserRequest;
-use App\Mail\PasswordResetLinkMail;
+use App\Mail\UserPasswordResetMail;
 use App\Models\Role;
 use App\Models\User;
 use Illuminate\Http\JsonResponse;
@@ -179,7 +179,7 @@ class UserController extends Controller
             ['user' => $user->id]
         );
 
-        Mail::to($user->email)->send(new PasswordResetLinkMail($user, $resetUrl));
+        Mail::to($user->email)->queue(new UserPasswordResetMail($user, $resetUrl));
 
         return response()->json([
             'status' => 'success',
