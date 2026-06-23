@@ -40,7 +40,7 @@ if (app()->environment('local')) {
             $transaction = PettyCashTransaction::latest()->first();
 
             if (! $transaction) {
-                return new PettyCashWithdrawalMail(new PettyCashTransaction([
+                $transaction = new PettyCashTransaction([
                     'amount' => 1500.00,
                     'reason' => 'provider_payment',
                     'description' => 'Pago parcial a proveedor de insumos de limpieza — factura FP-2026-0451',
@@ -49,8 +49,9 @@ if (app()->environment('local')) {
                         'operator_email' => 'maria@cronos.pos',
                         'security_seal' => hash('sha256', 'preview-seal-data'),
                     ],
-                    'created_at' => now(),
-                ]));
+                ]);
+                $transaction->created_at = now();
+                return new PettyCashWithdrawalMail($transaction);
             }
 
             return new PettyCashWithdrawalMail($transaction);
@@ -65,9 +66,9 @@ if (app()->environment('local')) {
                 declaredAmount: 15380.00,
                 differenceAmount: -40.50,
                 paymentBreakdown: [
-                    ['method' => 'Efectivo', 'amount' => 8200.00],
-                    ['method' => 'Tarjeta de Credito/Debito', 'amount' => 5120.50],
-                    ['method' => 'Transferencia', 'amount' => 2100.00],
+                    'Efectivo' => 8200.00,
+                    'Tarjeta de Credito/Debito' => 5120.50,
+                    'Transferencia' => 2100.00,
                 ],
             );
         });

@@ -82,8 +82,8 @@ class MailPreviewController extends Controller
                     'operator_email' => 'maria@cronos.pos',
                     'security_seal' => hash('sha256', 'preview-seal-data'),
                 ],
-                'created_at' => now(),
             ]);
+            $transaction->created_at = now();
         }
 
         return new PettyCashWithdrawalMail($transaction);
@@ -99,9 +99,9 @@ class MailPreviewController extends Controller
             declaredAmount: 15380.00,
             differenceAmount: -40.50,
             paymentBreakdown: [
-                ['method' => 'Efectivo', 'amount' => 8200.00],
-                ['method' => 'Tarjeta de Credito/Debito', 'amount' => 5120.50],
-                ['method' => 'Transferencia', 'amount' => 2100.00],
+                'Efectivo' => 8200.00,
+                'Tarjeta de Credito/Debito' => 5120.50,
+                'Transferencia' => 2100.00,
             ],
         );
     }
