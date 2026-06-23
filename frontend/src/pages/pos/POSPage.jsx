@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { InputText } from 'primereact/inputtext';
 import { InputNumber } from 'primereact/inputnumber';
@@ -9,9 +9,12 @@ import api from '../../api/axios';
 import AppLayout from '../../components/layout/AppLayout';
 import CheckoutModal from '../../components/pos/CheckoutModal';
 import TicketPreview from '../../components/pos/TicketPreview';
+import useOnlineStatus, { getOfflineQueue, clearOfflineQueue } from '../../hooks/useOnlineStatus';
 
 export default function POSPage() {
   const navigate = useNavigate();
+  const isOnline = useOnlineStatus();
+  const syncingRef = useRef(false);
 
   const [productGroups, setProductGroups] = useState([]);
   const [promotions, setPromotions] = useState([]);
@@ -59,6 +62,41 @@ export default function POSPage() {
   useEffect(() => {
     api.get('/tax-rate').then(res => setTaxRate(res.data.data.rate)).catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (!isOnline || syncingRef.current) return;
+
+    const queue = getOfflineQueue();
+    if (queue.length === 0) return;
+
+    syncingRef.current = true;
+
+    (async () => {
+      let synced = 0;
+      let failed = 0;
+
+      for (const entry of queue) {
+        const { _offline_id, _queued_at, ...payload } = entry;
+        try {
+          await api.post('/orders', payload);
+          synced++;
+        } catch {
+          failed++;
+        }
+      }
+
+      clearOfflineQueue();
+      syncingRef.current = false;
+
+      if (synced > 0) {
+        toast.success(`Sincronizacion completada: ${synced} orden${synced !== 1 ? 'es' : ''} offline procesada${synced !== 1 ? 's' : ''}.`);
+        fetchData();
+      }
+      if (failed > 0) {
+        toast.error(`${failed} orden${failed !== 1 ? 'es' : ''} no pudieron sincronizarse.`);
+      }
+    })();
+  }, [isOnline, fetchData]);
 
   const handleOpenCash = async () => {
     setOpeningCash(true);
@@ -487,6 +525,7 @@ export default function POSPage() {
         cart={cart}
         taxRate={taxRate}
         onSuccess={handleCheckoutSuccess}
+        isOnline={isOnline}
       />
 
       {/* Hidden print-only ticket rendered outside any Dialog */}

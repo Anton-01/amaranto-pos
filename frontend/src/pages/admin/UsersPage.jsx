@@ -7,9 +7,11 @@ import { Tag } from 'primereact/tag';
 import { Button } from 'primereact/button';
 import { Dialog } from 'primereact/dialog';
 import { TabView, TabPanel } from 'primereact/tabview';
+import { Tooltip } from 'primereact/tooltip';
 import { toast } from 'sonner';
 import api from '../../api/axios';
 import AppLayout from '../../components/layout/AppLayout';
+import { useAuth } from '../../context/AuthContext';
 
 const statusOptions = [
   { label: 'Todos', value: '' },
@@ -55,6 +57,8 @@ function parseUA(ua) {
 }
 
 export default function UsersPage() {
+  const { user: authUser } = useAuth();
+
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [globalFilter, setGlobalFilter] = useState('');
@@ -70,6 +74,11 @@ export default function UsersPage() {
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [deleteReason, setDeleteReason] = useState('');
   const [fieldErrors, setFieldErrors] = useState({});
+
+  const [showSuspend, setShowSuspend] = useState(false);
+  const [suspendTarget, setSuspendTarget] = useState(null);
+  const [showReset, setShowReset] = useState(false);
+  const [resetTarget, setResetTarget] = useState(null);
 
   const [detailUser, setDetailUser] = useState(null);
   const [detailData, setDetailData] = useState(null);
@@ -115,10 +124,12 @@ export default function UsersPage() {
     try {
       const res = await api.post(`/admin/users/${user.id}/toggle-status`);
       toast.success(res.data.metadata.message);
+      setShowSuspend(false);
+      setSuspendTarget(null);
       fetchUsers();
       if (detailUser?.id === user.id) fetchDetail(user.id);
-    } catch {
-      toast.error('Error al cambiar estatus.');
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Error al cambiar estatus.');
     }
   };
 
@@ -141,8 +152,10 @@ export default function UsersPage() {
     try {
       const res = await api.post(`/admin/users/${user.id}/send-password-reset`);
       toast.success(res.data.metadata.message);
-    } catch {
-      toast.error('Error al enviar enlace de restauracion.');
+      setShowReset(false);
+      setResetTarget(null);
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Error al enviar enlace de restauracion.');
     }
   };
 
@@ -212,40 +225,74 @@ export default function UsersPage() {
       : <span className="text-xs text-slate-400">Offline</span>;
   };
 
-  const actionsTemplate = (row) => (
-    <div className="flex items-center gap-0.5">
-      <Button
-        icon={row.status === 'active' ? 'pi pi-ban' : 'pi pi-check-circle'}
-        severity={row.status === 'active' ? 'warning' : 'success'}
-        text
-        rounded
-        onClick={() => handleToggleStatus(row)}
-        className="cursor-pointer !h-8 !w-8"
-        tooltip={row.status === 'active' ? 'Suspender' : 'Activar'}
-        tooltipOptions={{ position: 'top' }}
-      />
-      <Button
-        icon="pi pi-key"
-        severity="info"
-        text
-        rounded
-        onClick={() => handleSendReset(row)}
-        className="cursor-pointer !h-8 !w-8"
-        tooltip="Reset contraseña"
-        tooltipOptions={{ position: 'top' }}
-      />
-      <Button
-        icon="pi pi-trash"
-        severity="danger"
-        text
-        rounded
-        onClick={() => { setDeleteTarget(row); setShowDelete(true); }}
-        className="cursor-pointer !h-8 !w-8"
-        tooltip="Eliminar"
-        tooltipOptions={{ position: 'top' }}
-      />
-    </div>
-  );
+  const isSelf = (row) => authUser?.id === row.id;
+
+  const actionsTemplate = (row) => {
+    if (isSelf(row)) {
+      return (
+        <div className="flex items-center gap-1">
+          <Button
+            icon="pi pi-user"
+            severity="secondary"
+            text
+            rounded
+            onClick={() => openDetail(row)}
+            className="cursor-pointer !h-8 !w-8"
+            tooltip="Ver detalle"
+            tooltipOptions={{ position: 'top' }}
+          />
+          <span className="text-xs text-slate-400 italic ml-1" title="No puedes realizar acciones sobre tu propio usuario">
+            — Acciones bloqueadas (usuario propio)
+          </span>
+        </div>
+      );
+    }
+
+    return (
+      <div className="flex items-center gap-0.5">
+        <Button
+          icon="pi pi-user"
+          severity="secondary"
+          text
+          rounded
+          onClick={() => openDetail(row)}
+          className="cursor-pointer !h-8 !w-8"
+          tooltip="Ver detalle"
+          tooltipOptions={{ position: 'top' }}
+        />
+        <Button
+          icon={row.status === 'active' ? 'pi pi-ban' : 'pi pi-check-circle'}
+          severity={row.status === 'active' ? 'warning' : 'success'}
+          text
+          rounded
+          onClick={() => { setSuspendTarget(row); setShowSuspend(true); }}
+          className="cursor-pointer !h-8 !w-8"
+          tooltip={row.status === 'active' ? 'Suspender' : 'Activar'}
+          tooltipOptions={{ position: 'top' }}
+        />
+        <Button
+          icon="pi pi-key"
+          severity="info"
+          text
+          rounded
+          onClick={() => { setResetTarget(row); setShowReset(true); }}
+          className="cursor-pointer !h-8 !w-8"
+          tooltip="Reset contraseña"
+          tooltipOptions={{ position: 'top' }}
+        />
+        <Button
+          icon="pi pi-trash"
+          severity="danger"
+          text
+          rounded
+          onClick={() => { setDeleteTarget(row); setShowDelete(true); }}
+          className="cursor-pointer !h-8 !w-8"
+          tooltip="Eliminar"
+          tooltipOptions={{ position: 'top' }}
+        />
+      </div>
+    );
+  };
 
   const dateTemplate = (row) => formatDate(row.created_at);
 
@@ -569,13 +616,96 @@ export default function UsersPage() {
         </form>
       </Dialog>
 
-      {/* Delete Confirmation Dialog */}
+      {/* Suspend / Activate Confirmation Dialog */}
+      <Dialog
+        visible={showSuspend}
+        onHide={() => { setShowSuspend(false); setSuspendTarget(null); }}
+        modal
+        header={null}
+        className="w-full max-w-md"
+        pt={{
+          mask: { className: 'backdrop-blur-sm bg-black/30' },
+          root: { className: 'rounded-2xl border-0 shadow-2xl' },
+          content: { className: 'p-0' },
+        }}
+      >
+        <div className="p-6">
+          <div className="mb-4 flex items-center gap-3">
+            <div className={`flex h-10 w-10 items-center justify-center rounded-full ${suspendTarget?.status === 'active' ? 'bg-amber-50' : 'bg-emerald-50'}`}>
+              <i className={`pi ${suspendTarget?.status === 'active' ? 'pi-ban text-amber-600' : 'pi-check-circle text-emerald-600'} text-lg`} />
+            </div>
+            <div>
+              <h3 className="text-lg font-semibold text-slate-900">
+                {suspendTarget?.status === 'active' ? 'Suspender Usuario' : 'Reactivar Usuario'}
+              </h3>
+              <p className="text-xs text-slate-500">{suspendTarget?.name} ({suspendTarget?.email})</p>
+            </div>
+          </div>
+          <div className="mb-5 rounded-lg bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-800">
+            {suspendTarget?.status === 'active'
+              ? 'Al suspender a este usuario se revocarán inmediatamente todas sus sesiones activas y no podrá ingresar al sistema hasta que sea reactivado. ¿Confirmar acción?'
+              : 'Al reactivar a este usuario podrá iniciar sesión nuevamente en el sistema. ¿Confirmar acción?'}
+          </div>
+          <div className="flex gap-3">
+            <Button type="button" label="Cancelar" onClick={() => { setShowSuspend(false); setSuspendTarget(null); }}
+              className="flex-1 cursor-pointer rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+              pt={{ root: { className: 'border border-slate-200' } }} />
+            <Button type="button"
+              label={suspendTarget?.status === 'active' ? 'Sí, Suspender' : 'Sí, Reactivar'}
+              onClick={() => handleToggleStatus(suspendTarget)}
+              className={`flex-1 cursor-pointer rounded-lg px-4 py-2.5 text-sm font-semibold text-white ${
+                suspendTarget?.status === 'active' ? 'bg-amber-600 hover:bg-amber-500' : 'bg-emerald-600 hover:bg-emerald-500'
+              }`}
+              pt={{ root: { className: 'border-0' } }} />
+          </div>
+        </div>
+      </Dialog>
+
+      {/* Reset Password Confirmation Dialog */}
+      <Dialog
+        visible={showReset}
+        onHide={() => { setShowReset(false); setResetTarget(null); }}
+        modal
+        header={null}
+        className="w-full max-w-md"
+        pt={{
+          mask: { className: 'backdrop-blur-sm bg-black/30' },
+          root: { className: 'rounded-2xl border-0 shadow-2xl' },
+          content: { className: 'p-0' },
+        }}
+      >
+        <div className="p-6">
+          <div className="mb-4 flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-blue-50">
+              <i className="pi pi-key text-blue-600 text-lg" />
+            </div>
+            <div>
+              <h3 className="text-lg font-semibold text-slate-900">Resetear Contraseña</h3>
+              <p className="text-xs text-slate-500">{resetTarget?.name} ({resetTarget?.email})</p>
+            </div>
+          </div>
+          <div className="mb-5 rounded-lg bg-blue-50 border border-blue-200 px-4 py-3 text-sm text-blue-800">
+            Se enviará un enlace de restauración de contraseña con vigencia estricta de 4 horas al correo institucional del usuario. ¿Confirmar envío?
+          </div>
+          <div className="flex gap-3">
+            <Button type="button" label="Cancelar" onClick={() => { setShowReset(false); setResetTarget(null); }}
+              className="flex-1 cursor-pointer rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+              pt={{ root: { className: 'border border-slate-200' } }} />
+            <Button type="button" label="Sí, Enviar Enlace"
+              onClick={() => handleSendReset(resetTarget)}
+              className="flex-1 cursor-pointer rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-500"
+              pt={{ root: { className: 'border-0' } }} />
+          </div>
+        </div>
+      </Dialog>
+
+      {/* Delete Confirmation Dialog (Double Confirmation) */}
       <Dialog
         visible={showDelete}
         onHide={() => { setShowDelete(false); setDeleteTarget(null); setDeleteReason(''); }}
         modal
         header={null}
-        className="w-full max-w-sm"
+        className="w-full max-w-md"
         pt={{
           mask: { className: 'backdrop-blur-sm bg-black/30' },
           root: { className: 'rounded-2xl border-0 shadow-2xl' },
@@ -590,9 +720,12 @@ export default function UsersPage() {
               </svg>
             </div>
             <div>
-              <h3 className="text-lg font-semibold text-slate-900">Eliminar Usuario</h3>
+              <h3 className="text-lg font-semibold text-slate-900">Dar de Baja a Usuario</h3>
               <p className="text-xs text-slate-500">{deleteTarget?.name} ({deleteTarget?.email})</p>
             </div>
+          </div>
+          <div className="mb-4 rounded-lg bg-rose-50 border border-rose-200 px-4 py-3 text-sm text-rose-800">
+            Al dar de baja a este usuario, se revocarán todos sus tokens, se registrará la eliminación lógica en el sistema con fines de auditoría, y no podrá acceder nuevamente hasta ser restaurado desde la Papelera. Esta acción queda registrada con tu usuario como ejecutor.
           </div>
           <div className="mb-4">
             <label className="mb-1.5 block text-sm font-medium text-slate-700">Motivo de baja *</label>
@@ -606,10 +739,11 @@ export default function UsersPage() {
           </div>
           <div className="flex gap-3">
             <Button type="button" label="Cancelar" onClick={() => { setShowDelete(false); setDeleteTarget(null); setDeleteReason(''); }}
-              className="flex-1 rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+              className="flex-1 cursor-pointer rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
               pt={{ root: { className: 'border border-slate-200' } }} />
-            <Button type="button" label="Eliminar" onClick={handleDelete}
-              className="flex-1 rounded-lg bg-rose-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-rose-500"
+            <Button type="button" label="Confirmar Baja" onClick={handleDelete}
+              disabled={!deleteReason.trim()}
+              className="flex-1 cursor-pointer rounded-lg bg-rose-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-rose-500 disabled:opacity-50"
               pt={{ root: { className: 'border-0' } }} />
           </div>
         </div>

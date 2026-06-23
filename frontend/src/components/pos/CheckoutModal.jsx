@@ -5,8 +5,9 @@ import { Button } from 'primereact/button';
 import { toast } from 'sonner';
 import api from '../../api/axios';
 import TicketPreview from './TicketPreview';
+import { addToOfflineQueue } from '../../hooks/useOnlineStatus';
 
-export default function CheckoutModal({ visible, onHide, cart, taxRate = 0.16, onSuccess }) {
+export default function CheckoutModal({ visible, onHide, cart, taxRate = 0.16, onSuccess, isOnline = true }) {
   const [paymentMethodId, setPaymentMethodId] = useState(null);
   const [paymentMethods, setPaymentMethods] = useState([]);
   const [customLegend, setCustomLegend] = useState('');
@@ -56,17 +57,38 @@ export default function CheckoutModal({ visible, onHide, cart, taxRate = 0.16, o
     }
 
     setSubmitting(true);
-    try {
-      const payload = {
-        payment_method_id: paymentMethodId,
-        custom_legend: customLegend || null,
-        items: cart.map(i => ({
-          product_id: i.product_id,
-          quantity: i.quantity,
-          promotion_id: i.promotion_id,
-        })),
+
+    const payload = {
+      payment_method_id: paymentMethodId,
+      custom_legend: customLegend || null,
+      items: cart.map(i => ({
+        product_id: i.product_id,
+        quantity: i.quantity,
+        promotion_id: i.promotion_id,
+      })),
+    };
+
+    if (!isOnline) {
+      const offlineOrder = {
+        ...previewOrder,
+        id: crypto.randomUUID(),
+        folio: crypto.randomUUID().substring(0, 8).toUpperCase(),
+        _offline: true,
       };
 
+      addToOfflineQueue(payload);
+
+      toast.info('Orden guardada localmente', {
+        description: 'Se sincronizara automaticamente al recuperar conexion.',
+      });
+
+      onSuccess?.(offlineOrder, ticketConfig);
+      onHide();
+      setSubmitting(false);
+      return;
+    }
+
+    try {
       const res = await api.post('/orders', payload);
       const order = res.data.data;
 
@@ -77,7 +99,23 @@ export default function CheckoutModal({ visible, onHide, cart, taxRate = 0.16, o
       onHide();
     } catch (err) {
       const data = err.response?.data;
-      if (data?.code === 'ERR_POS_CASH_REGISTER_REQUIRED') {
+      if (!err.response && !navigator.onLine) {
+        const offlineOrder = {
+          ...previewOrder,
+          id: crypto.randomUUID(),
+          folio: crypto.randomUUID().substring(0, 8).toUpperCase(),
+          _offline: true,
+        };
+
+        addToOfflineQueue(payload);
+
+        toast.info('Sin conexion — orden guardada localmente', {
+          description: 'Se sincronizara automaticamente al recuperar conexion.',
+        });
+
+        onSuccess?.(offlineOrder, ticketConfig);
+        onHide();
+      } else if (data?.code === 'ERR_POS_CASH_REGISTER_REQUIRED') {
         toast.error('Caja no abierta', { description: data.message });
       } else if (data?.code === 'ERR_POS_PROMOTION_LIMIT_EXCEEDED') {
         toast.error('Limite de promociones excedido', { description: data.message });

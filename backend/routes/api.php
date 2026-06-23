@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\Admin\RoleController;
 use App\Http\Controllers\Admin\SystemSettingsController;
 use App\Http\Controllers\Admin\TrashController;
 use App\Http\Controllers\Admin\UserController;
@@ -127,6 +128,15 @@ Route::middleware(['auth:sanctum', 'user.active'])->group(function () {
 
         Route::get('/settings', [SystemSettingsController::class, 'index']);
         Route::put('/settings', [SystemSettingsController::class, 'update']);
+
+        Route::prefix('roles')->group(function () {
+            Route::get('/', [RoleController::class, 'index']);
+            Route::get('/permissions', [RoleController::class, 'permissions']);
+            Route::post('/', [RoleController::class, 'store']);
+            Route::get('/{role}', [RoleController::class, 'show']);
+            Route::put('/{role}', [RoleController::class, 'update']);
+            Route::delete('/{role}', [RoleController::class, 'destroy']);
+        });
     });
 
     Route::middleware('role:admin,manager')->prefix('analytics')->group(function () {

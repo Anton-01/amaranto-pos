@@ -20,6 +20,7 @@ import SystemSettingsPage from './pages/admin/SystemSettingsPage';
 import SalesHistoryPage from './pages/sales/SalesHistoryPage';
 import PaymentMethodsPage from './pages/admin/PaymentMethodsPage';
 import CashRegisterClosingsPage from './pages/admin/CashRegisterClosingsPage';
+import RolesPermissionsPage from './pages/admin/RolesPermissionsPage';
 
 function ProtectedRoute({ children }) {
   const { user, loading } = useAuth();
@@ -90,6 +91,7 @@ export default function App() {
           <Route path="/admin/ventas" element={<ProtectedRoute><SalesHistoryPage /></ProtectedRoute>} />
           <Route path="/admin/metodos-pago" element={<ProtectedRoute><PaymentMethodsPage /></ProtectedRoute>} />
           <Route path="/admin/papelera" element={<ProtectedRoute><TrashPage /></ProtectedRoute>} />
+          <Route path="/admin/roles-permisos" element={<ProtectedRoute><RolesPermissionsPage /></ProtectedRoute>} />
           <Route path="/admin/cierres" element={<ProtectedRoute><CashRegisterClosingsPage /></ProtectedRoute>} />
           <Route path="*" element={<Navigate to="/login" replace />} />
         </Routes>

@@ -16,7 +16,7 @@
 | Autenticacion & 2FA (Sanctum) | [🟢 Completado] | [🟢 Completado] | Login, Logout, 2FA TOTP, Kill-Switch, Session Log |
 | Catalogo, Categorias y Variaciones| [🟢 Completado] | [🟢 Completado] | CRUD completo, DataTable filtros avanzados, variaciones en serie |
 | Promociones e Historicos | [🟢 Completado] | [🟢 Completado] | CRUD con RBAC, limite 1 promo/ticket, POS cart con validacion cruzada |
-| Usuarios, Roles y Permisos (RBAC)| [🟢 Completado] | [🟢 Completado] | CRUD con Kill-Switch, detail tabs (seguridad/sesiones/cajas), reset link |
+| Usuarios, Roles y Permisos (RBAC)| [🟢 Completado] | [🟢 Completado] | CRUD con Kill-Switch, detail tabs (seguridad/sesiones/cajas), reset link, doble confirmacion, self-guard, CRUD roles |
 | Caja Chica, Retiros e Integridad| [🟢 Completado] | [🟢 Completado] | SHA256 inmutable, eventos, notificaciones, audit ticket |
 | Ventas, Ticket Config & Historico | [🟢 Completado] | [🟢 Completado] | Append-only versioning, OrderController, ticket preview 80mm, @media print |
 | Finanzas Avanzadas (70/30) & Stock | [🟢 Completado] | [🟢 Completado] | Recharts dashboard, 70/30 split, stock movements con merma validada |
@@ -36,6 +36,7 @@
 | Track Stock (Paquetes/Combos) | [🟢 Completado] | [🟢 Completado] | Columna track_stock en products, InputSwitch en formulario, pipeline ventas omite decremento si false, cancel reversa condicionada |
 | Apertura de Caja (Fondo de Caja) | [🟢 Completado] | [🟢 Completado] | Apertura obligatoria con fondo inicial, bloqueo POS reactivo, auditoria forense (IP/UA/token), validacion en ordenes y caja chica, cierre alineado con formula (Fondo + Ventas - Retiros) |
 | Bugs Track Stock (Inventario Flexible) | [🟢 Completado] | [🟢 Completado] | DataTable muestra Tag ILIMITADO, POS no bloquea productos sin control stock, formulario edicion sincroniza boolean correctamente |
+| Resiliencia Local-First (Offline) | [🟢 Completado] | [🟢 Completado] | Hook useOnlineStatus, buffer LocalStorage, background sync, indicador amber en TopBar |
 
 ## 3. Detalle del Modulo Completado: Migraciones & Modelos Base
 
@@ -1129,3 +1130,88 @@ Se reemplazo el ENUM nativo de PostgreSQL `payment_method` por una tabla relacio
 - `src/components/pos/CheckoutModal.jsx` — Reescrito: cierra inmediatamente, onSuccess(order, ticketConfig), sin vista post-venta
 - `src/pages/pos/POSPage.jsx` — Reescrito: print ticket fuera de Dialog, handleCheckoutSuccess con setTimeout, boton "Regresar al Panel"
 - `src/pages/sales/SalesHistoryPage.jsx` — handlePrint con setTimeout(350ms)
+
+---
+
+## 18. Resiliencia Local-First, Guardias de Seguridad, Roles CRUD & Detalle Avanzado [🟢 Completado]
+
+### Tarea 1: Estrategia de Resiliencia Local-First (Frontend) [🟢 Completado]
+
+#### Hook de Conexion: useOnlineStatus
+- Hook nativo React con `navigator.onLine` + event listeners `online`/`offline`
+- Indicador visual en AppHeader: badge `text-amber-500` con icono `pi pi-wifi` y texto "Operando en Modo Offline (Local)"
+- Oculta el KPI de ventas del dia cuando esta offline para evitar datos stale
+
+#### Buffer Offline de Ventas
+- Funciones utilitarias: `addToOfflineQueue()`, `getOfflineQueue()`, `clearOfflineQueue()`, `removeFromOfflineQueue()`
+- Almacenamiento en LocalStorage bajo clave `offline_orders_queue`
+- Cada entrada incluye `_offline_id` (UUID), `_queued_at` (timestamp), payload completo de la orden
+- CheckoutModal detecta estado offline (prop `isOnline` o fallback via `navigator.onLine` en catch de red)
+- En modo offline: guarda payload, genera orden local con UUID temporal, cierra modal, limpia carrito, invoca `window.print()` normal
+- Toast informativo: "Orden guardada localmente — Se sincronizará automáticamente al recuperar conexión"
+
+#### Background Sync
+- useEffect en POSPage escucha cambios de `isOnline`
+- Al regresar a online: recorre buffer atómicamente, envía cada orden a `POST /api/orders`
+- Limpia cola tras completar, notifica con Sonner: "Sincronización completada: X órdenes offline procesadas"
+- Protección contra doble ejecución con `syncingRef`
+
+### Tarea 2: Doble Confirmacion por Impacto y Guardia de Auto-Accion [🟢 Completado]
+
+#### Modals de Impacto Explicito (Frontend)
+- **Suspender**: Dialog de PrimeReact con mensaje "Al suspender a este usuario se revocarán inmediatamente todas sus sesiones activas y no podrá ingresar al sistema hasta que sea reactivado. ¿Confirmar acción?"
+- **Resetear Contraseña**: Dialog con mensaje "Se enviará un enlace de restauración de contraseña con vigencia estricta de 4 horas al correo institucional del usuario. ¿Confirmar envío?"
+- **Dar de Baja**: Dialog con banner rose explicando impacto forense, campo de motivo obligatorio, botón deshabilitado hasta completar motivo
+
+#### Bloqueo de Auto-Accion
+- **Frontend**: Evalúa `authUser.id === row.id` en la columna de acciones. Si coincide: remueve botones Suspender/Resetear/Eliminar, muestra texto "Acciones bloqueadas (usuario propio)", solo deja visible el botón de detalle (pi pi-user)
+- **Backend**: Validación `if ($user->id === auth()->id()) abort(422, "Operación no permitida sobre el usuario autenticado actualmente.")` en `toggleStatus()`, `destroy()`, y `sendPasswordReset()` del UserController
+
+### Tarea 3: Gestión Completa de Roles y Permisos (CRUD + Mapping) [🟢 Completado]
+
+#### Backend: RoleController (6 rutas nuevas)
+| Metodo | Ruta | Descripcion |
+| :--- | :--- | :--- |
+| GET | /api/admin/roles | Lista roles con conteo de usuarios asignados |
+| GET | /api/admin/roles/permissions | Lista permisos disponibles del sistema (15 permisos, 5 grupos) |
+| POST | /api/admin/roles | Crear rol (name unique, lowercase) |
+| GET | /api/admin/roles/{id} | Detalle de rol con usuarios asignados |
+| PUT | /api/admin/roles/{id} | Actualizar nombre del rol |
+| DELETE | /api/admin/roles/{id} | Eliminar rol (bloquea si tiene usuarios con ERR_ROLE_HAS_USERS 422) |
+
+- Regla de integridad: si `model_has_roles` tiene registros para el rol, retorna 422 con mensaje descriptivo
+
+#### Frontend: RolesPermissionsPage (`/admin/roles-permisos`)
+- Layout grid 1/3 + 2/3: DataTable de roles a la izquierda, panel de permisos a la derecha
+- DataTable: nombre clickeable (selecciona rol), conteo de usuarios asignados (Tag), acciones (editar/eliminar)
+- Panel de permisos: matriz agrupada por categoría (Ventas, Catálogo, Logística, Administración) con Checkboxes informativos
+- Dialog crear/editar rol con validación unique
+- Dialog eliminar con bloqueo si tiene usuarios asignados
+
+### Tarea 4: Panel de Detalle Avanzado de Usuario [🟢 Completado]
+- Boton `pi pi-user` (color slate/indigo con cursor-pointer) agregado a la columna de acciones de cada fila
+- Al hacer clic abre Dialog con TabView de 3 tabs:
+  * **Seguridad**: Estado 2FA (HABILITADO/DESHABILITADO con fecha), última restauración de contraseña, tokens activos
+  * **Sesiones**: Últimas 3 conexiones (IP, navegador parseado de user_agent, estado de sesión con indicador activa/inactiva, botón "Forzar Cierre")
+  * **Auditoría de Cajas**: Historial de cash_registers con apertura/cierre, balances (apertura, esperado, real), cálculo de diferencia con color (verde positivo, rojo negativo)
+
+### Archivos Creados en esta Fase
+**Backend (nuevos):**
+- `app/Http/Controllers/Admin/RoleController.php`
+
+**Frontend (nuevos):**
+- `src/hooks/useOnlineStatus.js`
+- `src/pages/admin/RolesPermissionsPage.jsx`
+
+### Archivos Modificados en esta Fase
+**Backend (modificados):**
+- `app/Http/Controllers/Admin/UserController.php` — Guardias de auto-acción en toggleStatus, destroy, sendPasswordReset
+- `routes/api.php` — 6 rutas nuevas bajo /admin/roles
+
+**Frontend (modificados):**
+- `src/App.jsx` — Ruta /admin/roles-permisos
+- `src/components/layout/Sidebar.jsx` — Nav item "Roles y Permisos"
+- `src/components/layout/AppHeader.jsx` — Indicador offline con useOnlineStatus, page name roles-permisos
+- `src/components/pos/CheckoutModal.jsx` — Prop isOnline, buffer offline con addToOfflineQueue, fallback offline en catch
+- `src/pages/pos/POSPage.jsx` — useOnlineStatus, background sync con getOfflineQueue/clearOfflineQueue, prop isOnline a CheckoutModal
+- `src/pages/admin/UsersPage.jsx` — useAuth para self-guard, modals doble confirmación (suspender, reset, dar de baja), botón pi-user detalle
