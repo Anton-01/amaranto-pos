@@ -23,6 +23,7 @@ const pageNames = {
   '/admin/metodos-pago': 'Métodos de Pago',
   '/admin/roles-permisos': 'Roles y Permisos',
   '/admin/configuracion': 'Configuracion del Sistema',
+  '/admin/notificaciones/plantillas': 'Plantillas de Correo',
   '/profile': 'Mi Perfil',
 };
 

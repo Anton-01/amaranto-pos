@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\Admin\MailPreviewController;
 use App\Http\Controllers\Admin\RoleController;
 use App\Http\Controllers\Admin\SystemSettingsController;
 use App\Http\Controllers\Admin\TrashController;
@@ -136,6 +137,11 @@ Route::middleware(['auth:sanctum', 'user.active'])->group(function () {
             Route::get('/{role}', [RoleController::class, 'show']);
             Route::put('/{role}', [RoleController::class, 'update']);
             Route::delete('/{role}', [RoleController::class, 'destroy']);
+        });
+
+        Route::prefix('mail-templates')->group(function () {
+            Route::get('/', [MailPreviewController::class, 'index']);
+            Route::get('/{slug}/render', [MailPreviewController::class, 'render']);
         });
     });
 

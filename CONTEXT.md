@@ -38,6 +38,7 @@
 | Bugs Track Stock (Inventario Flexible) | [🟢 Completado] | [🟢 Completado] | DataTable muestra Tag ILIMITADO, POS no bloquea productos sin control stock, formulario edicion sincroniza boolean correctamente |
 | Resiliencia Local-First (Offline) | [🟢 Completado] | [🟢 Completado] | Hook useOnlineStatus, buffer LocalStorage, background sync, indicador amber en TopBar |
 | Correos Corporativos Centralizados | [🟢 Completado] | N/A | Master layout Blade, 4 Mailables ShouldQueue (Redis), preview routes local-only |
+| Visualizador In-App Plantillas Email | [🟢 Completado] | [🟢 Completado] | MailPreviewController render HTML, iframe srcDoc aislado, viewport Desktop/Mobile |
 
 ## 3. Detalle del Modulo Completado: Migraciones & Modelos Base
 
@@ -1295,3 +1296,54 @@ Se reemplazo el ENUM nativo de PostgreSQL `payment_method` por una tabla relacio
 - `app/Http/Controllers/Admin/UserController.php` — Usa `UserPasswordResetMail` con `Mail::to()->queue()` en lugar de `send()`
 - `app/Notifications/PettyCashWithdrawalNotification.php` — `toMail()` retorna instancia de `PettyCashWithdrawalMail`
 - `routes/web.php` — 4 rutas de preview local bajo `/mail-preview/`
+
+---
+
+## 20. Visualizador In-App de Plantillas de Correo (Preview Iframe Aislado) [🟢 Completado]
+
+### Backend: MailPreviewController (2 rutas nuevas)
+| Metodo | Ruta | Middleware | Descripcion |
+| :--- | :--- | :--- | :--- |
+| GET | /api/admin/mail-templates | auth, user.active, role:admin,manager | Lista plantillas disponibles (slug + nombre ejecutivo) |
+| GET | /api/admin/mail-templates/{slug}/render | auth, user.active, role:admin,manager | Renderiza Mailable con datos ficticios, retorna HTML puro (text/html) |
+
+#### Controlador: MailPreviewController
+- `index()` — Retorna catalogo de 4 plantillas: password-reset, low-stock, petty-cash, day-closing con nombres en espanol
+- `render(slug)` — Match por slug, instancia el Mailable correspondiente con factory mock data, invoca `$mailable->render()` de Laravel para obtener HTML compilado por Blade, retorna con Content-Type `text/html; charset=UTF-8`
+- Datos de fabrica: usuario dummy o real para password-reset, 3 productos ficticios para low-stock, transaccion real o snapshot simulado para petty-cash, cierre con diferencia negativa para day-closing
+- Slug invalido retorna 404
+
+### Frontend: MailTemplatesPage (`/admin/notificaciones/plantillas`)
+
+#### Layout Splitter (Panel Dual)
+- **Panel Izquierdo (w-80)**: ListBox de PrimeReact con catalogo de plantillas, iconos por tipo (pi-key, pi-exclamation-triangle, pi-wallet, pi-lock), seleccion activa con highlight
+- **Panel Derecho (flex-1)**: Contenedor bg-slate-100 con toolbar superior y visor iframe
+
+#### Toolbar de Control
+- Nombre de plantilla seleccionada + badge slug
+- SelectButton responsivo: Desktop (max-w-[600px]) / Mobile (max-w-[375px]) para simular dispositivos
+
+#### Visor Iframe Aislado (CSS Isolation)
+- `<iframe srcDoc={html}>` recibe HTML renderizado via Axios con Bearer Token de Sanctum
+- sandbox="allow-same-origin" para aislamiento de CSS (Tailwind v4 no contamina estilos inline del email)
+- Transicion suave de ancho con `transition-all duration-300`
+
+#### Gestion de Estados
+- **Loading**: ProgressSpinner centrado con texto "Renderizando plantilla..."
+- **Error**: Tarjeta rose con icono pi-times-circle, mensaje descriptivo y boton "Reintentar"
+- **Vacio**: Mensaje placeholder cuando no hay plantilla seleccionada
+
+### Archivos Creados en esta Fase
+**Backend (nuevos):**
+- `app/Http/Controllers/Admin/MailPreviewController.php`
+
+**Backend (modificados):**
+- `routes/api.php` — 2 rutas nuevas bajo /admin/mail-templates con role:admin,manager
+
+**Frontend (nuevos):**
+- `src/pages/admin/MailTemplatesPage.jsx`
+
+**Frontend (modificados):**
+- `src/App.jsx` — Ruta /admin/notificaciones/plantillas
+- `src/components/layout/Sidebar.jsx` — Nav item "Plantillas Email" con icono envelope bajo ADMINISTRACION
+- `src/components/layout/AppHeader.jsx` — Page name "Plantillas de Correo"
