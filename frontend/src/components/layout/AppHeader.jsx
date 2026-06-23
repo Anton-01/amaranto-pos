@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useLocation } from 'react-router-dom';
 import { Dialog } from 'primereact/dialog';
 import UserProfileDropdown from './UserProfileDropdown';
+import useOnlineStatus from '../../hooks/useOnlineStatus';
 import api from '../../api/axios';
 
 const pageNames = {
@@ -20,6 +21,7 @@ const pageNames = {
   '/profile/notifications': 'Preferencias de Notificaciones',
   '/admin/papelera': 'Papelera Global',
   '/admin/metodos-pago': 'Métodos de Pago',
+  '/admin/roles-permisos': 'Roles y Permisos',
   '/admin/configuracion': 'Configuracion del Sistema',
   '/profile': 'Mi Perfil',
 };
@@ -34,6 +36,7 @@ const paymentColors = {
 
 export default function AppHeader({ onToggleSidebar }) {
   const location = useLocation();
+  const isOnline = useOnlineStatus();
   const [todaySales, setTodaySales] = useState(null);
   const [notificationCount] = useState(0);
   const [showSalesModal, setShowSalesModal] = useState(false);
@@ -86,7 +89,19 @@ export default function AppHeader({ onToggleSidebar }) {
           <div className="hidden items-center gap-3 sm:flex">
             <h1 className="text-sm font-semibold text-slate-800">{currentPage}</h1>
 
-            {todaySales !== null && (
+            {!isOnline && (
+              <>
+                <div className="h-4 w-px bg-slate-200" />
+                <div className="flex items-center gap-1.5 rounded-lg bg-amber-50 border border-amber-200 px-2.5 py-1">
+                  <i className="pi pi-wifi text-amber-500 text-xs" />
+                  <span className="text-[11px] font-semibold text-amber-500">
+                    Operando en Modo Offline (Local)
+                  </span>
+                </div>
+              </>
+            )}
+
+            {isOnline && todaySales !== null && (
               <>
                 <div className="h-4 w-px bg-slate-200" />
                 <div className="flex items-center gap-1.5 rounded-lg bg-emerald-50 px-2.5 py-1">

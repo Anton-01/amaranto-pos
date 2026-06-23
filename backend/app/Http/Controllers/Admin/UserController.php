@@ -121,8 +121,12 @@ class UserController extends Controller
         ], 201);
     }
 
-    public function toggleStatus(User $user): JsonResponse
+    public function toggleStatus(User $user, Request $request): JsonResponse
     {
+        if ($user->id === $request->user()->id) {
+            abort(422, 'Operación no permitida sobre el usuario autenticado actualmente.');
+        }
+
         $newStatus = $user->status === 'active' ? 'suspended' : 'active';
 
         DB::statement("UPDATE users SET status = ? WHERE id = ?", [$newStatus, $user->id]);
@@ -146,6 +150,10 @@ class UserController extends Controller
 
     public function destroy(User $user, Request $request): JsonResponse
     {
+        if ($user->id === $request->user()->id) {
+            abort(422, 'Operación no permitida sobre el usuario autenticado actualmente.');
+        }
+
         $request->validate([
             'deletion_reason' => 'required|string|max:255',
         ]);
@@ -159,8 +167,12 @@ class UserController extends Controller
         ]);
     }
 
-    public function sendPasswordReset(User $user): JsonResponse
+    public function sendPasswordReset(User $user, Request $request): JsonResponse
     {
+        if ($user->id === $request->user()->id) {
+            abort(422, 'Operación no permitida sobre el usuario autenticado actualmente.');
+        }
+
         $resetUrl = URL::temporarySignedRoute(
             'password.reset',
             now()->addHours(4),
