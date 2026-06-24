@@ -32,10 +32,11 @@ body {
     position: absolute;
     left: 0;
     top: 0;
-    width: 48mm;
-    max-width: 58mm;
-    margin: 0;
-    padding: 0;
+    width: 48mm !important;
+    max-width: 58mm !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    box-sizing: border-box;
     font-family: 'Courier New', Courier, monospace;
     font-size: 12px;
     line-height: 1.0;
@@ -54,6 +55,9 @@ body {
     margin: 0 !important;
     box-shadow: none !important;
     background: none !important;
+    overflow: visible !important;
+    width: 100% !important;
+    max-width: none !important;
   }
 
   #ticket-print-area pre {
@@ -61,7 +65,7 @@ body {
     font-size: 12px !important;
     line-height: 1.1 !important;
     font-weight: 600 !important;
-    white-space: nowrap !important;
+    white-space: pre !important;
     overflow: visible !important;
     margin: 0 !important;
     padding: 0 !important;

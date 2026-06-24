@@ -1470,3 +1470,50 @@ Tras pruebas fisicas con la ticketera real del restaurante, se confirmo que el h
 - `src/components/pos/TicketPreview.jsx` — Compactacion vertical (line-height 1.1, margins 1px), seccion Recibido/Cambio condicional
 - `src/components/pos/CheckoutModal.jsx` — InputNumber "Dinero Recibido" condicional por slug cash, calculo reactivo de cambio, validacion de insuficiencia, previewOrder con useMemo
 - `src/index.css` — @page forzado 58mm, html/body reset, line-height 1.0/1.1 agresivo, margins eliminados en print
+
+---
+
+## 23. Encuadrado Milimetrico del Ticket 58mm & Flujo de Efectivo en Historial [🟢 Completado]
+
+### Tarea 1: Correccion y Encuadrado del Ticket de 58mm [🟢 Completado]
+
+#### Problema Diagnosticado
+El contenedor del ticket usaba `width: 48mm` que a 96 DPI equivale a ~181px, pero 32 caracteres de Courier New a 12px ocupan ~230px. Esto causaba que las lineas divisorias y subtotales desbordaran el recuadro punteado hacia la derecha.
+
+#### Solucion Implementada (TicketPreview.jsx)
+- **Contenedor externo**: `box-sizing: border-box; width: 100%; max-width: 240px; margin: 0 auto; padding: 0` — Ancho basado en pixeles que acomoda exactamente 32 caracteres Courier New 12px en pantalla
+- **Contenedor interno (.ticket-inner-screen)**: `box-sizing: border-box; padding: 4px; width: 100%; overflow: hidden` — Clip de seguridad en pantalla para evitar desbordamientos
+- **Header**: Textos largos (business_name, address, header_message) con `wordWrap: 'break-word'; whiteSpace: 'normal'` para salto de linea limpio
+- **Footer/Legend**: Mismas propiedades de wrapping para evitar que textos largos rompan el layout
+- **Font sizes ajustados**: Header `12px`, RFC/phone `10px`, address/legend/footer `9px` para maxima compactacion dentro del ancho disponible
+- **Print override**: CSS `@media print` restaura `width: 48mm !important` y `overflow: visible !important` para el papel termico real
+
+#### CSS Print Refinado (index.css)
+- `#ticket-print-area .ticket-inner-screen`: `overflow: visible !important; width: 100% !important; max-width: none !important` — En impresion no se recorta nada
+- `#ticket-print-area pre`: `white-space: pre !important` (en lugar de `nowrap`) para consistencia con pre tags
+
+### Tarea 2: Columnas de Efectivo en Historial de Ventas DataTable [🟢 Completado]
+
+#### SalesHistoryPage — DataTable
+- **Columna "Recibido"**: Muestra `amount_received` formateado como moneda ($X.XX). Si es null o 0 (pago no-efectivo), muestra guion `-` en color slate-400
+- **Columna "Cambio"**: Muestra `amount_change` formateado como moneda en color emerald-600 (font-semibold). Si es null o 0, muestra guion `-`
+- Ambas columnas insertadas entre "Total" y "Estatus" en el DataTable
+- Anchos ajustados: Total 100px, Recibido 100px, Cambio 90px, Estatus 100px
+
+### Tarea 3: Detalle del Pedido con Efectivo Recibido/Cambio [🟢 Completado]
+
+#### SalesHistoryPage — Modal Detalle
+- Debajo del bloque financiero (Subtotal, IVA, Total), se agregan condicionalmente dos renglones:
+  - **Efectivo Recibido**: Formato moneda, separado por border-top slate-200, color slate-600
+  - **Cambio Devuelto**: Formato moneda, font-semibold emerald-600
+- Solo se muestran cuando `amount_received > 0` (pagos en efectivo)
+
+### Tarea 4: Verificacion Backend API [🟢 Completado]
+- `GET /api/orders` (index) y `GET /api/orders/{id}` (show) ya incluyen `amount_received` y `amount_change` en el JSON de respuesta automaticamente via los casts `decimal:2` del modelo Order
+- No se requieren cambios adicionales en el backend
+
+### Archivos Modificados en esta Fase
+**Frontend (modificados):**
+- `src/components/pos/TicketPreview.jsx` — Contenedor box-sizing border-box, max-width 240px, overflow hidden en pantalla, overflow visible en print, font sizes ajustados para encuadrado perfecto
+- `src/index.css` — Print: overflow visible forzado en .ticket-inner-screen, white-space pre en pre tags, width/max-width overrides
+- `src/pages/sales/SalesHistoryPage.jsx` — Columnas Recibido/Cambio en DataTable, seccion Efectivo Recibido/Cambio Devuelto en modal detalle

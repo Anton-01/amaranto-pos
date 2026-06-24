@@ -29,7 +29,7 @@ const monoStyle = {
   MozOsxFontSmoothing: 'unset',
 };
 
-const preStyle = { margin: 0, ...monoStyle };
+const preStyle = { margin: 0, padding: 0, ...monoStyle };
 
 const TicketPreview = forwardRef(function TicketPreview({ order, ticketConfig, customLegend, taxRate = 0.16 }, ref) {
   if (!ticketConfig) return null;
@@ -61,8 +61,9 @@ const TicketPreview = forwardRef(function TicketPreview({ order, ticketConfig, c
       ref={ref}
       id="ticket-print-area"
       style={{
-        width: '48mm',
-        maxWidth: '58mm',
+        boxSizing: 'border-box',
+        width: '100%',
+        maxWidth: '240px',
         margin: '0 auto',
         padding: 0,
         backgroundColor: '#fff',
@@ -72,27 +73,30 @@ const TicketPreview = forwardRef(function TicketPreview({ order, ticketConfig, c
       <div
         className="ticket-inner-screen"
         style={{
+          boxSizing: 'border-box',
           border: '2px dashed #cbd5e1',
           borderRadius: '8px',
-          padding: '2mm 2mm',
+          padding: '4px',
+          width: '100%',
+          overflow: 'hidden',
         }}
       >
         {/* Header */}
         <div style={{ textAlign: 'center', marginBottom: '1px' }}>
-          <div style={{ fontSize: '13px', fontWeight: 700, lineHeight: '1.1' }}>
+          <div style={{ fontSize: '12px', fontWeight: 700, lineHeight: '1.1', wordWrap: 'break-word', whiteSpace: 'normal' }}>
             {ticketConfig.business_name}
           </div>
           {ticketConfig.rfc && (
-            <div style={{ fontSize: '11px', lineHeight: '1.1' }}>RFC: {ticketConfig.rfc}</div>
+            <div style={{ fontSize: '10px', lineHeight: '1.1' }}>RFC: {ticketConfig.rfc}</div>
           )}
           {ticketConfig.address && (
-            <div style={{ fontSize: '10px', lineHeight: '1.1', wordWrap: 'break-word' }}>{ticketConfig.address}</div>
+            <div style={{ fontSize: '9px', lineHeight: '1.1', wordWrap: 'break-word', whiteSpace: 'normal' }}>{ticketConfig.address}</div>
           )}
           {ticketConfig.phone && (
-            <div style={{ fontSize: '11px', lineHeight: '1.1' }}>Tel: {ticketConfig.phone}</div>
+            <div style={{ fontSize: '10px', lineHeight: '1.1' }}>Tel: {ticketConfig.phone}</div>
           )}
           {ticketConfig.header_message && (
-            <div style={{ fontSize: '10px', fontStyle: 'italic', lineHeight: '1.1', marginTop: '1px' }}>
+            <div style={{ fontSize: '9px', fontStyle: 'italic', lineHeight: '1.1', marginTop: '1px', wordWrap: 'break-word', whiteSpace: 'normal' }}>
               {ticketConfig.header_message}
             </div>
           )}
@@ -110,7 +114,7 @@ const TicketPreview = forwardRef(function TicketPreview({ order, ticketConfig, c
           <pre style={preStyle}>
             {padLine('Fecha:', dateStr)}
           </pre>
-          <pre style={{ ...preStyle, whiteSpace: 'nowrap' }}>
+          <pre style={preStyle}>
             {padLine('Pago:', paymentLabel)}
           </pre>
         </div>
@@ -162,7 +166,7 @@ const TicketPreview = forwardRef(function TicketPreview({ order, ticketConfig, c
           <pre style={preStyle}>
             {padLine(`IVA (${(taxRate * 100).toFixed(0)}%):`, formatMoney(ivaTotal))}
           </pre>
-          <pre style={{ ...preStyle, fontWeight: 700, fontSize: '13px' }}>
+          <pre style={{ ...preStyle, fontWeight: 700 }}>
             {padLine('TOTAL:', formatMoney(total))}
           </pre>
           {showCashChange && (
@@ -182,7 +186,7 @@ const TicketPreview = forwardRef(function TicketPreview({ order, ticketConfig, c
         {legend && (
           <>
             <pre style={preStyle}>{SEP_SINGLE}</pre>
-            <div style={{ textAlign: 'center', fontSize: '10px', lineHeight: '1.1', margin: '1px 0', wordWrap: 'break-word', whiteSpace: 'pre-wrap' }}>
+            <div style={{ textAlign: 'center', fontSize: '9px', lineHeight: '1.1', margin: '1px 0', wordWrap: 'break-word', whiteSpace: 'pre-wrap' }}>
               {legend}
             </div>
           </>
@@ -191,9 +195,9 @@ const TicketPreview = forwardRef(function TicketPreview({ order, ticketConfig, c
         <pre style={preStyle}>{SEP_DOUBLE}</pre>
 
         {/* Footer */}
-        <div style={{ textAlign: 'center', fontSize: '10px', lineHeight: '1.1' }}>
+        <div style={{ textAlign: 'center', fontSize: '9px', lineHeight: '1.1' }}>
           {ticketConfig.footer_message && (
-            <div style={{ fontStyle: 'italic', marginBottom: '1px' }}>
+            <div style={{ fontStyle: 'italic', marginBottom: '1px', wordWrap: 'break-word', whiteSpace: 'normal' }}>
               {ticketConfig.footer_message}
             </div>
           )}
