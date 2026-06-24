@@ -22,12 +22,14 @@ function truncate(str, max) {
 const monoStyle = {
   fontFamily: "'Courier New', Courier, monospace",
   fontSize: '12px',
-  lineHeight: '1.3',
+  lineHeight: '1.1',
   fontWeight: 600,
   color: '#000',
   WebkitFontSmoothing: 'none',
   MozOsxFontSmoothing: 'unset',
 };
+
+const preStyle = { margin: 0, ...monoStyle };
 
 const TicketPreview = forwardRef(function TicketPreview({ order, ticketConfig, customLegend, taxRate = 0.16 }, ref) {
   if (!ticketConfig) return null;
@@ -36,6 +38,8 @@ const TicketPreview = forwardRef(function TicketPreview({ order, ticketConfig, c
   const subtotal = order?.subtotal ?? 0;
   const ivaTotal = order?.iva_total ?? 0;
   const total = order?.total ?? 0;
+  const amountReceived = order?.amount_received ?? null;
+  const amountChange = order?.amount_change ?? null;
   const paymentMethod = order?.payment_method;
   const paymentLabel = typeof paymentMethod === 'object'
     ? (paymentMethod?.name || 'N/A').toUpperCase()
@@ -50,6 +54,7 @@ const TicketPreview = forwardRef(function TicketPreview({ order, ticketConfig, c
   });
 
   const maxNameLen = LINE_WIDTH - 10;
+  const showCashChange = amountReceived != null && parseFloat(amountReceived) > 0;
 
   return (
     <div
@@ -69,58 +74,58 @@ const TicketPreview = forwardRef(function TicketPreview({ order, ticketConfig, c
         style={{
           border: '2px dashed #cbd5e1',
           borderRadius: '8px',
-          padding: '4mm 3mm',
+          padding: '2mm 2mm',
         }}
       >
         {/* Header */}
-        <div style={{ textAlign: 'center', marginBottom: '2mm' }}>
-          <div style={{ fontSize: '13px', fontWeight: 700, letterSpacing: '0.5px' }}>
+        <div style={{ textAlign: 'center', marginBottom: '1px' }}>
+          <div style={{ fontSize: '13px', fontWeight: 700, lineHeight: '1.1' }}>
             {ticketConfig.business_name}
           </div>
           {ticketConfig.rfc && (
-            <div style={{ fontSize: '11px' }}>RFC: {ticketConfig.rfc}</div>
+            <div style={{ fontSize: '11px', lineHeight: '1.1' }}>RFC: {ticketConfig.rfc}</div>
           )}
           {ticketConfig.address && (
-            <div style={{ fontSize: '10px', wordWrap: 'break-word' }}>{ticketConfig.address}</div>
+            <div style={{ fontSize: '10px', lineHeight: '1.1', wordWrap: 'break-word' }}>{ticketConfig.address}</div>
           )}
           {ticketConfig.phone && (
-            <div style={{ fontSize: '11px' }}>Tel: {ticketConfig.phone}</div>
+            <div style={{ fontSize: '11px', lineHeight: '1.1' }}>Tel: {ticketConfig.phone}</div>
           )}
           {ticketConfig.header_message && (
-            <div style={{ fontSize: '10px', fontStyle: 'italic', marginTop: '1mm' }}>
+            <div style={{ fontSize: '10px', fontStyle: 'italic', lineHeight: '1.1', marginTop: '1px' }}>
               {ticketConfig.header_message}
             </div>
           )}
         </div>
 
-        <pre style={{ margin: 0, ...monoStyle, textAlign: 'center' }}>{SEP_DOUBLE}</pre>
+        <pre style={preStyle}>{SEP_DOUBLE}</pre>
 
         {/* Order info */}
-        <div style={{ margin: '1mm 0' }}>
+        <div style={{ margin: '1px 0' }}>
           {orderId && (
-            <pre style={{ margin: 0, ...monoStyle }}>
+            <pre style={preStyle}>
               {padLine('Folio:', orderId.substring(0, 8).toUpperCase())}
             </pre>
           )}
-          <pre style={{ margin: 0, ...monoStyle }}>
+          <pre style={preStyle}>
             {padLine('Fecha:', dateStr)}
           </pre>
-          <pre style={{ margin: 0, ...monoStyle, whiteSpace: 'nowrap' }}>
+          <pre style={{ ...preStyle, whiteSpace: 'nowrap' }}>
             {padLine('Pago:', paymentLabel)}
           </pre>
         </div>
 
-        <pre style={{ margin: 0, ...monoStyle, textAlign: 'center' }}>{SEP_SINGLE}</pre>
+        <pre style={preStyle}>{SEP_SINGLE}</pre>
 
         {/* Column headers */}
-        <pre style={{ margin: '1mm 0 0 0', ...monoStyle, fontWeight: 700 }}>
+        <pre style={{ ...preStyle, fontWeight: 700 }}>
           {padLine('PRODUCTO', 'IMPORTE')}
         </pre>
 
-        <pre style={{ margin: 0, ...monoStyle, textAlign: 'center' }}>{SEP_SINGLE}</pre>
+        <pre style={preStyle}>{SEP_SINGLE}</pre>
 
         {/* Items */}
-        <div style={{ margin: '1mm 0' }}>
+        <div style={{ margin: '1px 0' }}>
           {items.map((item, i) => {
             const productName = item.product?.name || item.product_name || 'Producto';
             const qty = item.quantity;
@@ -129,16 +134,16 @@ const TicketPreview = forwardRef(function TicketPreview({ order, ticketConfig, c
             const finalPrice = parseFloat(item.final_price_at_sale ?? (basePrice * qty - discount));
 
             return (
-              <div key={i} style={{ marginBottom: '1mm' }}>
-                <pre style={{ margin: 0, ...monoStyle }}>
+              <div key={i} style={{ marginBottom: '1px' }}>
+                <pre style={preStyle}>
                   {padLine(truncate(productName, maxNameLen), formatMoney(finalPrice))}
                 </pre>
-                <pre style={{ margin: 0, ...monoStyle, fontSize: '10px', color: '#666' }}>
+                <pre style={{ ...preStyle, fontSize: '10px', color: '#666' }}>
                   {'  ' + qty + ' x ' + formatMoney(basePrice)}
                   {discount > 0 ? '  -' + formatMoney(discount) : ''}
                 </pre>
                 {(item.promotion || item.promotion_name) && (
-                  <pre style={{ margin: 0, ...monoStyle, fontSize: '10px', fontStyle: 'italic', color: '#059669' }}>
+                  <pre style={{ ...preStyle, fontSize: '10px', fontStyle: 'italic', color: '#059669' }}>
                     {'  ' + truncate(item.promotion?.name || item.promotion_name, LINE_WIDTH - 2)}
                   </pre>
                 )}
@@ -147,37 +152,48 @@ const TicketPreview = forwardRef(function TicketPreview({ order, ticketConfig, c
           })}
         </div>
 
-        <pre style={{ margin: 0, ...monoStyle, textAlign: 'center' }}>{SEP_SINGLE}</pre>
+        <pre style={preStyle}>{SEP_SINGLE}</pre>
 
         {/* Totals */}
-        <div style={{ margin: '1mm 0' }}>
-          <pre style={{ margin: 0, ...monoStyle }}>
+        <div style={{ margin: '1px 0' }}>
+          <pre style={preStyle}>
             {padLine('Subtotal:', formatMoney(subtotal))}
           </pre>
-          <pre style={{ margin: 0, ...monoStyle }}>
+          <pre style={preStyle}>
             {padLine(`IVA (${(taxRate * 100).toFixed(0)}%):`, formatMoney(ivaTotal))}
           </pre>
-          <pre style={{ margin: 0, ...monoStyle, fontWeight: 700, fontSize: '13px' }}>
+          <pre style={{ ...preStyle, fontWeight: 700, fontSize: '13px' }}>
             {padLine('TOTAL:', formatMoney(total))}
           </pre>
+          {showCashChange && (
+            <>
+              <pre style={preStyle}>{SEP_SINGLE}</pre>
+              <pre style={preStyle}>
+                {padLine('Recibido:', formatMoney(amountReceived))}
+              </pre>
+              <pre style={{ ...preStyle, fontWeight: 700 }}>
+                {padLine('Cambio:', formatMoney(amountChange))}
+              </pre>
+            </>
+          )}
         </div>
 
         {/* Custom legend */}
         {legend && (
           <>
-            <pre style={{ margin: 0, ...monoStyle, textAlign: 'center' }}>{SEP_SINGLE}</pre>
-            <div style={{ textAlign: 'center', fontSize: '10px', margin: '1mm 0', wordWrap: 'break-word', whiteSpace: 'pre-wrap' }}>
+            <pre style={preStyle}>{SEP_SINGLE}</pre>
+            <div style={{ textAlign: 'center', fontSize: '10px', lineHeight: '1.1', margin: '1px 0', wordWrap: 'break-word', whiteSpace: 'pre-wrap' }}>
               {legend}
             </div>
           </>
         )}
 
-        <pre style={{ margin: 0, ...monoStyle, textAlign: 'center' }}>{SEP_DOUBLE}</pre>
+        <pre style={preStyle}>{SEP_DOUBLE}</pre>
 
         {/* Footer */}
-        <div style={{ textAlign: 'center', marginTop: '1mm', fontSize: '10px' }}>
+        <div style={{ textAlign: 'center', fontSize: '10px', lineHeight: '1.1' }}>
           {ticketConfig.footer_message && (
-            <div style={{ fontStyle: 'italic', marginBottom: '1mm' }}>
+            <div style={{ fontStyle: 'italic', marginBottom: '1px' }}>
               {ticketConfig.footer_message}
             </div>
           )}
