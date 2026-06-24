@@ -1,6 +1,7 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Dialog } from 'primereact/dialog';
 import { Dropdown } from 'primereact/dropdown';
+import { InputNumber } from 'primereact/inputnumber';
 import { Button } from 'primereact/button';
 import { toast } from 'sonner';
 import api from '../../api/axios';
@@ -11,6 +12,7 @@ export default function CheckoutModal({ visible, onHide, cart, taxRate = 0.16, o
   const [paymentMethodId, setPaymentMethodId] = useState(null);
   const [paymentMethods, setPaymentMethods] = useState([]);
   const [customLegend, setCustomLegend] = useState('');
+  const [amountReceived, setAmountReceived] = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const [ticketConfig, setTicketConfig] = useState(null);
   const ticketRef = useRef(null);
@@ -18,6 +20,7 @@ export default function CheckoutModal({ visible, onHide, cart, taxRate = 0.16, o
   useEffect(() => {
     if (visible) {
       setCustomLegend('');
+      setAmountReceived(null);
       Promise.all([
         api.get('/ticket-configs/active'),
         api.get('/payment-methods', { params: { status: 'active' } }),
@@ -40,19 +43,35 @@ export default function CheckoutModal({ visible, onHide, cart, taxRate = 0.16, o
   const total = totalGross;
 
   const selectedMethod = paymentMethods.find(pm => pm.id === paymentMethodId);
+  const isCash = selectedMethod?.slug === 'cash';
+  const amountChange = isCash && amountReceived != null ? Math.max(0, amountReceived - total) : 0;
+  const cashInsufficient = isCash && (amountReceived == null || amountReceived < total);
 
-  const previewOrder = {
+  const previewOrder = useMemo(() => ({
     items: cart,
     subtotal,
     iva_total: ivaTotal,
     total,
+    amount_received: isCash ? amountReceived : null,
+    amount_change: isCash ? amountChange : null,
     payment_method: selectedMethod || { name: 'N/A', slug: '' },
     created_at: new Date().toISOString(),
-  };
+  }), [cart, subtotal, ivaTotal, total, amountReceived, amountChange, isCash, selectedMethod]);
+
+  useEffect(() => {
+    if (!isCash) {
+      setAmountReceived(null);
+    }
+  }, [isCash]);
 
   const handleSubmit = async () => {
     if (!ticketConfig) {
       toast.error('No hay configuracion de ticket activa.');
+      return;
+    }
+
+    if (isCash && cashInsufficient) {
+      toast.error('El dinero recibido es insuficiente.');
       return;
     }
 
@@ -61,6 +80,8 @@ export default function CheckoutModal({ visible, onHide, cart, taxRate = 0.16, o
     const payload = {
       payment_method_id: paymentMethodId,
       custom_legend: customLegend || null,
+      amount_received: isCash ? amountReceived : total,
+      amount_change: isCash ? Math.round(amountChange * 100) / 100 : 0,
       items: cart.map(i => ({
         product_id: i.product_id,
         quantity: i.quantity,
@@ -177,6 +198,44 @@ export default function CheckoutModal({ visible, onHide, cart, taxRate = 0.16, o
             />
           </div>
 
+          {/* Cash received input — only for efectivo */}
+          {isCash && (
+            <div>
+              <label className="mb-1.5 block text-sm font-medium text-slate-700">
+                Dinero Recibido ($) *
+              </label>
+              <InputNumber
+                value={amountReceived}
+                onValueChange={(e) => setAmountReceived(e.value)}
+                mode="currency"
+                currency="MXN"
+                locale="es-MX"
+                minFractionDigits={2}
+                maxFractionDigits={2}
+                min={0}
+                disabled={submitting}
+                className="w-full"
+                inputClassName="w-full rounded-lg border-slate-200 px-3 py-2.5 text-lg font-semibold text-center"
+                pt={{ root: { className: 'w-full' } }}
+              />
+
+              {amountReceived != null && amountReceived >= total && (
+                <div className="mt-2 rounded-lg bg-emerald-50 border border-emerald-200 px-3 py-2.5 text-center">
+                  <span className="text-xs text-emerald-600 font-medium">Cambio a devolver</span>
+                  <p className="text-2xl font-bold text-emerald-700">
+                    ${amountChange.toLocaleString('es-MX', { minimumFractionDigits: 2 })}
+                  </p>
+                </div>
+              )}
+
+              {cashInsufficient && amountReceived != null && (
+                <div className="mt-2 rounded-lg bg-rose-50 border border-rose-200 px-3 py-2 text-xs text-rose-700 font-medium text-center">
+                  El monto recibido es menor al total. Faltan ${(total - amountReceived).toLocaleString('es-MX', { minimumFractionDigits: 2 })}
+                </div>
+              )}
+            </div>
+          )}
+
           <div>
             <label className="mb-1.5 block text-sm font-medium text-slate-700">
               Leyenda Personalizada
@@ -228,7 +287,7 @@ export default function CheckoutModal({ visible, onHide, cart, taxRate = 0.16, o
               type="button"
               label={submitting ? 'Procesando...' : 'Confirmar Cobro'}
               onClick={handleSubmit}
-              disabled={submitting || !ticketConfig || !paymentMethodId}
+              disabled={submitting || !ticketConfig || !paymentMethodId || (isCash && cashInsufficient)}
               loading={submitting}
               className="flex-1 cursor-pointer rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
               pt={{ root: { className: 'border-0' } }}

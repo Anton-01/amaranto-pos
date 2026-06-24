@@ -19,6 +19,8 @@ class Order extends Model
         'iva_total',
         'total',
         'custom_legend',
+        'amount_received',
+        'amount_change',
         'status',
         'canceled_by',
         'canceled_at',
@@ -31,6 +33,8 @@ class Order extends Model
             'subtotal' => 'decimal:2',
             'iva_total' => 'decimal:2',
             'total' => 'decimal:2',
+            'amount_received' => 'decimal:2',
+            'amount_change' => 'decimal:2',
             'canceled_at' => 'datetime',
         ];
     }

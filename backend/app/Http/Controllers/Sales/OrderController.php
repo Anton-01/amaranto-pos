@@ -161,6 +161,8 @@ class OrderController extends Controller
                 'subtotal' => $subtotal,
                 'iva_total' => $ivaTotal,
                 'total' => $total,
+                'amount_received' => $request->amount_received,
+                'amount_change' => $request->amount_change,
                 'custom_legend' => $request->custom_legend,
                 'status' => 'completed',
             ]);

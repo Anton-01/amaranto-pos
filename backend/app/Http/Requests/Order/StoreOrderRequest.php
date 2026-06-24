@@ -16,6 +16,8 @@ class StoreOrderRequest extends FormRequest
         return [
             'payment_method_id' => 'required|uuid|exists:payment_methods,id',
             'custom_legend' => 'nullable|string|max:500',
+            'amount_received' => 'nullable|numeric|min:0|max:9999999999.99',
+            'amount_change' => 'nullable|numeric|min:0|max:9999999999.99',
             'items' => 'required|array|min:1',
             'items.*.product_id' => 'required|uuid|exists:products,id',
             'items.*.quantity' => 'required|integer|min:1',

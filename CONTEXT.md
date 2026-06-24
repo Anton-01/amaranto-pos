@@ -1400,3 +1400,73 @@ Tras pruebas fisicas con la ticketera real del restaurante, se confirmo que el h
 - `src/components/pos/TicketPreview.jsx` — Reescrito completo: layout basado en caracteres con `<pre>`, tipografia monoespaciada, estilos inline, LINE_WIDTH=32, funciones padLine/truncate/formatMoney
 - `src/index.css` — @media print reescrito para 58mm: @page 58mm, tipografia termica forzada, anti-aliasing deshabilitado, overflow visible
 - `src/pages/sales/SalesHistoryPage.jsx` — Agregado div hidden print:block con TicketPreview fuera del Dialog para impresion consistente
+
+---
+
+## 22. Compactacion Vertical de Ticket, Calculo de Cambio & @page Forzado [🟢 Completado]
+
+### Tarea 1: @page Forzado y Compactacion Vertical (CSS @media print) [🟢 Completado]
+
+#### CSS Print (@media print en index.css)
+- **@page avanzado**: `size: 58mm auto; margin: 0mm` fuerza ancho y elimina encabezados/pies de pagina del navegador automaticamente
+- **html, body reset**: `margin: 0 !important; padding: 0 !important; width: 58mm !important` anula margenes predeterminados del navegador
+- **line-height agresivo**: Reducido de `1.3` a `1.0` en `#ticket-print-area` y `1.1` en `<pre>` para compactacion vertical maxima
+- **Padding del contenedor**: `.ticket-inner-screen` reducido a `0 0.5mm` en print (eliminando padding vertical)
+- **Margins eliminados**: `margin-top: 0 !important; margin-bottom: 0 !important` en todos los `div` del ticket
+
+#### TicketPreview.jsx — Compactacion
+- **line-height global**: Reducido de `1.3` a `1.1` en `monoStyle`
+- **Padding del contenedor**: Reducido de `4mm 3mm` a `2mm 2mm` en pantalla
+- **Margins entre secciones**: Cambiados de `1mm` a `1px` para minima separacion vertical
+- **preStyle compartido**: Objeto `preStyle` reutilizado para evitar repeticion de estilos inline
+
+### Tarea 2: Migracion BD — amount_received / amount_change [🟢 Completado]
+
+#### Migracion: 2026_06_24_000001_add_amount_received_change_to_orders
+- `amount_received` NUMERIC(12,2) nullable — Dinero entregado por el cliente
+- `amount_change` NUMERIC(12,2) nullable — Cambio devuelto por el cajero
+- Ambas columnas posicionadas despues de `total` en la tabla `orders`
+
+#### Modelo: Order (Modificado)
+- Agregados `amount_received` y `amount_change` a `$fillable`
+- Agregados casts `decimal:2` para ambos campos
+
+### Tarea 3: Logica de Cobro con Calculo de Cambio (CheckoutModal) [🟢 Completado]
+
+#### Frontend (CheckoutModal.jsx)
+- **Deteccion de efectivo**: Evalua `selectedMethod?.slug === 'cash'` para determinar si el pago es en efectivo
+- **InputNumber condicional**: Campo "Dinero Recibido ($) *" se muestra solo cuando el metodo de pago es efectivo (slug `cash`)
+- **Calculo reactivo**: `amountChange = Math.max(0, amountReceived - total)` calculado en tiempo real
+- **Visualizacion prominente**: Card emerald con texto grande (`text-2xl font-bold`) mostrando "Cambio a devolver"
+- **Validacion de insuficiencia**: Si `amountReceived < total`, muestra banner rose con faltante exacto y deshabilita "Confirmar Cobro"
+- **Pagos no-efectivo**: `amount_received = total` y `amount_change = 0` asignados automaticamente en el payload
+- **previewOrder con useMemo**: Incluye `amount_received` y `amount_change` para renderizado en tiempo real en TicketPreview
+
+#### Backend (OrderController::store + StoreOrderRequest)
+- `StoreOrderRequest`: Agregadas reglas `amount_received` (nullable, numeric, min:0, max:9999999999.99) y `amount_change` (mismas reglas)
+- `OrderController::store()`: Almacena `$request->amount_received` y `$request->amount_change` en Order::create
+
+### Tarea 4: Inyeccion en Ticket Termico [🟢 Completado]
+
+#### TicketPreview.jsx — Seccion de Cambio
+- Detecta `amountReceived != null && amountReceived > 0` para mostrar lineas de cambio
+- Agrega separador `--------` seguido de `Recibido:` y `Cambio:` (en negrita) inmediatamente debajo del TOTAL
+- Compatible con reimprimir desde SalesHistoryPage (los campos `amount_received`/`amount_change` se cargan desde la API `GET /orders/{id}`)
+
+### Tarea 5: Ruta de Escape en Apertura de Caja [🟢 Ya Existente]
+- El boton "Regresar al Panel" con `cursor-pointer` y `navigate('/dashboard')` ya existia en POSPage desde la fase 17. Verificado funcional.
+
+### Archivos Creados en esta Fase
+**Backend (nuevos):**
+- `database/migrations/2026_06_24_000001_add_amount_received_change_to_orders.php`
+
+### Archivos Modificados en esta Fase
+**Backend (modificados):**
+- `app/Models/Order.php` — Agregados amount_received, amount_change a fillable y casts
+- `app/Http/Controllers/Sales/OrderController.php` — Almacena amount_received y amount_change en store()
+- `app/Http/Requests/Order/StoreOrderRequest.php` — Validacion nullable numeric para ambos campos
+
+**Frontend (modificados):**
+- `src/components/pos/TicketPreview.jsx` — Compactacion vertical (line-height 1.1, margins 1px), seccion Recibido/Cambio condicional
+- `src/components/pos/CheckoutModal.jsx` — InputNumber "Dinero Recibido" condicional por slug cash, calculo reactivo de cambio, validacion de insuficiencia, previewOrder con useMemo
+- `src/index.css` — @page forzado 58mm, html/body reset, line-height 1.0/1.1 agresivo, margins eliminados en print
