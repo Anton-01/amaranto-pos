@@ -256,6 +256,18 @@ export default function SalesHistoryPage() {
     <span className="text-sm font-semibold text-slate-900">{fmt(row.total)}</span>
   );
 
+  const receivedTemplate = (row) => {
+    const val = row.amount_received;
+    if (val == null || parseFloat(val) === 0) return <span className="text-xs text-slate-400">-</span>;
+    return <span className="text-sm text-slate-700">{fmt(val)}</span>;
+  };
+
+  const changeTemplate = (row) => {
+    const val = row.amount_change;
+    if (val == null || parseFloat(val) === 0) return <span className="text-xs text-slate-400">-</span>;
+    return <span className="text-sm font-semibold text-emerald-600">{fmt(val)}</span>;
+  };
+
   const statusTemplate = (row) => (
     <Tag
       value={row.status === 'completed' ? 'Completado' : 'Cancelado'}
@@ -433,8 +445,10 @@ export default function SalesHistoryPage() {
           <Column body={dateTemplate} header="Fecha/Hora" style={{ width: '160px' }} />
           <Column body={vendorTemplate} header="Vendedor" />
           <Column body={paymentTemplate} header="Método de Pago" style={{ width: '140px' }} />
-          <Column body={totalTemplate} header="Total Neto" style={{ width: '120px' }} />
-          <Column body={statusTemplate} header="Estatus" style={{ width: '110px' }} />
+          <Column body={totalTemplate} header="Total" style={{ width: '100px' }} />
+          <Column body={receivedTemplate} header="Recibido" style={{ width: '100px' }} />
+          <Column body={changeTemplate} header="Cambio" style={{ width: '90px' }} />
+          <Column body={statusTemplate} header="Estatus" style={{ width: '100px' }} />
           <Column body={actionsTemplate} header="Acciones" style={{ width: '100px' }} />
         </DataTable>
       </div>
@@ -554,6 +568,16 @@ export default function SalesHistoryPage() {
                 <div className="mt-2 flex justify-between border-t border-slate-200 pt-2 text-lg font-bold text-slate-900">
                   <span>Total</span><span>{fmt(detailOrder.total)}</span>
                 </div>
+                {detailOrder.amount_received != null && parseFloat(detailOrder.amount_received) > 0 && (
+                  <>
+                    <div className="mt-2 flex justify-between border-t border-slate-200 pt-2 text-sm text-slate-600">
+                      <span>Efectivo Recibido</span><span>{fmt(detailOrder.amount_received)}</span>
+                    </div>
+                    <div className="flex justify-between text-sm font-semibold text-emerald-600">
+                      <span>Cambio Devuelto</span><span>{fmt(detailOrder.amount_change)}</span>
+                    </div>
+                  </>
+                )}
               </div>
             </div>
           ) : null}
