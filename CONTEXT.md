@@ -18,7 +18,7 @@
 | Promociones e Historicos | [🟢 Completado] | [🟢 Completado] | CRUD con RBAC, limite 1 promo/ticket, POS cart con validacion cruzada |
 | Usuarios, Roles y Permisos (RBAC)| [🟢 Completado] | [🟢 Completado] | CRUD con Kill-Switch, detail tabs (seguridad/sesiones/cajas), reset link, doble confirmacion, self-guard, CRUD roles |
 | Caja Chica, Retiros e Integridad| [🟢 Completado] | [🟢 Completado] | SHA256 inmutable, eventos, notificaciones, audit ticket |
-| Ventas, Ticket Config & Historico | [🟢 Completado] | [🟢 Completado] | Append-only versioning, OrderController, ticket preview 80mm, @media print |
+| Ventas, Ticket Config & Historico | [🟢 Completado] | [🟢 Completado] | Append-only versioning, OrderController, ticket preview 58mm (migrado de 80mm), @media print |
 | Finanzas Avanzadas (70/30) & Stock | [🟢 Completado] | [🟢 Completado] | Recharts dashboard, 70/30 split, stock movements con merma validada |
 | Notificaciones Reverb (Push/Mail)| [🟢 Completado] | [🟢 Completado] | Preferencias matriciales mail/database por rol |
 | Papelera Global (Soft Deletes)| [🟢 Completado] | [🟢 Completado] | Auditoria forense, restore/purge con RBAC admin-only |
@@ -754,7 +754,7 @@ Secuencia de ejecucion al levantar el contenedor:
 | 4 | Catalogo & Variaciones | CRUD Categories/Products, AdvancedSoftDeletes | DataTable filtros avanzados, ProductFormPage | 🟢 |
 | 5 | Promociones | CRUD con RBAC, StoreOrderRequest 1-promo limit | PromotionsPage + POSPage carrito reactivo | 🟢 |
 | 6 | Caja Chica & Integridad | SHA256 seal, Events/Listeners/Notifications | WithdrawModal + AuditTicket termico | 🟢 |
-| 7 | Ventas & Ticket Config | OrderController, Append-Only versioning | CheckoutModal + TicketPreview 80mm + @media print | 🟢 |
+| 7 | Ventas & Ticket Config | OrderController, Append-Only versioning | CheckoutModal + TicketPreview 58mm (migrado de 80mm) + @media print | 🟢 |
 | 8 | Finanzas 70/30 & Stock | AnalyticsController, StockMovementController | Recharts dashboard, StockMovementsPage | 🟢 |
 | 9 | Usuarios & Roles (RBAC) | UserController, Kill-Switch, URL firmada | UsersPage con TabView detail | 🟢 |
 | 10 | Notificaciones Reverb | NotificationPreferenceController, upsert PK triple | NotificationPreferencesPage matricial | 🟢 |
@@ -1347,3 +1347,56 @@ Se reemplazo el ENUM nativo de PostgreSQL `payment_method` por una tabla relacio
 - `src/App.jsx` — Ruta /admin/notificaciones/plantillas
 - `src/components/layout/Sidebar.jsx` — Nav item "Plantillas Email" con icono envelope bajo ADMINISTRACION
 - `src/components/layout/AppHeader.jsx` — Page name "Plantillas de Correo"
+
+---
+
+## 21. Optimizacion de Hardware de Impresion: Migracion de 80mm a 58mm (Definitivo) [🟢 Completado]
+
+### Contexto de Hardware
+Tras pruebas fisicas con la ticketera real del restaurante, se confirmo que el hardware NO es de 80mm. Se trata de una **impresora termica de 58mm (Modelo 58-VII-U)** con capacidad fisica estricta de **384 puntos por linea** (~32-36 caracteres por linea con fuentes estandar). El diseño anterior desbordaba margenes, generaba textos borrosos por anti-aliasing del navegador, y cortaba informacion del lado derecho (ej. imprimia 'EFE[' en vez de 'EFECTIVO').
+
+### Cambios Implementados
+
+#### 1. Rediseño Completo del TicketPreview.jsx
+- **Ancho del contenedor**: Cambiado de `302px` (80mm) a `width: 48mm; max-width: 58mm` para aprovechar al maximo el area de quemado de la cabeza termica (384 dots)
+- **Tipografia termica**: Fuente `'Courier New', Courier, monospace` con `font-size: 12px`, `line-height: 1.3`, `font-weight: 600`
+- **Anti-aliasing deshabilitado**: `-webkit-font-smoothing: none; -moz-osx-font-smoothing: unset` para quemado solido en papel termico
+- **Alineacion por caracteres**: Funciones `padLine()` y `truncate()` con `LINE_WIDTH = 32` caracteres para alineacion precisa columna-por-columna usando `<pre>` tags
+- **Separadores de texto**: `'='.repeat(32)` y `'-'.repeat(32)` en lugar de lineas CSS, calculados al limite exacto de la linea de impresion
+- **Metadatos sin recorte**: `white-space: nowrap` en campos criticos (Folio, Fecha, Pago) con `padLine()` que garantiza que 'EFECTIVO', 'TRANSFERENCIA', etc. nunca se corten
+- **Estilos inline**: Todo el layout del ticket usa estilos inline en lugar de clases Tailwind para garantizar consistencia absoluta entre pantalla e impresion
+- **Clase `.ticket-inner-screen`**: Separacion de estilos decorativos (bordes punteados, border-radius) que se eliminan en @media print
+
+#### 2. Hoja de Estilos @media print (index.css)
+- **@page**: Cambiado de `size: 80mm auto` a `size: 58mm auto; margin: 0`
+- **#ticket-print-area**: `width: 48mm; max-width: 58mm; margin: 0; padding: 0`
+- **Tipografia forzada en print**: `font-family: 'Courier New', Courier, monospace !important` con `-webkit-font-smoothing: none !important` en todos los `<pre>` del ticket
+- **Contenedor decorativo**: `.ticket-inner-screen` pierde bordes, border-radius, padding decorativo y box-shadow en impresion
+- **Overflow visible**: `overflow: visible !important` en `<pre>` y `<div>` del ticket para evitar recortes
+- **Ocultamiento de UI**: `nav, aside, header, footer, .p-dialog-mask, .p-dialog, .p-sidebar, .p-menubar` con `display: none !important`
+
+#### 3. Sincronizacion POS e Historial de Ventas
+- **POSPage**: Ya renderizaba TicketPreview fuera de Dialog en `<div className="hidden print:block">` — funciona correctamente con el nuevo componente
+- **SalesHistoryPage**: Agregado `<div className="hidden print:block">` con TicketPreview fuera del Dialog de reimprimir, replicando el patron de POSPage para impresion consistente
+- **CheckoutModal**: TicketPreview dentro del Dialog es solo para preview en pantalla — la impresion real usa el componente de POSPage
+- **TicketConfigPage**: TicketPreview usado solo para vista previa en pantalla — no afectado por cambios de impresion
+
+### Especificaciones Tecnicas del Hardware
+| Parametro | Valor |
+| :--- | :--- |
+| Modelo | 58-VII-U |
+| Ancho del papel | 58mm |
+| Area de impresion efectiva | 48mm (~384 dots) |
+| Caracteres por linea (Courier 12px) | 32 |
+| Tipo de impresion | Termica directa |
+| Ancho CSS del ticket (@media print) | 48mm |
+| Ancho CSS del ticket (pantalla) | 48mm |
+| Fuente de impresion | Courier New, Courier, monospace |
+| Tamano de fuente | 12px (principal), 10px (detalle) |
+| Anti-aliasing | Deshabilitado para nitidez termica |
+
+### Archivos Modificados en esta Fase
+**Frontend (modificados):**
+- `src/components/pos/TicketPreview.jsx` — Reescrito completo: layout basado en caracteres con `<pre>`, tipografia monoespaciada, estilos inline, LINE_WIDTH=32, funciones padLine/truncate/formatMoney
+- `src/index.css` — @media print reescrito para 58mm: @page 58mm, tipografia termica forzada, anti-aliasing deshabilitado, overflow visible
+- `src/pages/sales/SalesHistoryPage.jsx` — Agregado div hidden print:block con TicketPreview fuera del Dialog para impresion consistente

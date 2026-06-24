@@ -671,6 +671,13 @@ export default function SalesHistoryPage() {
           </div>
         </div>
       </Dialog>
+
+      {/* Hidden print-only ticket rendered outside any Dialog */}
+      {printOrder && printTicketConfig && (
+        <div className="hidden print:block">
+          <TicketPreview order={printOrder} ticketConfig={printTicketConfig} taxRate={taxRate} />
+        </div>
+      )}
     </AppLayout>
   );
 }
