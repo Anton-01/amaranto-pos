@@ -37,6 +37,20 @@ class DailySummaryController extends Controller
             ->whereBetween('created_at', [$today, $endOfDay])
             ->sum('amount');
 
+        $productBreakdown = DB::table('order_items')
+            ->join('orders', 'order_items.order_id', '=', 'orders.id')
+            ->leftJoin('products', 'order_items.product_id', '=', 'products.id')
+            ->select(
+                DB::raw("COALESCE(products.name, 'Producto eliminado') as product_name"),
+                DB::raw('SUM(order_items.quantity) as quantity_sold'),
+                DB::raw('SUM(order_items.final_price_at_sale) as total_revenue')
+            )
+            ->where('orders.status', 'completed')
+            ->whereBetween('orders.created_at', [$today, $endOfDay])
+            ->groupBy('products.name')
+            ->orderByDesc('total_revenue')
+            ->get();
+
         return response()->json([
             'status' => 'success',
             'data' => [
@@ -50,6 +64,11 @@ class DailySummaryController extends Controller
                     'total' => round((float) $row->total, 2),
                 ]),
                 'petty_cash_total' => round($pettyCash, 2),
+                'product_breakdown' => $productBreakdown->map(fn ($row) => [
+                    'product_name' => $row->product_name,
+                    'quantity_sold' => (int) $row->quantity_sold,
+                    'total_revenue' => round((float) $row->total_revenue, 2),
+                ])->values(),
             ],
         ]);
     }

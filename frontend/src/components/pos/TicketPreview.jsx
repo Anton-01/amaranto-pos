@@ -23,7 +23,7 @@ const monoStyle = {
   fontFamily: "'Courier New', Courier, monospace",
   fontSize: '12px',
   lineHeight: '1.1',
-  fontWeight: 600,
+  fontWeight: 400,
   color: '#000',
   WebkitFontSmoothing: 'none',
   MozOsxFontSmoothing: 'unset',
@@ -83,7 +83,7 @@ const TicketPreview = forwardRef(function TicketPreview({ order, ticketConfig, c
       >
         {/* Header */}
         <div style={{ textAlign: 'center', marginBottom: '1px' }}>
-          <div style={{ fontSize: '12px', fontWeight: 700, lineHeight: '1.1', wordWrap: 'break-word', whiteSpace: 'normal' }}>
+          <div style={{ fontSize: '12px', fontWeight: 500, lineHeight: '1.1', wordWrap: 'break-word', whiteSpace: 'normal' }}>
             {ticketConfig.business_name}
           </div>
           {ticketConfig.rfc && (
@@ -122,7 +122,7 @@ const TicketPreview = forwardRef(function TicketPreview({ order, ticketConfig, c
         <pre style={preStyle}>{SEP_SINGLE}</pre>
 
         {/* Column headers */}
-        <pre style={{ ...preStyle, fontWeight: 700 }}>
+        <pre style={{ ...preStyle, fontWeight: 500 }}>
           {padLine('PRODUCTO', 'IMPORTE')}
         </pre>
 
@@ -142,12 +142,12 @@ const TicketPreview = forwardRef(function TicketPreview({ order, ticketConfig, c
                 <pre style={preStyle}>
                   {padLine(truncate(productName, maxNameLen), formatMoney(finalPrice))}
                 </pre>
-                <pre style={{ ...preStyle, fontSize: '10px', color: '#666' }}>
+                <pre style={{ ...preStyle, fontSize: '10px', color: '#000' }}>
                   {'  ' + qty + ' x ' + formatMoney(basePrice)}
                   {discount > 0 ? '  -' + formatMoney(discount) : ''}
                 </pre>
                 {(item.promotion || item.promotion_name) && (
-                  <pre style={{ ...preStyle, fontSize: '10px', fontStyle: 'italic', color: '#059669' }}>
+                  <pre style={{ ...preStyle, fontSize: '10px', fontStyle: 'italic', color: '#000' }}>
                     {'  ' + truncate(item.promotion?.name || item.promotion_name, LINE_WIDTH - 2)}
                   </pre>
                 )}
@@ -166,7 +166,7 @@ const TicketPreview = forwardRef(function TicketPreview({ order, ticketConfig, c
           <pre style={preStyle}>
             {padLine(`IVA (${(taxRate * 100).toFixed(0)}%):`, formatMoney(ivaTotal))}
           </pre>
-          <pre style={{ ...preStyle, fontWeight: 700 }}>
+          <pre style={{ ...preStyle, fontWeight: 500 }}>
             {padLine('TOTAL:', formatMoney(total))}
           </pre>
           {showCashChange && (
@@ -175,7 +175,7 @@ const TicketPreview = forwardRef(function TicketPreview({ order, ticketConfig, c
               <pre style={preStyle}>
                 {padLine('Recibido:', formatMoney(amountReceived))}
               </pre>
-              <pre style={{ ...preStyle, fontWeight: 700 }}>
+              <pre style={{ ...preStyle, fontWeight: 500 }}>
                 {padLine('Cambio:', formatMoney(amountChange))}
               </pre>
             </>
@@ -201,7 +201,7 @@ const TicketPreview = forwardRef(function TicketPreview({ order, ticketConfig, c
               {ticketConfig.footer_message}
             </div>
           )}
-          <div style={{ color: '#999' }}>v{ticketConfig.version} - Cronos POS</div>
+          <div style={{ color: '#000' }}>v{ticketConfig.version} - Cronos POS</div>
         </div>
       </div>
     </div>
