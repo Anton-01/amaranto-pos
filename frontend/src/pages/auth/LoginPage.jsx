@@ -82,9 +82,9 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-slate-50 px-4">
+    <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 px-4">
       <div className="w-full max-w-md">
-        <div className="rounded-2xl bg-white p-8 shadow-xl shadow-slate-200/50 ring-1 ring-slate-100">
+        <div className="rounded-2xl bg-white/95 p-8 shadow-2xl shadow-black/20 ring-1 ring-white/10 backdrop-blur-sm">
           <div className="mb-8 text-center">
             <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-xl bg-indigo-600 shadow-lg shadow-indigo-200">
               <svg className="h-7 w-7 text-white" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
@@ -131,8 +131,8 @@ export default function LoginPage() {
                 toggleMask
                 feedback={false}
                 className="w-full"
-                inputClassName="w-full rounded-xl border-slate-200 px-4 py-3 text-sm shadow-sm transition-all focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200"
-                pt={{ root: { className: 'w-full' }, input: { className: 'w-full' } }}
+                inputClassName="w-full !w-full rounded-xl border-slate-200 px-4 py-3 text-sm shadow-sm transition-all focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200"
+                pt={{ root: { className: 'w-full', style: { width: '100%' } }, input: { className: 'w-full', style: { width: '100%' } }, iconField: { className: 'w-full', style: { width: '100%' } } }}
               />
             </div>
 
@@ -147,7 +147,7 @@ export default function LoginPage() {
           </form>
         </div>
 
-        <p className="mt-6 text-center text-xs text-slate-400">
+        <p className="mt-6 text-center text-xs text-slate-400/70">
           Sistema protegido con autenticacion de dos factores
         </p>
       </div>

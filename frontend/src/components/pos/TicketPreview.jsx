@@ -12,8 +12,8 @@ function truncate(str, max) {
 const baseFont = {
   fontFamily: "'Arial', 'Helvetica', 'Segoe UI', sans-serif",
   fontSize: '12px',
-  lineHeight: '1.2',
-  fontWeight: 600,
+  lineHeight: '1.1',
+  fontWeight: 400,
   color: '#000',
   WebkitFontSmoothing: 'none',
   MozOsxFontSmoothing: 'unset',
@@ -91,8 +91,8 @@ const TicketPreview = forwardRef(function TicketPreview({ order, ticketConfig, c
         }}
       >
         {/* Header */}
-        <div style={{ textAlign: 'center', marginBottom: '2px' }}>
-          <div style={{ fontSize: '13px', fontWeight: 700, lineHeight: '1.2' }}>
+        <div style={{ textAlign: 'center', marginBottom: '1px' }}>
+          <div style={{ fontSize: '12px', fontWeight: 500, lineHeight: '1.1', wordWrap: 'break-word', whiteSpace: 'normal' }}>
             {ticketConfig.business_name}
           </div>
           {ticketConfig.rfc && (
@@ -134,10 +134,9 @@ const TicketPreview = forwardRef(function TicketPreview({ order, ticketConfig, c
         <hr style={hrDashed} />
 
         {/* Column headers */}
-        <div style={{ ...rowStyle, fontWeight: 700, margin: '2px 0' }}>
-          <span style={{ width: '65%' }}>PRODUCTO</span>
-          <span style={{ width: '35%', textAlign: 'right' }}>IMPORTE</span>
-        </div>
+        <pre style={{ ...preStyle, fontWeight: 500 }}>
+          {padLine('PRODUCTO', 'IMPORTE')}
+        </pre>
 
         <hr style={hrDashed} />
 
@@ -151,21 +150,18 @@ const TicketPreview = forwardRef(function TicketPreview({ order, ticketConfig, c
             const finalPrice = parseFloat(item.final_price_at_sale ?? (basePrice * qty - discount));
 
             return (
-              <div key={i} style={{ marginBottom: '2px' }}>
-                <div style={rowStyle}>
-                  <span style={{ width: '65%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {truncate(productName, 22)}
-                  </span>
-                  <span style={{ width: '35%', textAlign: 'right', fontWeight: 700 }}>{fmt(finalPrice)}</span>
-                </div>
-                <div style={{ fontSize: '10px', color: '#444', paddingLeft: '4px' }}>
-                  {qty} x {fmt(basePrice)}
-                  {discount > 0 && <span style={{ marginLeft: '4px' }}>-{fmt(discount)}</span>}
-                </div>
+              <div key={i} style={{ marginBottom: '1px' }}>
+                <pre style={preStyle}>
+                  {padLine(truncate(productName, maxNameLen), formatMoney(finalPrice))}
+                </pre>
+                <pre style={{ ...preStyle, fontSize: '10px', color: '#000' }}>
+                  {'  ' + qty + ' x ' + formatMoney(basePrice)}
+                  {discount > 0 ? '  -' + formatMoney(discount) : ''}
+                </pre>
                 {(item.promotion || item.promotion_name) && (
-                  <div style={{ fontSize: '10px', fontStyle: 'italic', color: '#059669', paddingLeft: '4px' }}>
-                    {truncate(item.promotion?.name || item.promotion_name, 28)}
-                  </div>
+                  <pre style={{ ...preStyle, fontSize: '10px', fontStyle: 'italic', color: '#000' }}>
+                    {'  ' + truncate(item.promotion?.name || item.promotion_name, LINE_WIDTH - 2)}
+                  </pre>
                 )}
               </div>
             );
@@ -175,30 +171,25 @@ const TicketPreview = forwardRef(function TicketPreview({ order, ticketConfig, c
         <hr style={hrDashed} />
 
         {/* Totals */}
-        <div style={{ margin: '2px 0' }}>
-          <div style={rowStyle}>
-            <span>Subtotal:</span>
-            <span>{fmt(subtotal)}</span>
-          </div>
-          <div style={rowStyle}>
-            <span>IVA ({(taxRate * 100).toFixed(0)}%):</span>
-            <span>{fmt(ivaTotal)}</span>
-          </div>
-          <div style={{ ...rowStyle, fontWeight: 700, fontSize: '14px', marginTop: '2px' }}>
-            <span>TOTAL:</span>
-            <span>{fmt(total)}</span>
-          </div>
+        <div style={{ margin: '1px 0' }}>
+          <pre style={preStyle}>
+            {padLine('Subtotal:', formatMoney(subtotal))}
+          </pre>
+          <pre style={preStyle}>
+            {padLine(`IVA (${(taxRate * 100).toFixed(0)}%):`, formatMoney(ivaTotal))}
+          </pre>
+          <pre style={{ ...preStyle, fontWeight: 500 }}>
+            {padLine('TOTAL:', formatMoney(total))}
+          </pre>
           {showCashChange && (
             <>
-              <hr style={hrDashed} />
-              <div style={rowStyle}>
-                <span>Recibido:</span>
-                <span>{fmt(amountReceived)}</span>
-              </div>
-              <div style={{ ...rowStyle, fontWeight: 700 }}>
-                <span>Cambio:</span>
-                <span>{fmt(amountChange)}</span>
-              </div>
+              <pre style={preStyle}>{SEP_SINGLE}</pre>
+              <pre style={preStyle}>
+                {padLine('Recibido:', formatMoney(amountReceived))}
+              </pre>
+              <pre style={{ ...preStyle, fontWeight: 500 }}>
+                {padLine('Cambio:', formatMoney(amountChange))}
+              </pre>
             </>
           )}
         </div>
@@ -222,7 +213,7 @@ const TicketPreview = forwardRef(function TicketPreview({ order, ticketConfig, c
               {ticketConfig.footer_message}
             </div>
           )}
-          <div style={{ color: '#666' }}>v{ticketConfig.version} - Cronos POS</div>
+          <div style={{ color: '#000' }}>v{ticketConfig.version} - Cronos POS</div>
         </div>
       </div>
     </div>

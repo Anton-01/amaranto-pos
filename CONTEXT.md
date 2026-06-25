@@ -1518,46 +1518,56 @@ El contenedor del ticket usaba `width: 48mm` que a 96 DPI equivale a ~181px, per
 - `src/index.css` — Print: overflow visible forzado en .ticket-inner-screen, white-space pre en pre tags, width/max-width overrides
 - `src/pages/sales/SalesHistoryPage.jsx` — Columnas Recibido/Cambio en DataTable, seccion Efectivo Recibido/Cambio Devuelto en modal detalle
 
-## 24. Migracion a Sans-Serif & Separadores CSS Nativos para Impresion Termica Solida [🟢 Completado]
+---
 
-### Problema Detectado
-Al evaluar la impresion real en la ticketera termica 58mm (Modelo 58-VII-U), el texto se imprimia granulado y tenue. La causa: el navegador aplica anti-aliasing (suavizado de fuentes) a la tipografia Courier New monospace, generando pixeles en escala de grises. La cabeza termica de la impresora opera en modo binario (1-bit: punto encendido o apagado), interpretando esos grises como puntos dispersos en lugar de trazos solidos.
+## 24. Optimizacion Monocromatica, Login Premium, Desglose por Producto & Flujo Efectivo [🟢 Completado]
 
-Adicionalmente, los separadores de texto (`'='.repeat(32)`, `'-'.repeat(32)`) no se alineaban correctamente con fuentes de ancho variable, y la estructura `<pre>` ya no era necesaria tras eliminar el layout monospace.
+### Tarea 1: Optimizacion Monocromatica Estricta para Ticket 58mm (@media print) [🟢 Completado]
 
-### Solucion Implementada
+#### Tipografia Fina y Nitida
+- `font-weight` reducido de `600` a `400` en `monoStyle` global del TicketPreview para evitar sangrado por exceso de calor en papel termico
+- Encabezados (business_name, PRODUCTO/IMPORTE, TOTAL, Cambio) reducidos de `700` a `500` para diferenciacion sutil sin empaste
+- CSS `@media print` fuerza `font-weight: 400 !important` en `#ticket-print-area` y `#ticket-print-area pre`
 
-#### Tarea 1: Cambio de Tipografia [🟢 Completado]
-- **Antes:** `font-family: 'Courier New', Courier, monospace` (serifas finas + anti-aliasing = puntos dispersos)
-- **Despues:** `font-family: 'Arial', 'Helvetica', 'Segoe UI', sans-serif` (trazos gruesos uniformes = quemado solido)
-- Desactivacion estricta de anti-aliasing en componente y CSS print:
-  - `-webkit-font-smoothing: none`
-  - `-moz-osx-font-smoothing: unset`
-  - `font-smooth: never`
-  - `text-rendering: optimizeSpeed`
+#### Eliminacion Total de Grises (Negro Puro)
+- Removidos todos los colores intermedios del ticket: `#666` (detalle items), `#059669` (promociones), `#999` (footer version) → todos a `#000`
+- CSS `@media print` aplica regla universal: `#ticket-print-area, #ticket-print-area * { color: #000000 !important; text-shadow: none !important }` para negro solido inmutable
+- Las lineas divisorias de 32 caracteres (`=` y `-`) heredan el mismo color negro forzado
 
-#### Tarea 2: Separadores CSS Nativos [🟢 Completado]
-- **Antes:** Strings de texto `SEP_DOUBLE = '='.repeat(32)`, `SEP_SINGLE = '-'.repeat(32)` dentro de `<pre>` tags
-- **Despues:** Etiquetas `<hr>` con estilos inline:
-  - Solido: `borderBottom: '2px solid #000'` (encabezado/pie)
-  - Punteado: `borderBottom: '1px dashed #000'` (secciones internas)
-- Eliminados: constantes `LINE_WIDTH`, `padLine()`, `SEP_DOUBLE`, `SEP_SINGLE`, todos los `<pre>` tags
+### Tarea 2: Correccion de Alineacion y Rediseno Estetico del Login [🟢 Completado]
 
-#### Tarea 3: Layout Flexbox para Productos [🟢 Completado]
-- Filas con `display: flex`, `justify-content: space-between`, `align-items: baseline`
-- Columna producto: `width: 65%` con `overflow: hidden`, `text-overflow: ellipsis`
-- Columna precio: `width: 35%`, `text-align: right`, `font-weight: 700`
-- `truncate(productName, 22)` para nombres largos
-- Contenedor: `max-width: 240px` pantalla, `48mm` impresion
+#### Alineacion de Inputs
+- Componente `<Password>` corregido con `inputClassName="w-full !w-full"` y `pt` exhaustivo: `root`, `input`, e `iconField` con `{ className: 'w-full', style: { width: '100%' } }` para forzar ancho identico al InputText de email
 
-#### Tarea 4: CSS Print Actualizado [🟢 Completado]
-- `index.css` @media print actualizado:
-  - Font-family cambiado a sans-serif en `#ticket-print-area`
-  - Anti-aliasing desactivado en `#ticket-print-area div, span`
-  - Reglas para `#ticket-print-area hr` (border rendering en print)
-  - Eliminada seccion `#ticket-print-area pre` (ya no existen `<pre>` tags)
+#### Fondo Ejecutivo Premium
+- Fondo migrado de `bg-slate-50` plano a `bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900` — degradado geometrico oscuro enterprise
+- Tarjeta del formulario: `bg-white/95 shadow-2xl shadow-black/20 ring-1 ring-white/10 backdrop-blur-sm` para efecto cristal sobre fondo oscuro
+- Footer actualizado a `text-slate-400/70` para contraste sobre fondo oscuro
+
+### Tarea 3: Ampliacion del Modal "Resumen del Dia" (Desglose por Producto) [🟢 Completado]
+
+#### Backend (DailySummaryController)
+- Nueva consulta de agregacion: `order_items` JOIN `orders` LEFT JOIN `products`, agrupado por `products.name`, filtrado por `status=completed` y rango del dia
+- Retorna arreglo `product_breakdown` ordenado por `total_revenue` descendente con campos: `product_name`, `quantity_sold`, `total_revenue`
+
+#### Frontend (AppHeader — Dialog Resumen)
+- Dialog expandido de `max-w-md` a `style={{ width: '50vw' }}` con `max-w-4xl` para vista amplia
+- Importado `DataTable` y `Column` de PrimeReact
+- Nueva seccion "Desglose de Ventas por Articulo" con DataTable compacto: columna Producto, Piezas (badge indigo), Ingreso (font-semibold)
+- Scroll vertical con `scrollHeight="250px"` para listas largas
+- Renderizado condicional: solo se muestra si `product_breakdown.length > 0`
+
+### Tarea 4: Exposicion de Flujos de Efectivo en Historial y Detalle [🟢 Ya Existente - Verificado]
+- Las columnas `Recibido` y `Cambio` ya existian en el DataTable de SalesHistoryPage desde la fase 23
+- La seccion `Efectivo Recibido` / `Cambio Devuelto` ya existia en el modal de detalle del pedido
+- No se requirieron cambios adicionales
 
 ### Archivos Modificados en esta Fase
+**Backend (modificados):**
+- `app/Http/Controllers/Sales/DailySummaryController.php` — Agregada consulta product_breakdown con agregacion por producto
+
 **Frontend (modificados):**
-- `src/components/pos/TicketPreview.jsx` — Reescritura completa: sans-serif, `<hr>` nativos, flexbox rows, eliminacion de `<pre>` y constantes monospace
-- `src/index.css` — Print: sans-serif font-family, anti-aliasing disabled en todos los elementos, reglas hr, eliminacion de reglas pre
+- `src/index.css` — @media print: font-weight 400, color #000000 universal, text-shadow none en todo #ticket-print-area
+- `src/components/pos/TicketPreview.jsx` — font-weight 400/500 (era 600/700), colores grises eliminados (#666, #059669, #999 → #000)
+- `src/pages/auth/LoginPage.jsx` — Fondo gradient slate-900/indigo-950, tarjeta frosted glass, Password pt con iconField width 100%
+- `src/components/layout/AppHeader.jsx` — Dialog 50vw/max-w-4xl, DataTable product_breakdown con columnas Producto/Piezas/Ingreso

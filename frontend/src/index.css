@@ -26,6 +26,10 @@ body {
   #ticket-print-area,
   #ticket-print-area * {
     visibility: visible;
+    color: #000000 !important;
+    text-shadow: none !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
   }
 
   #ticket-print-area {
@@ -39,15 +43,11 @@ body {
     box-sizing: border-box;
     font-family: 'Arial', 'Helvetica', 'Segoe UI', sans-serif !important;
     font-size: 12px;
-    line-height: 1.2;
-    font-weight: 600;
-    color: #000;
-    -webkit-font-smoothing: none !important;
-    -moz-osx-font-smoothing: unset !important;
-    font-smooth: never !important;
-    text-rendering: optimizeSpeed !important;
-    -webkit-print-color-adjust: exact;
-    print-color-adjust: exact;
+    line-height: 1.0;
+    font-weight: 400 !important;
+    color: #000000 !important;
+    -webkit-font-smoothing: none;
+    -moz-osx-font-smoothing: unset;
   }
 
   #ticket-print-area .ticket-inner-screen {
@@ -62,21 +62,27 @@ body {
     max-width: none !important;
   }
 
-  #ticket-print-area div,
-  #ticket-print-area span {
+  #ticket-print-area pre {
+    font-family: 'Courier New', Courier, monospace !important;
+    font-size: 12px !important;
+    line-height: 1.1 !important;
+    font-weight: 400 !important;
+    white-space: pre !important;
     overflow: visible !important;
-    font-family: inherit !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    color: #000000 !important;
     -webkit-font-smoothing: none !important;
     -moz-osx-font-smoothing: unset !important;
     font-smooth: never !important;
     text-rendering: optimizeSpeed !important;
   }
 
-  #ticket-print-area hr {
-    border: none !important;
-    margin: 1px 0 !important;
-    padding: 0 !important;
-    height: 0 !important;
+  #ticket-print-area div {
+    overflow: visible !important;
+    margin-top: 0 !important;
+    margin-bottom: 0 !important;
+    color: #000000 !important;
   }
 
   nav, aside, header, footer,
