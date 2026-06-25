@@ -115,6 +115,12 @@ export default function CheckoutModal({ visible, onHide, cart, taxRate = 0.16, o
 
       toast.success('Orden registrada exitosamente.');
 
+      api.post(`/orders/${order.id}/print`).then(() => {
+        toast.success('Ticket enviado a la impresora.');
+      }).catch(() => {
+        toast.warning('No se pudo imprimir directamente. Usa la impresión del navegador.');
+      });
+
       onSuccess?.(order, ticketConfig);
 
       onHide();
