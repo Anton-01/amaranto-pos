@@ -1,17 +1,7 @@
 import { forwardRef } from 'react';
 
-const LINE_WIDTH = 32;
-const SEP_DOUBLE = '='.repeat(LINE_WIDTH);
-const SEP_SINGLE = '-'.repeat(LINE_WIDTH);
-
-function formatMoney(val) {
+function fmt(val) {
   return '$' + parseFloat(val).toFixed(2);
-}
-
-function padLine(left, right) {
-  const gap = LINE_WIDTH - left.length - right.length;
-  if (gap < 1) return left.substring(0, LINE_WIDTH - right.length - 1) + ' ' + right;
-  return left + ' '.repeat(gap) + right;
 }
 
 function truncate(str, max) {
@@ -19,17 +9,37 @@ function truncate(str, max) {
   return str.substring(0, max - 1) + '.';
 }
 
-const monoStyle = {
-  fontFamily: "'Courier New', Courier, monospace",
+const baseFont = {
+  fontFamily: "'Arial', 'Helvetica', 'Segoe UI', sans-serif",
   fontSize: '12px',
-  lineHeight: '1.1',
+  lineHeight: '1.2',
   fontWeight: 600,
   color: '#000',
   WebkitFontSmoothing: 'none',
   MozOsxFontSmoothing: 'unset',
 };
 
-const preStyle = { margin: 0, padding: 0, ...monoStyle };
+const rowStyle = {
+  display: 'flex',
+  justifyContent: 'space-between',
+  alignItems: 'baseline',
+  margin: 0,
+  padding: 0,
+};
+
+const hrSolid = {
+  border: 'none',
+  borderBottom: '2px solid #000',
+  margin: '2px 0',
+  padding: 0,
+};
+
+const hrDashed = {
+  border: 'none',
+  borderBottom: '1px dashed #000',
+  margin: '2px 0',
+  padding: 0,
+};
 
 const TicketPreview = forwardRef(function TicketPreview({ order, ticketConfig, customLegend, taxRate = 0.16 }, ref) {
   if (!ticketConfig) return null;
@@ -53,7 +63,6 @@ const TicketPreview = forwardRef(function TicketPreview({ order, ticketConfig, c
     hour: '2-digit', minute: '2-digit',
   });
 
-  const maxNameLen = LINE_WIDTH - 10;
   const showCashChange = amountReceived != null && parseFloat(amountReceived) > 0;
 
   return (
@@ -67,7 +76,7 @@ const TicketPreview = forwardRef(function TicketPreview({ order, ticketConfig, c
         margin: '0 auto',
         padding: 0,
         backgroundColor: '#fff',
-        ...monoStyle,
+        ...baseFont,
       }}
     >
       <div
@@ -76,60 +85,64 @@ const TicketPreview = forwardRef(function TicketPreview({ order, ticketConfig, c
           boxSizing: 'border-box',
           border: '2px dashed #cbd5e1',
           borderRadius: '8px',
-          padding: '4px',
+          padding: '4px 6px',
           width: '100%',
           overflow: 'hidden',
         }}
       >
         {/* Header */}
-        <div style={{ textAlign: 'center', marginBottom: '1px' }}>
-          <div style={{ fontSize: '12px', fontWeight: 700, lineHeight: '1.1', wordWrap: 'break-word', whiteSpace: 'normal' }}>
+        <div style={{ textAlign: 'center', marginBottom: '2px' }}>
+          <div style={{ fontSize: '13px', fontWeight: 700, lineHeight: '1.2' }}>
             {ticketConfig.business_name}
           </div>
           {ticketConfig.rfc && (
-            <div style={{ fontSize: '10px', lineHeight: '1.1' }}>RFC: {ticketConfig.rfc}</div>
+            <div style={{ fontSize: '11px', lineHeight: '1.2' }}>RFC: {ticketConfig.rfc}</div>
           )}
           {ticketConfig.address && (
-            <div style={{ fontSize: '9px', lineHeight: '1.1', wordWrap: 'break-word', whiteSpace: 'normal' }}>{ticketConfig.address}</div>
+            <div style={{ fontSize: '10px', lineHeight: '1.2', wordWrap: 'break-word' }}>{ticketConfig.address}</div>
           )}
           {ticketConfig.phone && (
-            <div style={{ fontSize: '10px', lineHeight: '1.1' }}>Tel: {ticketConfig.phone}</div>
+            <div style={{ fontSize: '11px', lineHeight: '1.2' }}>Tel: {ticketConfig.phone}</div>
           )}
           {ticketConfig.header_message && (
-            <div style={{ fontSize: '9px', fontStyle: 'italic', lineHeight: '1.1', marginTop: '1px', wordWrap: 'break-word', whiteSpace: 'normal' }}>
+            <div style={{ fontSize: '10px', fontStyle: 'italic', lineHeight: '1.2', marginTop: '1px', wordWrap: 'break-word' }}>
               {ticketConfig.header_message}
             </div>
           )}
         </div>
 
-        <pre style={preStyle}>{SEP_DOUBLE}</pre>
+        <hr style={hrSolid} />
 
         {/* Order info */}
-        <div style={{ margin: '1px 0' }}>
+        <div style={{ margin: '2px 0' }}>
           {orderId && (
-            <pre style={preStyle}>
-              {padLine('Folio:', orderId.substring(0, 8).toUpperCase())}
-            </pre>
+            <div style={rowStyle}>
+              <span>Folio:</span>
+              <span style={{ fontWeight: 700 }}>{orderId.substring(0, 8).toUpperCase()}</span>
+            </div>
           )}
-          <pre style={preStyle}>
-            {padLine('Fecha:', dateStr)}
-          </pre>
-          <pre style={preStyle}>
-            {padLine('Pago:', paymentLabel)}
-          </pre>
+          <div style={rowStyle}>
+            <span>Fecha:</span>
+            <span>{dateStr}</span>
+          </div>
+          <div style={rowStyle}>
+            <span>Pago:</span>
+            <span style={{ fontWeight: 700 }}>{paymentLabel}</span>
+          </div>
         </div>
 
-        <pre style={preStyle}>{SEP_SINGLE}</pre>
+        <hr style={hrDashed} />
 
         {/* Column headers */}
-        <pre style={{ ...preStyle, fontWeight: 700 }}>
-          {padLine('PRODUCTO', 'IMPORTE')}
-        </pre>
+        <div style={{ ...rowStyle, fontWeight: 700, margin: '2px 0' }}>
+          <span style={{ width: '65%' }}>PRODUCTO</span>
+          <span style={{ width: '35%', textAlign: 'right' }}>IMPORTE</span>
+        </div>
 
-        <pre style={preStyle}>{SEP_SINGLE}</pre>
+        <hr style={hrDashed} />
 
         {/* Items */}
-        <div style={{ margin: '1px 0' }}>
+        <div style={{ margin: '2px 0' }}>
           {items.map((item, i) => {
             const productName = item.product?.name || item.product_name || 'Producto';
             const qty = item.quantity;
@@ -138,46 +151,54 @@ const TicketPreview = forwardRef(function TicketPreview({ order, ticketConfig, c
             const finalPrice = parseFloat(item.final_price_at_sale ?? (basePrice * qty - discount));
 
             return (
-              <div key={i} style={{ marginBottom: '1px' }}>
-                <pre style={preStyle}>
-                  {padLine(truncate(productName, maxNameLen), formatMoney(finalPrice))}
-                </pre>
-                <pre style={{ ...preStyle, fontSize: '10px', color: '#666' }}>
-                  {'  ' + qty + ' x ' + formatMoney(basePrice)}
-                  {discount > 0 ? '  -' + formatMoney(discount) : ''}
-                </pre>
+              <div key={i} style={{ marginBottom: '2px' }}>
+                <div style={rowStyle}>
+                  <span style={{ width: '65%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {truncate(productName, 22)}
+                  </span>
+                  <span style={{ width: '35%', textAlign: 'right', fontWeight: 700 }}>{fmt(finalPrice)}</span>
+                </div>
+                <div style={{ fontSize: '10px', color: '#444', paddingLeft: '4px' }}>
+                  {qty} x {fmt(basePrice)}
+                  {discount > 0 && <span style={{ marginLeft: '4px' }}>-{fmt(discount)}</span>}
+                </div>
                 {(item.promotion || item.promotion_name) && (
-                  <pre style={{ ...preStyle, fontSize: '10px', fontStyle: 'italic', color: '#059669' }}>
-                    {'  ' + truncate(item.promotion?.name || item.promotion_name, LINE_WIDTH - 2)}
-                  </pre>
+                  <div style={{ fontSize: '10px', fontStyle: 'italic', color: '#059669', paddingLeft: '4px' }}>
+                    {truncate(item.promotion?.name || item.promotion_name, 28)}
+                  </div>
                 )}
               </div>
             );
           })}
         </div>
 
-        <pre style={preStyle}>{SEP_SINGLE}</pre>
+        <hr style={hrDashed} />
 
         {/* Totals */}
-        <div style={{ margin: '1px 0' }}>
-          <pre style={preStyle}>
-            {padLine('Subtotal:', formatMoney(subtotal))}
-          </pre>
-          <pre style={preStyle}>
-            {padLine(`IVA (${(taxRate * 100).toFixed(0)}%):`, formatMoney(ivaTotal))}
-          </pre>
-          <pre style={{ ...preStyle, fontWeight: 700 }}>
-            {padLine('TOTAL:', formatMoney(total))}
-          </pre>
+        <div style={{ margin: '2px 0' }}>
+          <div style={rowStyle}>
+            <span>Subtotal:</span>
+            <span>{fmt(subtotal)}</span>
+          </div>
+          <div style={rowStyle}>
+            <span>IVA ({(taxRate * 100).toFixed(0)}%):</span>
+            <span>{fmt(ivaTotal)}</span>
+          </div>
+          <div style={{ ...rowStyle, fontWeight: 700, fontSize: '14px', marginTop: '2px' }}>
+            <span>TOTAL:</span>
+            <span>{fmt(total)}</span>
+          </div>
           {showCashChange && (
             <>
-              <pre style={preStyle}>{SEP_SINGLE}</pre>
-              <pre style={preStyle}>
-                {padLine('Recibido:', formatMoney(amountReceived))}
-              </pre>
-              <pre style={{ ...preStyle, fontWeight: 700 }}>
-                {padLine('Cambio:', formatMoney(amountChange))}
-              </pre>
+              <hr style={hrDashed} />
+              <div style={rowStyle}>
+                <span>Recibido:</span>
+                <span>{fmt(amountReceived)}</span>
+              </div>
+              <div style={{ ...rowStyle, fontWeight: 700 }}>
+                <span>Cambio:</span>
+                <span>{fmt(amountChange)}</span>
+              </div>
             </>
           )}
         </div>
@@ -185,23 +206,23 @@ const TicketPreview = forwardRef(function TicketPreview({ order, ticketConfig, c
         {/* Custom legend */}
         {legend && (
           <>
-            <pre style={preStyle}>{SEP_SINGLE}</pre>
-            <div style={{ textAlign: 'center', fontSize: '9px', lineHeight: '1.1', margin: '1px 0', wordWrap: 'break-word', whiteSpace: 'pre-wrap' }}>
+            <hr style={hrDashed} />
+            <div style={{ textAlign: 'center', fontSize: '10px', lineHeight: '1.2', margin: '2px 0', wordWrap: 'break-word', whiteSpace: 'pre-wrap' }}>
               {legend}
             </div>
           </>
         )}
 
-        <pre style={preStyle}>{SEP_DOUBLE}</pre>
+        <hr style={hrSolid} />
 
         {/* Footer */}
-        <div style={{ textAlign: 'center', fontSize: '9px', lineHeight: '1.1' }}>
+        <div style={{ textAlign: 'center', fontSize: '10px', lineHeight: '1.2', marginTop: '2px' }}>
           {ticketConfig.footer_message && (
-            <div style={{ fontStyle: 'italic', marginBottom: '1px', wordWrap: 'break-word', whiteSpace: 'normal' }}>
+            <div style={{ fontStyle: 'italic', marginBottom: '1px', wordWrap: 'break-word' }}>
               {ticketConfig.footer_message}
             </div>
           )}
-          <div style={{ color: '#999' }}>v{ticketConfig.version} - Cronos POS</div>
+          <div style={{ color: '#666' }}>v{ticketConfig.version} - Cronos POS</div>
         </div>
       </div>
     </div>

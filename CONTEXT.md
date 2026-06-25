@@ -1517,3 +1517,47 @@ El contenedor del ticket usaba `width: 48mm` que a 96 DPI equivale a ~181px, per
 - `src/components/pos/TicketPreview.jsx` — Contenedor box-sizing border-box, max-width 240px, overflow hidden en pantalla, overflow visible en print, font sizes ajustados para encuadrado perfecto
 - `src/index.css` — Print: overflow visible forzado en .ticket-inner-screen, white-space pre en pre tags, width/max-width overrides
 - `src/pages/sales/SalesHistoryPage.jsx` — Columnas Recibido/Cambio en DataTable, seccion Efectivo Recibido/Cambio Devuelto en modal detalle
+
+## 24. Migracion a Sans-Serif & Separadores CSS Nativos para Impresion Termica Solida [🟢 Completado]
+
+### Problema Detectado
+Al evaluar la impresion real en la ticketera termica 58mm (Modelo 58-VII-U), el texto se imprimia granulado y tenue. La causa: el navegador aplica anti-aliasing (suavizado de fuentes) a la tipografia Courier New monospace, generando pixeles en escala de grises. La cabeza termica de la impresora opera en modo binario (1-bit: punto encendido o apagado), interpretando esos grises como puntos dispersos en lugar de trazos solidos.
+
+Adicionalmente, los separadores de texto (`'='.repeat(32)`, `'-'.repeat(32)`) no se alineaban correctamente con fuentes de ancho variable, y la estructura `<pre>` ya no era necesaria tras eliminar el layout monospace.
+
+### Solucion Implementada
+
+#### Tarea 1: Cambio de Tipografia [🟢 Completado]
+- **Antes:** `font-family: 'Courier New', Courier, monospace` (serifas finas + anti-aliasing = puntos dispersos)
+- **Despues:** `font-family: 'Arial', 'Helvetica', 'Segoe UI', sans-serif` (trazos gruesos uniformes = quemado solido)
+- Desactivacion estricta de anti-aliasing en componente y CSS print:
+  - `-webkit-font-smoothing: none`
+  - `-moz-osx-font-smoothing: unset`
+  - `font-smooth: never`
+  - `text-rendering: optimizeSpeed`
+
+#### Tarea 2: Separadores CSS Nativos [🟢 Completado]
+- **Antes:** Strings de texto `SEP_DOUBLE = '='.repeat(32)`, `SEP_SINGLE = '-'.repeat(32)` dentro de `<pre>` tags
+- **Despues:** Etiquetas `<hr>` con estilos inline:
+  - Solido: `borderBottom: '2px solid #000'` (encabezado/pie)
+  - Punteado: `borderBottom: '1px dashed #000'` (secciones internas)
+- Eliminados: constantes `LINE_WIDTH`, `padLine()`, `SEP_DOUBLE`, `SEP_SINGLE`, todos los `<pre>` tags
+
+#### Tarea 3: Layout Flexbox para Productos [🟢 Completado]
+- Filas con `display: flex`, `justify-content: space-between`, `align-items: baseline`
+- Columna producto: `width: 65%` con `overflow: hidden`, `text-overflow: ellipsis`
+- Columna precio: `width: 35%`, `text-align: right`, `font-weight: 700`
+- `truncate(productName, 22)` para nombres largos
+- Contenedor: `max-width: 240px` pantalla, `48mm` impresion
+
+#### Tarea 4: CSS Print Actualizado [🟢 Completado]
+- `index.css` @media print actualizado:
+  - Font-family cambiado a sans-serif en `#ticket-print-area`
+  - Anti-aliasing desactivado en `#ticket-print-area div, span`
+  - Reglas para `#ticket-print-area hr` (border rendering en print)
+  - Eliminada seccion `#ticket-print-area pre` (ya no existen `<pre>` tags)
+
+### Archivos Modificados en esta Fase
+**Frontend (modificados):**
+- `src/components/pos/TicketPreview.jsx` — Reescritura completa: sans-serif, `<hr>` nativos, flexbox rows, eliminacion de `<pre>` y constantes monospace
+- `src/index.css` — Print: sans-serif font-family, anti-aliasing disabled en todos los elementos, reglas hr, eliminacion de reglas pre
