@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
 import { useLocation } from 'react-router-dom';
 import { Dialog } from 'primereact/dialog';
+import { DataTable } from 'primereact/datatable';
+import { Column } from 'primereact/column';
 import UserProfileDropdown from './UserProfileDropdown';
 import useOnlineStatus from '../../hooks/useOnlineStatus';
 import api from '../../api/axios';
@@ -152,7 +154,8 @@ export default function AppHeader({ onToggleSidebar }) {
         onHide={() => setShowSalesModal(false)}
         modal
         header={null}
-        className="w-full max-w-md"
+        style={{ width: '50vw' }}
+        className="w-full max-w-4xl"
         pt={{
           mask: { className: 'backdrop-blur-sm bg-black/30' },
           root: { className: 'rounded-2xl border-0 shadow-2xl' },
@@ -216,6 +219,45 @@ export default function AppHeader({ onToggleSidebar }) {
                   <p className="mt-0.5 text-lg font-bold text-slate-900">{dailySummary.order_count}</p>
                 </div>
               </div>
+
+              {dailySummary.product_breakdown && dailySummary.product_breakdown.length > 0 && (
+                <div className="rounded-xl border border-slate-200">
+                  <div className="border-b border-slate-200 px-4 py-3">
+                    <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">Desglose de Ventas por Articulo</p>
+                  </div>
+                  <DataTable
+                    value={dailySummary.product_breakdown}
+                    size="small"
+                    stripedRows
+                    className="text-sm"
+                    scrollable
+                    scrollHeight="250px"
+                    pt={{ wrapper: { className: 'rounded-b-xl' } }}
+                  >
+                    <Column field="product_name" header="Producto" className="text-sm" />
+                    <Column
+                      field="quantity_sold"
+                      header="Piezas"
+                      align="center"
+                      style={{ width: '90px' }}
+                      body={(row) => (
+                        <span className="inline-flex h-6 min-w-6 items-center justify-center rounded-full bg-indigo-100 px-2 text-xs font-semibold text-indigo-700">
+                          {row.quantity_sold}
+                        </span>
+                      )}
+                    />
+                    <Column
+                      field="total_revenue"
+                      header="Ingreso"
+                      align="right"
+                      style={{ width: '120px' }}
+                      body={(row) => (
+                        <span className="text-sm font-semibold text-slate-900">{fmt(row.total_revenue)}</span>
+                      )}
+                    />
+                  </DataTable>
+                </div>
+              )}
             </div>
           ) : (
             <p className="py-8 text-center text-sm text-slate-400">No se pudieron cargar los datos.</p>
