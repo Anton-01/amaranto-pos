@@ -39,6 +39,7 @@
 | Resiliencia Local-First (Offline) | [🟢 Completado] | [🟢 Completado] | Hook useOnlineStatus, buffer LocalStorage, background sync, indicador amber en TopBar |
 | Correos Corporativos Centralizados | [🟢 Completado] | N/A | Master layout Blade, 4 Mailables ShouldQueue (Redis), preview routes local-only |
 | Visualizador In-App Plantillas Email | [🟢 Completado] | [🟢 Completado] | MailPreviewController render HTML, iframe srcDoc aislado, viewport Desktop/Mobile |
+| Motor Impresión Directa ESC/POS | [🟢 Completado y Operativo] | [🟢 Completado y Operativo] | mike42/escpos-php, DTO/Builder/Service SOLID, 58mm/32chars, QR nativo, multi-conector (network/file/windows) |
 
 ## 3. Detalle del Modulo Completado: Migraciones & Modelos Base
 
@@ -1571,3 +1572,110 @@ El contenedor del ticket usaba `width: 48mm` que a 96 DPI equivale a ~181px, per
 - `src/components/pos/TicketPreview.jsx` — font-weight 400/500 (era 600/700), colores grises eliminados (#666, #059669, #999 → #000)
 - `src/pages/auth/LoginPage.jsx` — Fondo gradient slate-900/indigo-950, tarjeta frosted glass, Password pt con iconField width 100%
 - `src/components/layout/AppHeader.jsx` — Dialog 50vw/max-w-4xl, DataTable product_breakdown con columnas Producto/Piezas/Ingreso
+
+---
+
+## 25. Motor de Impresión Directa ESC/POS (Ticketera Térmica 58mm) [🟢 COMPLETADO Y OPERATIVO]
+
+### Arquitectura Modular SOLID
+
+#### 1. TicketDTO (Data Transfer Object Inmutable)
+- **Ubicación**: `App\DTOs\TicketDTO`
+- **Clase auxiliar**: `App\DTOs\TicketItemDTO`
+- Propiedades públicas tipadas `readonly`: empresa, RFC, dirección, teléfono, mensajes cabecera/pie, folio, fecha/hora, método de pago, operador, colección de items (`TicketItemDTO[]`), subtotal neto, IVA monto, IVA label, total público, recibido, cambio, leyenda personalizada, versión, QR content
+- Inmutable por diseño (`final readonly class`)
+
+#### 2. TicketBuilder (Patrón Constructor + Formateo Estadístico)
+- **Ubicación**: `App\Builders\TicketBuilder`
+- **Constante**: `LINE_WIDTH = 32` caracteres (restricción física de 384 puntos / Font A)
+- **Métodos de formateo**:
+  - `padLine(left, right)` — Alinea texto izquierda-derecha a exactamente 32 caracteres, trunca con `..` si excede
+  - `formatProductLine(TicketItemDTO)` — Formatea línea `Cant x Producto... $Total` en exactamente 32 chars
+  - `separator(char)` — Genera línea divisoria de exactamente 32 caracteres
+  - `centerText(text)` — Centra texto dentro de 32 caracteres
+  - `wrapText(text, maxWidth)` — Divide texto largo en líneas que respetan el ancho máximo
+  - `formatMoney(float)` — Formato moneda MXN con separador de miles
+  - `buildTextLines(TicketDTO)` — Genera representación completa del ticket como array de líneas <= 32 chars
+- **Mapeo de datos**: Recibe modelos `Order` + `TicketConfig`, lee `tax_rate` de `GlobalSetting`, construye `TicketDTO` con cálculo inverso de IVA
+
+#### 3. PrinterService (Driver de Hardware ESC/POS)
+- **Ubicación**: `App\Services\PrinterService`
+- **Dependencia**: `mike42/escpos-php` ^4.0
+- **Modos de conexión** (configurables via `.env`):
+  - `NetworkPrintConnector` — Para impresoras en red (default: 192.168.1.100:9100)
+  - `FilePrintConnector` — Para conexión directa USB (/dev/usb/lp0)
+  - `WindowsPrintConnector` — Para entornos Windows (SMB share)
+- **Comandos binarios ESC/POS**:
+  - CodePage CP858 para caracteres españoles (ñ, acentos)
+  - `setJustification(JUSTIFY_CENTER)` para encabezados
+  - `setEmphasis(true)` para TOTAL y Cambio
+  - Líneas divisorias de 32 caracteres exactos (`=` y `-`)
+  - QR Code nativo al final (`qrCode()` con nivel M, tamaño 5)
+  - Corte físico de papel (`cut()`)
+  - Encoding UTF-8 → CP858 via `iconv()` con TRANSLIT
+
+#### 4. PrintTicketController (Punto de Entrada API)
+- **Ubicación**: `App\Http\Controllers\Admin\PrintTicketController`
+- **Endpoint**: `POST /api/orders/{order}/print` (Protegido por Sanctum + user.active)
+- **Lógica**: Invokable controller, carga relaciones de la orden, construye DTO via `TicketBuilder`, despacha al `PrinterService` en bloque try-catch
+- **Respuestas JSON homogéneas**:
+  - `status: success` — Ticket enviado correctamente
+  - `ERR_PRINT_NO_TICKET_CONFIG` (422) — Orden sin configuración de ticket
+  - `ERR_PRINT_HARDWARE_FAILURE` (503) — Impresora desconectada/error de hardware (incluye detalle en modo debug)
+
+#### 5. Configuración de Entorno e Infraestructura
+- **Config file**: `config/printer.php` — Centraliza variables de conexión
+- **Variables .env**:
+  - `PRINTER_CONNECTION_TYPE=network` (opciones: network, file, windows)
+  - `PRINTER_IP_ADDRESS=192.168.1.100`
+  - `PRINTER_PORT=9100`
+  - `PRINTER_FILE_PATH=/dev/usb/lp0`
+  - `PRINTER_WINDOWS_SHARE=smb://localhost/printer`
+- **Docker**: Variables inyectadas en `docker-compose.yml` bajo el servicio backend
+
+#### 6. Integración Frontend (React + Axios)
+- **CheckoutModal**: Tras confirmar cobro exitoso, dispara `axios.post(/api/orders/${orderId}/print)` de forma asíncrona. Muestra toast de éxito o warning si la impresora no responde. Mantiene fallback a `window.print()` como respaldo.
+- **SalesHistoryPage**: Botón dual de reimpresión:
+  - "Ticketera" (emerald, pi-server) — Envía a impresora ESC/POS directamente via API
+  - "Navegador" (indigo, pi-print) — Impresión CSS tradicional via `window.print()`
+  - Loading state con spinner durante impresión directa
+
+#### 7. Prueba Unitaria (PHPUnit)
+- **Archivo**: `tests/Unit/TicketBuilderTest.php`
+- **10 tests**:
+  - `test_pad_line_produces_exactly_32_characters` — Verifica alineación exacta
+  - `test_pad_line_truncates_long_left_text` — Verifica truncamiento con `..`
+  - `test_separator_is_exactly_32_characters` — Verifica separadores `-` y `=`
+  - `test_format_product_line_short_name` — Formato de producto corto
+  - `test_format_product_line_long_name_truncated` — Truncamiento de nombre largo
+  - `test_inverse_tax_calculation` — Fórmula inversa IVA ($90 → $77.59 + $12.41)
+  - `test_inverse_tax_with_multiple_items` — IVA inverso con múltiples items
+  - `test_build_text_lines_all_within_32_chars` — Certificación integral: ticket completo con todas las líneas <= 32 chars
+  - `test_center_text` — Centrado de texto
+  - `test_wrap_text_splits_long_strings` — División de texto largo
+  - `test_format_money` — Formato moneda MXN
+
+### Dependencia Registrada
+- `mike42/escpos-php` ^4.0 agregado a `composer.json` en `require`
+
+### Archivos Creados en esta Fase
+**Backend (nuevos):**
+- `app/DTOs/TicketDTO.php` — DTO inmutable del ticket
+- `app/DTOs/TicketItemDTO.php` — DTO inmutable de item de ticket
+- `app/Builders/TicketBuilder.php` — Constructor y formateador de ticket (32 chars)
+- `app/Services/PrinterService.php` — Driver ESC/POS con soporte multi-conector
+- `app/Http/Controllers/Admin/PrintTicketController.php` — Endpoint de impresión
+- `config/printer.php` — Configuración centralizada de impresora
+- `tests/Unit/TicketBuilderTest.php` — 10 tests unitarios
+
+**Backend (modificados):**
+- `composer.json` — Agregado `mike42/escpos-php` ^4.0
+- `routes/api.php` — Ruta POST /api/orders/{order}/print
+- `.env.example` — Variables PRINTER_* para configuración de impresora
+
+**Frontend (modificados):**
+- `src/components/pos/CheckoutModal.jsx` — Disparo asíncrono de impresión ESC/POS post-cobro
+- `src/pages/sales/SalesHistoryPage.jsx` — Botón dual Ticketera/Navegador para reimpresión
+
+**Infraestructura (modificados):**
+- `docker-compose.yml` — Variables de entorno PRINTER_* en servicio backend

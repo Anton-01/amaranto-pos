@@ -167,6 +167,20 @@ export default function SalesHistoryPage() {
     setTimeout(() => window.print(), 350);
   };
 
+  const [directPrinting, setDirectPrinting] = useState(false);
+
+  const handleDirectPrint = async (orderId) => {
+    setDirectPrinting(true);
+    try {
+      await api.post(`/orders/${orderId}/print`);
+      toast.success('Ticket enviado a la impresora.');
+    } catch {
+      toast.error('No se pudo imprimir. Verifique la conexión de la impresora.');
+    } finally {
+      setDirectPrinting(false);
+    }
+  };
+
   const openCancel = (order) => {
     setCancelOrder(order);
     setCancelPassword('');
@@ -600,13 +614,28 @@ export default function SalesHistoryPage() {
         <div className="p-6">
           <div className="mb-4 flex items-center justify-between print:hidden">
             <h3 className="text-lg font-semibold text-slate-900">Reimprimir Ticket</h3>
-            <Button
-              label="Imprimir"
-              icon="pi pi-print"
-              onClick={handlePrint}
-              className="rounded-lg bg-indigo-600 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-500"
-              pt={{ root: { className: 'border-0' } }}
-            />
+            <div className="flex gap-2">
+              <Button
+                label="Ticketera"
+                icon="pi pi-server"
+                onClick={() => handleDirectPrint(printOrder.id)}
+                loading={directPrinting}
+                disabled={directPrinting}
+                className="cursor-pointer rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-500"
+                pt={{ root: { className: 'border-0' } }}
+                tooltip="Imprimir directo a impresora térmica ESC/POS"
+                tooltipOptions={{ position: 'top' }}
+              />
+              <Button
+                label="Navegador"
+                icon="pi pi-print"
+                onClick={handlePrint}
+                className="cursor-pointer rounded-lg bg-indigo-600 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-500"
+                pt={{ root: { className: 'border-0' } }}
+                tooltip="Imprimir desde el navegador"
+                tooltipOptions={{ position: 'top' }}
+              />
+            </div>
           </div>
           {printOrder && printTicketConfig && (
             <TicketPreview order={printOrder} ticketConfig={printTicketConfig} taxRate={taxRate} />

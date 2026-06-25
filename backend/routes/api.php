@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\Admin\MailPreviewController;
+use App\Http\Controllers\Admin\PrintTicketController;
 use App\Http\Controllers\Admin\RoleController;
 use App\Http\Controllers\Admin\SystemSettingsController;
 use App\Http\Controllers\Admin\TrashController;
@@ -78,6 +79,7 @@ Route::middleware(['auth:sanctum', 'user.active'])->group(function () {
     Route::post('orders', [OrderController::class, 'store']);
     Route::get('orders/{order}', [OrderController::class, 'show']);
     Route::post('orders/{order}/cancel', [OrderController::class, 'cancel']);
+    Route::post('orders/{order}/print', PrintTicketController::class);
 
     Route::get('tax-rate', function () {
         $setting = \App\Models\GlobalSetting::where('key', 'tax_rate')->first();
