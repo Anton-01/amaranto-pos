@@ -41,7 +41,7 @@ body {
     margin: 0 !important;
     padding: 0 !important;
     box-sizing: border-box;
-    font-family: 'Courier New', Courier, monospace;
+    font-family: 'Arial', 'Helvetica', 'Segoe UI', sans-serif !important;
     font-size: 12px;
     line-height: 1.0;
     font-weight: 400 !important;
@@ -73,6 +73,9 @@ body {
     padding: 0 !important;
     color: #000000 !important;
     -webkit-font-smoothing: none !important;
+    -moz-osx-font-smoothing: unset !important;
+    font-smooth: never !important;
+    text-rendering: optimizeSpeed !important;
   }
 
   #ticket-print-area div {
