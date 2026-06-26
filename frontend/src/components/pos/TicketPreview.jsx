@@ -41,6 +41,36 @@ const hrDashed = {
   padding: 0,
 };
 
+const LINE_WIDTH = 32;
+const maxNameLen = LINE_WIDTH - 10;
+const SEP_SINGLE = '-'.repeat(LINE_WIDTH);
+
+const preStyle = {
+  fontFamily: "'Courier New', Courier, monospace",
+  fontSize: '12px',
+  lineHeight: '1.1',
+  fontWeight: 400,
+  color: '#000',
+  margin: 0,
+  padding: 0,
+  whiteSpace: 'pre',
+  overflow: 'hidden',
+};
+
+function padLine(left, right) {
+  const rightLen = right.length;
+  const maxLeft = LINE_WIDTH - rightLen - 1;
+  if (left.length > maxLeft) {
+    left = left.substring(0, maxLeft - 2) + '..';
+  }
+  const spaces = LINE_WIDTH - left.length - rightLen;
+  return left + ' '.repeat(Math.max(spaces, 1)) + right;
+}
+
+function formatMoney(val) {
+  return '$' + parseFloat(val).toFixed(2);
+}
+
 const TicketPreview = forwardRef(function TicketPreview({ order, ticketConfig, customLegend, taxRate = 0.16 }, ref) {
   if (!ticketConfig) return null;
 
