@@ -115,6 +115,13 @@ class PrinterService
         $printer->setJustification(Printer::JUSTIFY_LEFT);
 
         $printer->text($this->encode($this->builder->separator('-')) . "\n");
+
+        if ($dto->descuentoTotal) {
+            $printer->setEmphasis(true);
+            $printer->text($this->encode($this->builder->padLine('Descuento:', '-' . $dto->descuentoTotal)) . "\n");
+            $printer->setEmphasis(false);
+        }
+
         $printer->text($this->encode($this->builder->padLine('Subtotal:', $dto->subtotalNeto)) . "\n");
         $printer->text($this->encode($this->builder->padLine($dto->ivaLabel . ':', $dto->ivaMonto)) . "\n");
         $printer->text($this->encode($this->builder->separator('=')) . "\n");

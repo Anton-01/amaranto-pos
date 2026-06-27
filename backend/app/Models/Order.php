@@ -15,6 +15,10 @@ class Order extends Model
         'cash_register_id',
         'ticket_config_id',
         'payment_method_id',
+        'promotion_id',
+        'discount_type',
+        'discount_value',
+        'discount_total',
         'subtotal',
         'iva_total',
         'total',
@@ -33,6 +37,8 @@ class Order extends Model
             'subtotal' => 'decimal:2',
             'iva_total' => 'decimal:2',
             'total' => 'decimal:2',
+            'discount_value' => 'decimal:2',
+            'discount_total' => 'decimal:2',
             'amount_received' => 'decimal:2',
             'amount_change' => 'decimal:2',
             'canceled_at' => 'datetime',
@@ -52,6 +58,11 @@ class Order extends Model
     public function paymentMethod(): BelongsTo
     {
         return $this->belongsTo(PaymentMethod::class);
+    }
+
+    public function promotion(): BelongsTo
+    {
+        return $this->belongsTo(Promotion::class);
     }
 
     public function canceledByUser(): BelongsTo

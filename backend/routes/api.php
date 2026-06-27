@@ -21,6 +21,7 @@ use App\Http\Controllers\Logistics\StockMovementController;
 use App\Http\Controllers\Profile\NotificationPreferenceController;
 use App\Http\Controllers\Profile\ProfileController;
 use App\Http\Controllers\Promotion\PromotionController;
+use App\Http\Controllers\Promotion\PromotionSearchController;
 use App\Http\Controllers\Sales\DailySummaryController;
 use App\Http\Controllers\Sales\OrderController;
 use App\Http\Controllers\Sales\SalesExportController;
@@ -54,6 +55,7 @@ Route::middleware(['auth:sanctum', 'user.active'])->group(function () {
     Route::post('products/{product}/image', [ProductImageController::class, 'upload']);
     Route::delete('products/{product}/image', [ProductImageController::class, 'destroy']);
 
+    Route::get('promotions/search', PromotionSearchController::class);
     Route::get('promotions/active', [PromotionController::class, 'active']);
     Route::get('promotions', [PromotionController::class, 'index']);
     Route::get('promotions/{promotion}', [PromotionController::class, 'show']);

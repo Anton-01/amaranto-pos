@@ -25,6 +25,7 @@ final readonly class TicketDTO
         public string $totalPublico,
         public ?string $recibido,
         public ?string $cambio,
+        public ?string $descuentoTotal,
         public ?string $leyendaPersonalizada,
         public string $mensajePie,
         public int $version,

@@ -78,6 +78,7 @@ const TicketPreview = forwardRef(function TicketPreview({ order, ticketConfig, c
   const subtotal = order?.subtotal ?? 0;
   const ivaTotal = order?.iva_total ?? 0;
   const total = order?.total ?? 0;
+  const discountTotal = parseFloat(order?.discount_total ?? 0);
   const amountReceived = order?.amount_received ?? null;
   const amountChange = order?.amount_change ?? null;
   const paymentMethod = order?.payment_method;
@@ -202,6 +203,11 @@ const TicketPreview = forwardRef(function TicketPreview({ order, ticketConfig, c
 
         {/* Totals */}
         <div style={{ margin: '1px 0' }}>
+          {discountTotal > 0 && (
+            <pre style={{ ...preStyle, fontWeight: 500 }}>
+              {padLine('Descuento:', '-' + formatMoney(discountTotal))}
+            </pre>
+          )}
           <pre style={preStyle}>
             {padLine('Subtotal:', formatMoney(subtotal))}
           </pre>

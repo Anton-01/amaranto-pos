@@ -74,6 +74,7 @@ class AnalyticsController extends Controller
                 DB::raw('COALESCE(SUM(subtotal), 0) as net_income'),
                 DB::raw('COALESCE(SUM(iva_total), 0) as total_tax'),
                 DB::raw('COALESCE(SUM(total), 0) as gross_income'),
+                DB::raw('COALESCE(SUM(discount_total), 0) as total_discounts'),
                 DB::raw('COUNT(*) as order_count')
             )
             ->where('status', 'completed')
@@ -83,6 +84,7 @@ class AnalyticsController extends Controller
         $netIncome = round((float) $salesAgg->net_income, 2);
         $grossIncome = round((float) $salesAgg->gross_income, 2);
         $totalTax = round((float) $salesAgg->total_tax, 2);
+        $totalDiscounts = round((float) $salesAgg->total_discounts, 2);
 
         $investmentFund = round($netIncome * ($investmentPct / 100), 2);
         $netProfit = round($netIncome * ($profitPct / 100), 2);
@@ -115,6 +117,7 @@ class AnalyticsController extends Controller
                 'gross_income' => $grossIncome,
                 'total_tax' => $totalTax,
                 'net_income' => $netIncome,
+                'total_discounts' => $totalDiscounts,
                 'order_count' => (int) $salesAgg->order_count,
                 'investment_fund' => $investmentFund,
                 'net_profit' => $netProfit,
