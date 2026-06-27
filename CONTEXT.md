@@ -1980,3 +1980,26 @@ Ejecuta `schedule:run` cada minuto dentro del contenedor del backend para tareas
 
 **Infraestructura (nuevos):**
 - `infrastructure/cronos-pos.conf` — Nginx proxy inverso del host con HTTPS + WSS
+
+---
+
+## 29. Reparacion del Build de Produccion (COPY Context Alignment) [🟢 Completado]
+
+### Problema Diagnosticado
+El `docker-compose.prod.yml` define `context: .` (raiz del monorepo), pero el Stage 1 del `backend/Dockerfile.prod` usaba `COPY composer.json composer.lock ./` sin prefijo, buscando en la raiz donde no existen. Error: `"/composer.lock": not found` en la capa 11.
+
+### Correccion Aplicada
+
+#### backend/Dockerfile.prod (Stage 1)
+- Linea 11 corregida de `COPY composer.json composer.lock ./` a `COPY backend/composer.json backend/composer.lock ./`
+- Todas las instrucciones COPY ya usaban prefijo `backend/` (lineas 49, 53, 60) excepto la del Stage 1
+
+#### .dockerignore (Raiz — Nuevo)
+- Creado archivo `.dockerignore` en la raiz del monorepo (el contexto de build real)
+- Excluye: `.git`, IDE configs, documentacion, `backend/vendor/`, `frontend/node_modules/`, `frontend/dist/`, archivos `.env`, tests
+- Verificado que NO excluye: `composer.json`, `composer.lock`, `package.json`, `package-lock.json`, codigo fuente, configs de produccion
+
+### Validacion de Integridad
+- 11 instrucciones COPY verificadas contra el filesystem: todas resuelven correctamente
+- 19 archivos criticos de build verificados contra `.dockerignore`: ninguno excluido
+- Ambos Dockerfiles (backend + frontend) alineados con `context: .` del compose

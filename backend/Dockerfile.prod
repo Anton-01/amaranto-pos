@@ -1,6 +1,7 @@
 # ==============================================================
 # Cronos POS — Backend Production Dockerfile
 # Multi-stage build: PHP 8.3-FPM Alpine + Composer optimized
+# Build context: monorepo root (.)
 # ==============================================================
 
 # ---- Stage 1: Composer dependencies ----
@@ -8,7 +9,7 @@ FROM composer:2 AS vendor
 
 WORKDIR /app
 
-COPY composer.json composer.lock ./
+COPY backend/composer.json backend/composer.lock ./
 
 RUN composer install \
     --no-dev \

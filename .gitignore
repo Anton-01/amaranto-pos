@@ -13,6 +13,9 @@ Thumbs.db
 .docker/
 *.log
 
+### --- PRODUCTION SECRETS ---
+.env.production
+
 ### --- BACKEND (LARAVEL) ---
 backend/.env
 backend/bootstrap/cache/*.php

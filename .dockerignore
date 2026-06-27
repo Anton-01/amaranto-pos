@@ -1,0 +1,52 @@
+# ==============================================================
+# Cronos POS — Root .dockerignore (contexto de build: .)
+# ==============================================================
+
+# Git
+.git
+.gitignore
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Documentation (no needed in images)
+CONTEXT.md
+DEPLOY_PRODUCTION.md
+SETUP_LOCAL.md
+*.md
+!backend/README.md
+
+# Infrastructure configs (host-only)
+infrastructure/
+
+# Environment files (injected via env_file/env)
+.env
+.env.*
+!.env.example
+
+# Docker compose files (not needed inside containers)
+docker-compose*.yml
+
+# Backend exclusions
+backend/vendor/
+backend/node_modules/
+backend/storage/logs/*.log
+backend/storage/framework/cache/data/*
+backend/storage/framework/sessions/*
+backend/storage/framework/views/*
+backend/.env
+backend/.phpunit.result.cache
+backend/tests/
+
+# Frontend exclusions
+frontend/node_modules/
+frontend/dist/
+frontend/.env
+frontend/.env.local
+
+# OS files
+.DS_Store
+Thumbs.db
