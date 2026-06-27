@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Admin;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\User\StoreUserRequest;
 use App\Mail\UserPasswordResetMail;
+use App\Mail\UserWelcomeMail;
 use App\Models\Role;
 use App\Models\User;
 use Illuminate\Http\JsonResponse;
@@ -12,6 +13,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\URL;
+use Illuminate\Support\Str;
 
 class UserController extends Controller
 {
@@ -98,12 +100,15 @@ class UserController extends Controller
 
     public function store(StoreUserRequest $request): JsonResponse
     {
-        $user = DB::transaction(function () use ($request) {
+        $temporaryPassword = Str::random(12);
+
+        $user = DB::transaction(function () use ($request, $temporaryPassword) {
             $user = User::create([
                 'name' => $request->name,
                 'email' => $request->email,
-                'password' => $request->password,
+                'password' => $temporaryPassword,
                 'status' => 'active',
+                'password_restored_at' => now(),
             ]);
 
             $role = Role::where('name', $request->role)->firstOrFail();
@@ -114,10 +119,12 @@ class UserController extends Controller
 
         $user->load('roles');
 
+        Mail::to($user->email)->queue(new UserWelcomeMail($user, $temporaryPassword));
+
         return response()->json([
             'status' => 'success',
             'data' => $user,
-            'metadata' => ['message' => 'Usuario creado exitosamente.'],
+            'metadata' => ['message' => 'Usuario creado exitosamente. Se ha enviado un correo de bienvenida con las credenciales de acceso.'],
         ], 201);
     }
 

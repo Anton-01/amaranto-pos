@@ -38,7 +38,7 @@ const roleOptions = [
   { label: 'Vendor', value: 'vendor' },
 ];
 
-const emptyForm = { name: '', email: '', password: '', role: null };
+const emptyForm = { name: '', email: '', role: null };
 
 function formatDate(d) {
   if (!d) return '—';
@@ -580,7 +580,7 @@ export default function UsersPage() {
         <form onSubmit={handleCreateUser} className="p-6">
           <div className="mb-5">
             <h3 className="text-lg font-semibold text-slate-900">Nuevo Usuario</h3>
-            <p className="text-xs text-slate-500">El usuario podra iniciar sesion inmediatamente.</p>
+            <p className="text-xs text-slate-500">Se generara una contrasena segura automaticamente y se enviara al correo del usuario.</p>
           </div>
           <div className="space-y-4">
             <div>
@@ -595,14 +595,13 @@ export default function UsersPage() {
               {fieldErrors.email && <p className="mt-1 text-xs text-rose-500">{fieldErrors.email}</p>}
             </div>
             <div>
-              <label className="mb-1.5 block text-sm font-medium text-slate-700">Contraseña *</label>
-              <InputText type="password" value={formData.password} onChange={(e) => set('password', e.target.value)} disabled={saving}
-                className="w-full rounded-lg border-slate-200 px-3 py-2.5 text-sm" pt={{ root: { className: 'w-full' } }} />
-            </div>
-            <div>
               <label className="mb-1.5 block text-sm font-medium text-slate-700">Rol *</label>
               <Dropdown value={formData.role} options={roleOptions} onChange={(e) => set('role', e.value)} placeholder="Seleccionar rol" disabled={saving}
                 className="w-full text-sm" pt={{ root: { className: 'w-full' } }} />
+            </div>
+            <div className="rounded-lg bg-blue-50 border border-blue-200 px-4 py-3 text-xs text-blue-800">
+              <i className="pi pi-info-circle mr-1" />
+              La contrasena sera generada por el sistema y enviada al correo institucional del usuario.
             </div>
           </div>
           <div className="mt-5 flex gap-3">

@@ -7,6 +7,7 @@ use App\Mail\CashRegisterClosingReportMail;
 use App\Mail\LowStockAlertMail;
 use App\Mail\PettyCashWithdrawalMail;
 use App\Mail\UserPasswordResetMail;
+use App\Mail\UserWelcomeMail;
 use App\Models\PettyCashTransaction;
 use App\Models\User;
 use Illuminate\Http\Response;
@@ -18,6 +19,7 @@ class MailPreviewController extends Controller
         'low-stock',
         'petty-cash',
         'day-closing',
+        'welcome',
     ];
 
     public function index()
@@ -31,6 +33,7 @@ class MailPreviewController extends Controller
                     'low-stock' => 'Alerta de Stock Critico',
                     'petty-cash' => 'Retiro de Caja Chica',
                     'day-closing' => 'Cierre de Caja Diario',
+                    'welcome' => 'Bienvenida de Usuario',
                 },
             ])->values(),
         ]);
@@ -43,6 +46,7 @@ class MailPreviewController extends Controller
             'low-stock' => $this->buildLowStock(),
             'petty-cash' => $this->buildPettyCash(),
             'day-closing' => $this->buildDayClosing(),
+            'welcome' => $this->buildWelcome(),
             default => abort(404, 'Plantilla no encontrada.'),
         };
 
@@ -87,6 +91,13 @@ class MailPreviewController extends Controller
         }
 
         return new PettyCashWithdrawalMail($transaction);
+    }
+
+    private function buildWelcome(): UserWelcomeMail
+    {
+        $user = User::first() ?? new User(['name' => 'Ana Garcia', 'email' => 'ana.garcia@cronos.pos']);
+
+        return new UserWelcomeMail($user, 'Xk9mPq2wR4tB');
     }
 
     private function buildDayClosing(): CashRegisterClosingReportMail

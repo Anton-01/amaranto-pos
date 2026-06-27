@@ -1,11 +1,21 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { InputText } from 'primereact/inputtext';
+import { InputMask } from 'primereact/inputmask';
+import { Dropdown } from 'primereact/dropdown';
+import { Slider } from 'primereact/slider';
+import { Checkbox } from 'primereact/checkbox';
 import { Button } from 'primereact/button';
 import { Tag } from 'primereact/tag';
 import { toast } from 'sonner';
 import api from '../../api/axios';
 import { useAuth } from '../../context/AuthContext';
 import AppLayout from '../../components/layout/AppLayout';
+
+const countryOptions = [
+  { label: 'Mexico (+52)', value: '+52', mask: '(999) 999-9999' },
+  { label: 'USA (+1)', value: '+1', mask: '(999) 999-9999' },
+];
 
 function parseUA(ua) {
   if (!ua) return 'Desconocido';
@@ -17,18 +27,42 @@ function parseUA(ua) {
 }
 
 function formatDate(d) {
-  if (!d) return '—';
+  if (!d) return '--';
   return new Date(d).toLocaleString('es-MX', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
+function generatePassword(length, options) {
+  const chars = {
+    upper: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ',
+    lower: 'abcdefghijklmnopqrstuvwxyz',
+    numbers: '0123456789',
+    symbols: '@#$%&*!?_-+=',
+  };
+  let pool = '';
+  if (options.upper) pool += chars.upper;
+  if (options.lower) pool += chars.lower;
+  if (options.numbers) pool += chars.numbers;
+  if (options.symbols) pool += chars.symbols;
+  if (!pool) pool = chars.lower + chars.numbers;
+  let result = '';
+  const array = new Uint32Array(length);
+  crypto.getRandomValues(array);
+  for (let i = 0; i < length; i++) {
+    result += pool[array[i] % pool.length];
+  }
+  return result;
+}
+
 export default function ProfilePage() {
-  const { user, fetchUser } = useAuth();
+  const { user, fetchUser, logout } = useAuth();
+  const navigate = useNavigate();
   const [profile, setProfile] = useState(null);
   const [sessions, setSessions] = useState([]);
   const [loading, setLoading] = useState(true);
 
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
+  const [phoneCountryCode, setPhoneCountryCode] = useState('+52');
   const [savingProfile, setSavingProfile] = useState(false);
 
   const [currentPassword, setCurrentPassword] = useState('');
@@ -36,6 +70,10 @@ export default function ProfilePage() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [savingPassword, setSavingPassword] = useState(false);
   const [passwordError, setPasswordError] = useState('');
+
+  const [genLength, setGenLength] = useState(16);
+  const [genOptions, setGenOptions] = useState({ upper: true, lower: true, numbers: true, symbols: true });
+  const [generatedPassword, setGeneratedPassword] = useState('');
 
   const fetchProfile = useCallback(async () => {
     setLoading(true);
@@ -48,6 +86,7 @@ export default function ProfilePage() {
       setProfile(p);
       setName(p.name || '');
       setPhone(p.phone || '');
+      setPhoneCountryCode(p.phone_country_code || '+52');
       setSessions(sessionsRes.data.data);
     } catch {
       toast.error('Error al cargar perfil.');
@@ -58,11 +97,15 @@ export default function ProfilePage() {
 
   useEffect(() => { fetchProfile(); }, [fetchProfile]);
 
+  const selectedCountry = useMemo(() =>
+    countryOptions.find(c => c.value === phoneCountryCode) || countryOptions[0],
+  [phoneCountryCode]);
+
   const handleUpdateProfile = async (e) => {
     e.preventDefault();
     setSavingProfile(true);
     try {
-      await api.put('/profile', { name, phone });
+      await api.put('/profile', { name, phone, phone_country_code: phoneCountryCode });
       toast.success('Perfil actualizado.');
       fetchUser();
     } catch {
@@ -76,7 +119,7 @@ export default function ProfilePage() {
     e.preventDefault();
     setPasswordError('');
     if (newPassword !== confirmPassword) {
-      setPasswordError('Las contraseñas no coinciden.');
+      setPasswordError('Las contrasenas no coinciden.');
       return;
     }
     setSavingPassword(true);
@@ -86,20 +129,24 @@ export default function ProfilePage() {
         password: newPassword,
         password_confirmation: confirmPassword,
       });
-      toast.success('Contraseña actualizada.');
+      toast.success('Contrasena actualizada. Redirigiendo al login...');
       setCurrentPassword('');
       setNewPassword('');
       setConfirmPassword('');
+      setTimeout(async () => {
+        await logout();
+        navigate('/login');
+      }, 1500);
     } catch (err) {
       const code = err.response?.data?.code;
       if (code === 'ERR_PROFILE_WRONG_PASSWORD') {
-        setPasswordError('La contraseña actual es incorrecta.');
+        setPasswordError('La contrasena actual es incorrecta.');
       } else {
         const errors = err.response?.data?.errors;
         if (errors) {
           setPasswordError(Object.values(errors).flat()[0]);
         } else {
-          toast.error('Error al cambiar contraseña.');
+          toast.error('Error al cambiar contrasena.');
         }
       }
     } finally {
@@ -110,11 +157,22 @@ export default function ProfilePage() {
   const handleRevokeSession = async (sessionId) => {
     try {
       await api.post(`/profile/sessions/${sessionId}/revoke`);
-      toast.success('Sesión revocada.');
+      toast.success('Sesion revocada.');
       fetchProfile();
     } catch {
-      toast.error('Error al revocar sesión.');
+      toast.error('Error al revocar sesion.');
     }
+  };
+
+  const handleGenerate = () => {
+    setGeneratedPassword(generatePassword(genLength, genOptions));
+  };
+
+  const handleApplyGenerated = () => {
+    if (!generatedPassword) { toast.warning('Genera una contrasena primero.'); return; }
+    setNewPassword(generatedPassword);
+    setConfirmPassword(generatedPassword);
+    toast.success('Contrasena aplicada a los campos del formulario.');
   };
 
   const role = profile?.roles?.[0] || user?.roles?.[0] || 'vendor';
@@ -165,8 +223,25 @@ export default function ProfilePage() {
             </div>
             <div>
               <label className="mb-1.5 block text-sm font-medium text-slate-700">Telefono</label>
-              <InputText value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="Ej: 55-1234-5678" disabled={savingProfile}
-                className="w-full rounded-lg border-slate-200 px-3 py-2.5 text-sm" pt={{ root: { className: 'w-full' } }} />
+              <div className="flex gap-2">
+                <Dropdown
+                  value={phoneCountryCode}
+                  options={countryOptions}
+                  onChange={(e) => { setPhoneCountryCode(e.value); setPhone(''); }}
+                  disabled={savingProfile}
+                  className="shrink-0 text-sm"
+                  pt={{ root: { className: 'w-40' } }}
+                />
+                <InputMask
+                  value={phone}
+                  onChange={(e) => setPhone(e.target.value)}
+                  mask={selectedCountry.mask}
+                  placeholder={selectedCountry.mask.replace(/9/g, '_')}
+                  disabled={savingProfile}
+                  className="w-full rounded-lg border-slate-200 px-3 py-2.5 text-sm"
+                  pt={{ root: { className: 'w-full' } }}
+                />
+              </div>
             </div>
             <Button
               type="submit"
@@ -184,24 +259,24 @@ export default function ProfilePage() {
           <h2 className="mb-5 text-base font-semibold text-slate-900">Seguridad</h2>
           <form onSubmit={handleChangePassword} className="space-y-4">
             <div>
-              <label className="mb-1.5 block text-sm font-medium text-slate-700">Contraseña Actual</label>
+              <label className="mb-1.5 block text-sm font-medium text-slate-700">Contrasena Actual</label>
               <InputText type="password" value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} disabled={savingPassword}
                 className="w-full rounded-lg border-slate-200 px-3 py-2.5 text-sm" pt={{ root: { className: 'w-full' } }} />
             </div>
             <div>
-              <label className="mb-1.5 block text-sm font-medium text-slate-700">Nueva Contraseña</label>
+              <label className="mb-1.5 block text-sm font-medium text-slate-700">Nueva Contrasena</label>
               <InputText type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} disabled={savingPassword}
                 className="w-full rounded-lg border-slate-200 px-3 py-2.5 text-sm" pt={{ root: { className: 'w-full' } }} />
             </div>
             <div>
-              <label className="mb-1.5 block text-sm font-medium text-slate-700">Confirmar Nueva Contraseña</label>
+              <label className="mb-1.5 block text-sm font-medium text-slate-700">Confirmar Nueva Contrasena</label>
               <InputText type="password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} disabled={savingPassword}
                 className="w-full rounded-lg border-slate-200 px-3 py-2.5 text-sm" pt={{ root: { className: 'w-full' } }} />
             </div>
             {passwordError && <p className="text-sm text-rose-500">{passwordError}</p>}
             <Button
               type="submit"
-              label={savingPassword ? 'Cambiando...' : 'Cambiar Contraseña'}
+              label={savingPassword ? 'Cambiando...' : 'Cambiar Contrasena'}
               loading={savingPassword}
               disabled={savingPassword || !currentPassword || !newPassword || !confirmPassword}
               className="w-full rounded-lg bg-slate-800 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-700 cursor-pointer"
@@ -209,9 +284,62 @@ export default function ProfilePage() {
             />
           </form>
 
-          <div className="mt-6 rounded-lg bg-slate-50 p-4">
+          {/* Password Generator */}
+          <div className="mt-5 rounded-lg border border-slate-200 p-4">
+            <h3 className="mb-3 text-sm font-semibold text-slate-700">Generador de Contrasenas</h3>
+            <div className="space-y-3">
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-xs font-medium text-slate-600">Longitud: {genLength} caracteres</label>
+                </div>
+                <Slider value={genLength} onChange={(e) => setGenLength(e.value)} min={8} max={32} className="w-full" />
+              </div>
+              <div className="flex flex-wrap gap-3">
+                {[
+                  { key: 'upper', label: 'Mayusculas' },
+                  { key: 'lower', label: 'Minusculas' },
+                  { key: 'numbers', label: 'Numeros' },
+                  { key: 'symbols', label: 'Simbolos (@#$)' },
+                ].map(opt => (
+                  <div key={opt.key} className="flex items-center gap-1.5">
+                    <Checkbox
+                      inputId={`gen_${opt.key}`}
+                      checked={genOptions[opt.key]}
+                      onChange={(e) => setGenOptions(prev => ({ ...prev, [opt.key]: e.checked }))}
+                    />
+                    <label htmlFor={`gen_${opt.key}`} className="text-xs text-slate-600 cursor-pointer">{opt.label}</label>
+                  </div>
+                ))}
+              </div>
+              {generatedPassword && (
+                <div className="rounded-lg bg-slate-50 px-3 py-2 font-mono text-sm text-slate-800 break-all select-all ring-1 ring-slate-200">
+                  {generatedPassword}
+                </div>
+              )}
+              <div className="flex gap-2">
+                <Button
+                  type="button"
+                  icon="pi pi-refresh"
+                  label="Generar"
+                  onClick={handleGenerate}
+                  className="flex-1 rounded-lg bg-indigo-50 px-3 py-2 text-xs font-semibold text-indigo-700 hover:bg-indigo-100 cursor-pointer"
+                  pt={{ root: { className: 'border border-indigo-200' } }}
+                />
+                <Button
+                  type="button"
+                  label="Aplicar Contrasena"
+                  onClick={handleApplyGenerated}
+                  disabled={!generatedPassword}
+                  className="flex-1 rounded-lg bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700 hover:bg-emerald-100 disabled:opacity-50 cursor-pointer"
+                  pt={{ root: { className: 'border border-emerald-200' } }}
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-5 rounded-lg bg-slate-50 p-4">
             <div className="flex items-center justify-between">
-              <span className="text-sm text-slate-700">Autenticación 2FA</span>
+              <span className="text-sm text-slate-700">Autenticacion 2FA</span>
               <Tag
                 value={profile?.two_factor_enabled ? 'HABILITADO' : 'DESHABILITADO'}
                 severity={profile?.two_factor_enabled ? 'success' : 'warning'}
@@ -233,7 +361,7 @@ export default function ProfilePage() {
                   <div className="flex items-start justify-between">
                     <div>
                       <div className="flex items-center gap-2">
-                        <span className="text-sm font-medium text-slate-900">{session.ip_address || '—'}</span>
+                        <span className="text-sm font-medium text-slate-900">{session.ip_address || '--'}</span>
                         {!session.logout_at && (
                           <span className="flex items-center gap-1 text-xs text-emerald-600">
                             <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />

@@ -21,6 +21,7 @@ class User extends Authenticatable
         'password',
         'status',
         'phone',
+        'phone_country_code',
         'avatar_url',
         'two_factor_secret',
         'two_factor_recovery_codes',
