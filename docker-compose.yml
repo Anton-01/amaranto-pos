@@ -33,7 +33,10 @@ services:
       - REVERB_HOST=0.0.0.0
       - REVERB_PORT=8080
       - PRINTER_CONNECTION_TYPE=${PRINTER_CONNECTION_TYPE:-windows_share}
-      - PRINTER_WINDOWS_SHARE=${PRINTER_WINDOWS_SHARE:-smb://host.docker.internal/cronos_printer}
+      - PRINTER_SMB_HOST=${PRINTER_SMB_HOST:-host.docker.internal}
+      - PRINTER_SMB_SHARE=${PRINTER_SMB_SHARE:-cronos_printer}
+      - PRINTER_SMB_USER=${PRINTER_SMB_USER:-}
+      - PRINTER_SMB_PASS=${PRINTER_SMB_PASS:-}
       - PRINTER_IP_ADDRESS=${PRINTER_IP_ADDRESS:-192.168.1.100}
       - PRINTER_PORT=${PRINTER_PORT:-9100}
       - PRINTER_FILE_PATH=${PRINTER_FILE_PATH:-/dev/usb/lp0}
