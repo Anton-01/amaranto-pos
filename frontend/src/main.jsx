@@ -1,8 +1,8 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { PrimeReactProvider } from 'primereact/api'
-import './vendor.css'
 import './index.css'
+import './vendor.css'
 import App from './App.jsx'
 
 createRoot(document.getElementById('root')).render(
