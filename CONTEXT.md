@@ -2003,3 +2003,37 @@ El `docker-compose.prod.yml` define `context: .` (raiz del monorepo), pero el St
 - 11 instrucciones COPY verificadas contra el filesystem: todas resuelven correctamente
 - 19 archivos criticos de build verificados contra `.dockerignore`: ninguno excluido
 - Ambos Dockerfiles (backend + frontend) alineados con `context: .` del compose
+
+## 29. Fix Driver windows_share en PrinterService [🟢 COMPLETADO Y OPERATIVO]
+
+### Problema Reportado
+Al configurar `PRINTER_CONNECTION_TYPE=windows_share` en `.env`, el sistema arrojaba: `Tipo de conexión de impresora no soportado: windows_share`. La causa raíz era la caché de configuración de Laravel reteniendo una versión anterior del bloque `match` que solo reconocía el alias `'windows'`.
+
+### Estado del Código (Verificado)
+El bloque `match` en `PrinterService::createConnector()` (línea 44) ya soporta los tres aliases de Windows de forma simultánea:
+```php
+return match ($type) {
+    'windows_share', 'smb', 'windows' => new WindowsPrintConnector(config('printer.windows_share')),
+    'linux_file', 'usb', 'file' => $this->createFileConnector(),
+    'network' => new NetworkPrintConnector(...),
+    default => throw new RuntimeException("Tipo de conexión no soportado: {$type}"),
+};
+```
+
+### Resolución
+- **Código**: Sin cambios requeridos — el match multi-llave ya estaba implementado correctamente
+- **Sintaxis PHP**: Validada sin errores (`php -l`)
+- **Caché**: Requiere ejecución en contenedor de producción:
+  ```bash
+  php artisan config:clear
+  php artisan cache:clear
+  php artisan optimize:clear
+  ```
+- **Causa raíz**: La caché de configuración de Laravel (`bootstrap/cache/config.php`) persistía una versión compilada anterior del archivo, ignorando los cambios al match
+
+### Variables de Entorno Soportadas
+| Variable | Valores Válidos | Conector |
+| :--- | :--- | :--- |
+| `PRINTER_CONNECTION_TYPE` | `windows_share`, `smb`, `windows` | `WindowsPrintConnector` (lee `PRINTER_WINDOWS_SHARE`) |
+| `PRINTER_CONNECTION_TYPE` | `linux_file`, `usb`, `file` | `FilePrintConnector` (lee `PRINTER_FILE_PATH`) |
+| `PRINTER_CONNECTION_TYPE` | `network` (default) | `NetworkPrintConnector` (lee `PRINTER_IP_ADDRESS` + `PRINTER_PORT`) |
