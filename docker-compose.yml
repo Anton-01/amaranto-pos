@@ -32,9 +32,11 @@ services:
       - REVERB_APP_SECRET=cronos-reverb-secret
       - REVERB_HOST=0.0.0.0
       - REVERB_PORT=8080
-      - PRINTER_CONNECTION_TYPE=network
-      - PRINTER_IP_ADDRESS=192.168.1.100
-      - PRINTER_PORT=9100
+      - PRINTER_CONNECTION_TYPE=${PRINTER_CONNECTION_TYPE:-windows_share}
+      - PRINTER_WINDOWS_SHARE=${PRINTER_WINDOWS_SHARE:-smb://host.docker.internal/cronos_printer}
+      - PRINTER_IP_ADDRESS=${PRINTER_IP_ADDRESS:-192.168.1.100}
+      - PRINTER_PORT=${PRINTER_PORT:-9100}
+      - PRINTER_FILE_PATH=${PRINTER_FILE_PATH:-/dev/usb/lp0}
       - MAIL_MAILER=log
       - MAIL_FROM_ADDRESS=no-reply@cronos.pos
       - MAIL_FROM_NAME=Cronos POS
