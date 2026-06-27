@@ -4,9 +4,10 @@ namespace App\Services;
 
 use App\Builders\TicketBuilder;
 use App\DTOs\TicketDTO;
+use App\Services\PrintConnectors\SambaAuthPrintConnector;
 use Mike42\Escpos\PrintConnectors\FilePrintConnector;
 use Mike42\Escpos\PrintConnectors\NetworkPrintConnector;
-use Mike42\Escpos\PrintConnectors\WindowsPrintConnector;
+use Mike42\Escpos\PrintConnectors\PrintConnector;
 use Mike42\Escpos\Printer;
 use RuntimeException;
 
@@ -37,13 +38,16 @@ class PrinterService
         }
     }
 
-    private function createConnector(): FilePrintConnector|NetworkPrintConnector|WindowsPrintConnector
+    private function createConnector(): PrintConnector
     {
         $type = config('printer.connection_type', 'network');
 
         return match ($type) {
-            'windows_share', 'smb', 'windows' => new WindowsPrintConnector(
-                config('printer.windows_share', 'smb://localhost/printer'),
+            'windows_share', 'smb', 'windows' => new SambaAuthPrintConnector(
+                config('printer.smb_host', 'localhost'),
+                config('printer.smb_share', 'printer'),
+                config('printer.smb_user'),
+                config('printer.smb_pass'),
             ),
             'linux_file', 'usb', 'file' => $this->createFileConnector(),
             'network' => new NetworkPrintConnector(

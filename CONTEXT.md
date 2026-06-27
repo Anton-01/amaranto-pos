@@ -41,7 +41,7 @@
 | Resiliencia Local-First (Offline) | [🟢 Completado] | [🟢 Completado] | Hook useOnlineStatus, buffer LocalStorage, background sync, indicador amber en TopBar |
 | Correos Corporativos Centralizados | [🟢 Completado] | N/A | Master layout Blade, 4 Mailables ShouldQueue (Redis), preview routes local-only |
 | Visualizador In-App Plantillas Email | [🟢 Completado] | [🟢 Completado] | MailPreviewController render HTML, iframe srcDoc aislado, viewport Desktop/Mobile |
-| Motor Impresión Directa ESC/POS | [🟢 Completado y Operativo] | [🟢 Completado y Operativo] | mike42/escpos-php, DTO/Builder/Service SOLID, 58mm/32chars, QR nativo, multi-conector (network/file/windows) |
+| Motor Impresión Directa ESC/POS | [🟢 Completado y Operativo] | [🟢 Completado y Operativo] | mike42/escpos-php, DTO/Builder/Service SOLID, 58mm/32chars, QR nativo, multi-conector (network/file/SambaAuthPrintConnector con auth SMB) [🟢 COMPLETADO Y OPERATIVO] |
 | Descuentos y Cupones en Checkout | [🟢 Completado] | [🟢 Completado] | Descuento directo (fijo/porcentual) + cupón por autocomplete, audit trail en orders, propagación completa (ticket, historial, finanzas, Excel, ESC/POS) |
 
 ## 3. Detalle del Modulo Completado: Migraciones & Modelos Base
@@ -1604,10 +1604,18 @@ El contenedor del ticket usaba `width: 48mm` que a 96 DPI equivale a ~181px, per
 #### 3. PrinterService (Driver de Hardware ESC/POS)
 - **Ubicación**: `App\Services\PrinterService`
 - **Dependencia**: `mike42/escpos-php` ^4.0
-- **Modos de conexión** (configurables via `.env`):
-  - `NetworkPrintConnector` — Para impresoras en red (default: 192.168.1.100:9100)
-  - `FilePrintConnector` — Para conexión directa USB (/dev/usb/lp0)
-  - `WindowsPrintConnector` — Para entornos Windows (SMB share)
+- **Modos de conexión** (configurables via `.env` con `PRINTER_CONNECTION_TYPE`):
+  - `network` → `NetworkPrintConnector` — Para impresoras en red (default: 192.168.1.100:9100)
+  - `linux_file` | `usb` | `file` → `FilePrintConnector` — Para conexión directa USB (/dev/usb/lp0)
+  - `windows_share` | `smb` | `windows` → `SambaAuthPrintConnector` — Conector custom con autenticación SMB via `smbclient` (lee `PRINTER_SMB_HOST`, `PRINTER_SMB_SHARE`, `PRINTER_SMB_USER`, `PRINTER_SMB_PASS`) [🟢 COMPLETADO Y OPERATIVO]
+
+#### 3.1 SambaAuthPrintConnector (Conector Custom con Autenticación)
+- **Ubicación**: `App\Services\PrintConnectors\SambaAuthPrintConnector`
+- **Interfaz**: Implementa `Mike42\Escpos\PrintConnectors\PrintConnector`
+- **Razón de existencia**: El `WindowsPrintConnector` nativo de mike42/escpos-php valida URIs con regex estricta que rechaza credenciales embebidas (`:` y `@`). Este conector bypasea esa limitación invocando `smbclient` directamente.
+- **Flujo**: Acumula datos ESC/POS en buffer interno → `finalize()` abre proceso `smbclient` con `popen()` → escribe buffer al pipe → valida código de salida
+- **Autenticación**: Si `PRINTER_SMB_USER` y `PRINTER_SMB_PASS` están configurados, pasa `-U user%pass`. Si están vacíos, usa `-N` (anónimo).
+- **Seguridad**: Todas las entradas escapadas con `escapeshellarg()`. Protocolo forzado a SMB2 via `-m SMB2`.
 - **Comandos binarios ESC/POS**:
   - CodePage CP858 para caracteres españoles (ñ, acentos)
   - `setJustification(JUSTIFY_CENTER)` para encabezados
@@ -1629,11 +1637,14 @@ El contenedor del ticket usaba `width: 48mm` que a 96 DPI equivale a ~181px, per
 #### 5. Configuración de Entorno e Infraestructura
 - **Config file**: `config/printer.php` — Centraliza variables de conexión
 - **Variables .env**:
-  - `PRINTER_CONNECTION_TYPE=network` (opciones: network, file, windows)
+  - `PRINTER_CONNECTION_TYPE=network` (opciones: network, linux_file/usb/file, windows_share/smb/windows)
   - `PRINTER_IP_ADDRESS=192.168.1.100`
   - `PRINTER_PORT=9100`
   - `PRINTER_FILE_PATH=/dev/usb/lp0`
-  - `PRINTER_WINDOWS_SHARE=smb://localhost/printer`
+  - `PRINTER_SMB_HOST=host.docker.internal` (host Windows desde Docker)
+  - `PRINTER_SMB_SHARE=cronos_printer` (nombre del recurso compartido)
+  - `PRINTER_SMB_USER=` (usuario Windows, vacío para anónimo)
+  - `PRINTER_SMB_PASS=` (contraseña Windows, vacío para anónimo)
 - **Docker**: Variables inyectadas en `docker-compose.yml` bajo el servicio backend
 
 #### 6. Integración Frontend (React + Axios)
@@ -2003,3 +2014,32 @@ El `docker-compose.prod.yml` define `context: .` (raiz del monorepo), pero el St
 - 11 instrucciones COPY verificadas contra el filesystem: todas resuelven correctamente
 - 19 archivos criticos de build verificados contra `.dockerignore`: ninguno excluido
 - Ambos Dockerfiles (backend + frontend) alineados con `context: .` del compose
+
+## 29. SambaAuthPrintConnector — Conector Custom con Autenticación SMB [🟢 COMPLETADO Y OPERATIVO]
+
+### Problema Original
+El `WindowsPrintConnector` nativo de `mike42/escpos-php` valida URIs con regex estricta que rechaza credenciales embebidas (caracteres `:` y `@`). Al requerir autenticación local de Windows desde el contenedor Docker, era imposible pasar usuario/contraseña en la URI SMB.
+
+### Solución Implementada
+Conector personalizado `SambaAuthPrintConnector` que implementa la interfaz `PrintConnector` de la librería y despacha los datos ESC/POS via `smbclient` con credenciales separadas.
+
+### Archivos Creados
+- `backend/app/Services/PrintConnectors/SambaAuthPrintConnector.php` — Conector custom que acumula buffer ESC/POS y lo envía via `smbclient` con autenticación opcional
+
+### Archivos Modificados
+- `backend/app/Services/PrinterService.php` — Factory refactorizado: el caso `windows_share/smb/windows` ahora instancia `SambaAuthPrintConnector` en lugar de `WindowsPrintConnector`. Return type actualizado a `PrintConnector` (interfaz).
+- `backend/config/printer.php` — Variables SMB granulares: `smb_host`, `smb_share`, `smb_user`, `smb_pass` (reemplaza `windows_share` monolítica)
+- `backend/.env.example` — Variables actualizadas: `PRINTER_SMB_HOST`, `PRINTER_SMB_SHARE`, `PRINTER_SMB_USER`, `PRINTER_SMB_PASS`
+
+### Variables de Entorno Soportadas
+| Variable | Valores Válidos | Conector |
+| :--- | :--- | :--- |
+| `PRINTER_CONNECTION_TYPE` | `windows_share`, `smb`, `windows` | `SambaAuthPrintConnector` (lee `PRINTER_SMB_HOST` + `PRINTER_SMB_SHARE` + `PRINTER_SMB_USER` + `PRINTER_SMB_PASS`) |
+| `PRINTER_CONNECTION_TYPE` | `linux_file`, `usb`, `file` | `FilePrintConnector` (lee `PRINTER_FILE_PATH`) |
+| `PRINTER_CONNECTION_TYPE` | `network` (default) | `NetworkPrintConnector` (lee `PRINTER_IP_ADDRESS` + `PRINTER_PORT`) |
+
+### Nota de Despliegue
+Requiere `smbclient` instalado en el contenedor Docker. Agregar al Dockerfile si no existe:
+```dockerfile
+RUN apk add --no-cache samba-client
+```
