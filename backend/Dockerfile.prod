@@ -1,0 +1,67 @@
+# ==============================================================
+# Cronos POS — Backend Production Dockerfile
+# Multi-stage build: PHP 8.3-FPM Alpine + Composer optimized
+# ==============================================================
+
+# ---- Stage 1: Composer dependencies ----
+FROM composer:2 AS vendor
+
+WORKDIR /app
+
+COPY composer.json composer.lock ./
+
+RUN composer install \
+    --no-dev \
+    --no-interaction \
+    --no-scripts \
+    --optimize-autoloader \
+    --prefer-dist
+
+# ---- Stage 2: Production runtime ----
+FROM php:8.3-fpm-alpine
+
+RUN apk add --no-cache \
+    postgresql-dev \
+    libzip-dev \
+    libpng-dev \
+    icu-dev \
+    freetype-dev \
+    libjpeg-turbo-dev \
+    oniguruma-dev \
+    linux-headers \
+    $PHPIZE_DEPS \
+    && docker-php-ext-configure gd --with-freetype --with-jpeg \
+    && docker-php-ext-install \
+        pdo_pgsql \
+        pgsql \
+        zip \
+        gd \
+        intl \
+        bcmath \
+        opcache \
+        mbstring \
+        pcntl \
+    && pecl install redis \
+    && docker-php-ext-enable redis \
+    && apk del $PHPIZE_DEPS linux-headers \
+    && rm -rf /tmp/pear /var/cache/apk/*
+
+COPY backend/opcache.ini /usr/local/etc/php/conf.d/opcache.ini
+
+WORKDIR /var/www/html
+
+COPY backend/ .
+
+COPY --from=vendor /app/vendor ./vendor
+
+RUN chown -R www-data:www-data storage bootstrap/cache \
+    && chmod -R 775 storage bootstrap/cache
+
+COPY backend/docker-entrypoint.prod.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
+EXPOSE 8000 8080
+
+USER www-data
+
+ENTRYPOINT ["docker-entrypoint.sh"]

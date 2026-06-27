@@ -7,11 +7,13 @@
 - Cache / Colas: Redis 7 Alpine (cache global + queue worker)
 - WebSockets: Laravel Reverb (puerto 8080, tiempo real)
 - Estado de Infraestructura: Docker Compose multi-contenedor operativo (4 servicios: backend, frontend, postgres, redis).
+- Despliegue Produccion: [🟢 COMPLETADA Y LISTA PARA PRODUCCION] — DigitalOcean Droplet + Managed PostgreSQL, Docker multi-stage, Nginx proxy inverso HTTPS/WSS, Certbot SSL, deploy.sh automatizado.
 
 ## 2. Matriz de Modulos y Progreso
 | Modulo | Estado Backend | Estado Frontend | Observaciones |
 | :--- | :--- | :--- | :--- |
 | Infraestructura & Docker | [🟢 Completado y Operativo] | [🟢 Completado y Operativo] | Docker Compose multi-contenedor, Alpine, Hot-Reload, Reverb WS :8080 |
+| Despliegue Produccion (DigitalOcean) | [🟢 COMPLETADA Y LISTA PARA PRODUCCION] | [🟢 COMPLETADA Y LISTA PARA PRODUCCION] | Multi-stage Docker, Nginx HTTPS/WSS proxy, Managed PostgreSQL SSL, Certbot, deploy.sh, cron scheduler |
 | Migraciones & Modelos Base (BD) | [🟢 Completado] | N/A | 23 migraciones, 16 modelos, Trait AdvancedSoftDeletes, Seeder base |
 | Autenticacion & 2FA (Sanctum) | [🟢 Completado] | [🟢 Completado] | Login, Logout, 2FA TOTP, Kill-Switch, Session Log |
 | Catalogo, Categorias y Variaciones| [🟢 Completado] | [🟢 Completado] | CRUD completo, DataTable filtros avanzados, variaciones en serie |
@@ -1868,3 +1870,113 @@ El contenedor del ticket usaba `width: 48mm` que a 96 DPI equivale a ~181px, per
 - `src/components/pos/TicketPreview.jsx` — Linea de descuento en totales
 - `src/pages/sales/SalesHistoryPage.jsx` — Columna y detalle de descuento
 - `src/pages/finance/FinanceDashboardPage.jsx` — KPI con total_discounts
+
+---
+
+## 28. Infraestructura de Despliegue en Produccion (DigitalOcean) [🟢 COMPLETADA Y LISTA PARA PRODUCCION]
+
+### Arquitectura Fisica de Produccion
+- **Droplet Optimizado** (Ubuntu 24.04 LTS, 4GB RAM / 2 vCPUs): API Laravel, Reverb WebSockets, Redis Queue Workers, SPA React
+- **Managed PostgreSQL** (DigitalOcean): Cluster dedicado con Trusted Sources (solo acepta trafico del Droplet)
+- **Nginx Host**: Proxy inverso con terminacion SSL, HTTPS, WebSockets seguros (WSS)
+- **Certbot / Let's Encrypt**: Certificados SSL gratuitos con renovacion automatica
+
+### Contenedores de Produccion (docker-compose.prod.yml)
+| Servicio | Imagen | Puerto Interno | Descripcion |
+| :--- | :--- | :--- | :--- |
+| backend | PHP 8.3-FPM Alpine (multi-stage) | 8000, 8080 | Laravel API + Reverb + Queue Worker |
+| frontend | Nginx Alpine (multi-stage) | 80 | SPA React compilada (Vite build) |
+| redis | Redis 7 Alpine | 6379 | Cache + Colas (appendonly, 256MB limit) |
+
+### Dockerfiles de Produccion (Multi-Stage Build)
+
+#### Backend (backend/Dockerfile.prod)
+- Stage 1 (vendor): Composer 2 — `composer install --no-dev --optimize-autoloader`
+- Stage 2 (runtime): PHP 8.3-FPM Alpine — extensiones: pdo_pgsql, bcmath, opcache, redis, intl, gd, pcntl
+- OPcache configurado con `validate_timestamps=0`, JIT habilitado (128M buffer), 256MB memoria
+- Ejecuta como usuario `www-data` (no root)
+
+#### Frontend (frontend/Dockerfile.prod)
+- Stage 1 (builder): Node 22 Alpine — `npm ci` + `npm run build` (Vite + Tailwind v4)
+- Stage 2 (serve): Nginx Alpine ultra-ligero — sirve archivos estaticos de `/dist`
+- Cache de assets estaticos con `expires 1y` + `Cache-Control: public, immutable`
+- Gzip habilitado para JS/CSS/JSON/SVG
+
+### OPcache de Alto Rendimiento (backend/opcache.ini)
+- `opcache.enable=1` + `opcache.enable_cli=1`
+- `opcache.memory_consumption=256` MB
+- `opcache.interned_strings_buffer=64` MB
+- `opcache.max_accelerated_files=20000`
+- `opcache.validate_timestamps=0` (produccion: no verifica cambios en disco)
+- `opcache.jit=1255` + `opcache.jit_buffer_size=128M` (JIT completo)
+
+### Proxy Inverso Nginx (infrastructure/cronos-pos.conf)
+| Bloque | Ruta | Destino | Cabeceras Especiales |
+| :--- | :--- | :--- | :--- |
+| API Laravel | `/api/*` | 127.0.0.1:8000 | X-Real-IP, X-Forwarded-For, X-Forwarded-Proto |
+| Sanctum | `/sanctum/*` | 127.0.0.1:8000 | X-Real-IP, X-Forwarded-For |
+| Storage | `/storage/*` | 127.0.0.1:8000 | Cache 7d |
+| WebSockets | `/app/*`, `/apps/*` | 127.0.0.1:8080 | **Upgrade, Connection "Upgrade"**, timeout 86400s |
+| SPA React | `/*` | 127.0.0.1:3000 | X-Forwarded-Proto |
+
+Cabeceras de seguridad globales: X-Frame-Options SAMEORIGIN, X-Content-Type-Options nosniff, HSTS 1 year, Referrer-Policy strict-origin-when-cross-origin
+
+### Seguridad de Base de Datos (Managed PostgreSQL)
+- **Trusted Sources**: Cluster configurado para RECHAZAR cualquier conexion excepto la IP publica del Droplet
+- **SSL obligatorio**: `DB_SSLMODE=require` en `.env.production` cifra todas las conexiones Droplet ↔ PostgreSQL
+- **Puerto no estandar**: 25060 (asignado por DigitalOcean, no accesible externamente)
+- **Usuario dedicado**: `cronos_app` (no usar `doadmin` en produccion)
+
+### Script de Despliegue Automatizado (deploy.sh)
+Secuencia automatizada para actualizaciones zero-downtime:
+1. `git pull origin main --ff-only`
+2. `docker compose up --build -d` (rebuild + restart en background)
+3. Espera healthcheck del backend (max 30 intentos, 2s cada uno)
+4. `php artisan migrate --force` (migraciones de produccion)
+5. Cache rebuild: `config:cache`, `route:cache`, `event:cache`, `view:cache`
+6. `php artisan queue:restart` (reinicio seguro de workers Redis)
+7. `docker image prune -f` (limpieza de imagenes huerfanas)
+
+### Certificados SSL (Certbot / Let's Encrypt)
+```bash
+sudo certbot --nginx -d dominio.com -d www.dominio.com \
+    --non-interactive --agree-tos --email admin@dominio.com --redirect
+sudo certbot renew --dry-run  # Verificar renovacion automatica
+```
+Timer de systemd instalado automaticamente para renovacion cada 60 dias.
+
+### Cron Jobs del Servidor (Laravel Scheduler)
+```crontab
+* * * * * cd /opt/cronos-pos && docker compose -f docker-compose.prod.yml exec -T backend php artisan schedule:run >> /var/log/cronos-schedule.log 2>&1
+```
+Ejecuta `schedule:run` cada minuto dentro del contenedor del backend para tareas programadas de Laravel.
+
+### Mapa de Puertos (Verificacion de No-Conflictos)
+| Puerto | Servicio | Exposicion |
+| :--- | :--- | :--- |
+| 80 | Nginx HTTP (redirect → 443) | Publico (UFW) |
+| 443 | Nginx HTTPS (proxy) | Publico (UFW) |
+| 3000 | Frontend container | Solo 127.0.0.1 |
+| 8000 | Backend container | Solo 127.0.0.1 |
+| 8080 | Reverb WebSocket | Solo 127.0.0.1 |
+| 6379 | Redis | Solo red Docker interna |
+| 25060 | PostgreSQL Managed | Solo IP Droplet (Trusted Sources) |
+
+### Archivos Creados en esta Fase
+**Raiz (nuevos):**
+- `docker-compose.prod.yml` — Compose de produccion (3 servicios: backend, frontend, redis)
+- `.env.production.example` — Template de variables de produccion
+- `deploy.sh` — Script de despliegue automatizado
+- `DEPLOY_PRODUCTION.md` — Manual paso a paso de aprovisionamiento
+
+**Backend (nuevos):**
+- `backend/Dockerfile.prod` — Multi-stage build PHP 8.3-FPM Alpine
+- `backend/opcache.ini` — Directivas OPcache de alto rendimiento + JIT
+- `backend/docker-entrypoint.prod.sh` — Entrypoint de produccion (caches + workers)
+
+**Frontend (nuevos):**
+- `frontend/Dockerfile.prod` — Multi-stage build Node 22 + Nginx Alpine
+- `frontend/nginx.conf` — Configuracion interna del contenedor frontend (SPA routing)
+
+**Infraestructura (nuevos):**
+- `infrastructure/cronos-pos.conf` — Nginx proxy inverso del host con HTTPS + WSS
