@@ -41,7 +41,7 @@
 | Resiliencia Local-First (Offline) | [🟢 Completado] | [🟢 Completado] | Hook useOnlineStatus, buffer LocalStorage, background sync, indicador amber en TopBar |
 | Correos Corporativos Centralizados | [🟢 Completado] | N/A | Master layout Blade, 4 Mailables ShouldQueue (Redis), preview routes local-only |
 | Visualizador In-App Plantillas Email | [🟢 Completado] | [🟢 Completado] | MailPreviewController render HTML, iframe srcDoc aislado, viewport Desktop/Mobile |
-| Motor Impresión Directa ESC/POS | [🟢 Completado y Operativo] | [🟢 Completado y Operativo] | mike42/escpos-php, DTO/Builder/Service SOLID, 58mm/32chars, QR nativo, multi-conector (network/file/windows) |
+| Motor Impresión Directa ESC/POS | [🟢 Completado y Operativo] | [🟢 Completado y Operativo] | mike42/escpos-php, DTO/Builder/Service SOLID, 58mm/32chars, QR nativo, multi-conector (network/file/windows_share/smb/windows) — Driver windows_share [🟢 COMPLETADO Y OPERATIVO] |
 | Descuentos y Cupones en Checkout | [🟢 Completado] | [🟢 Completado] | Descuento directo (fijo/porcentual) + cupón por autocomplete, audit trail en orders, propagación completa (ticket, historial, finanzas, Excel, ESC/POS) |
 
 ## 3. Detalle del Modulo Completado: Migraciones & Modelos Base
@@ -1604,10 +1604,10 @@ El contenedor del ticket usaba `width: 48mm` que a 96 DPI equivale a ~181px, per
 #### 3. PrinterService (Driver de Hardware ESC/POS)
 - **Ubicación**: `App\Services\PrinterService`
 - **Dependencia**: `mike42/escpos-php` ^4.0
-- **Modos de conexión** (configurables via `.env`):
-  - `NetworkPrintConnector` — Para impresoras en red (default: 192.168.1.100:9100)
-  - `FilePrintConnector` — Para conexión directa USB (/dev/usb/lp0)
-  - `WindowsPrintConnector` — Para entornos Windows (SMB share)
+- **Modos de conexión** (configurables via `.env` con `PRINTER_CONNECTION_TYPE`):
+  - `network` → `NetworkPrintConnector` — Para impresoras en red (default: 192.168.1.100:9100)
+  - `linux_file` | `usb` | `file` → `FilePrintConnector` — Para conexión directa USB (/dev/usb/lp0)
+  - `windows_share` | `smb` | `windows` → `WindowsPrintConnector` — Para colas compartidas Windows/SMB (lee `PRINTER_WINDOWS_SHARE`) [🟢 COMPLETADO Y OPERATIVO]
 - **Comandos binarios ESC/POS**:
   - CodePage CP858 para caracteres españoles (ñ, acentos)
   - `setJustification(JUSTIFY_CENTER)` para encabezados
@@ -1629,7 +1629,7 @@ El contenedor del ticket usaba `width: 48mm` que a 96 DPI equivale a ~181px, per
 #### 5. Configuración de Entorno e Infraestructura
 - **Config file**: `config/printer.php` — Centraliza variables de conexión
 - **Variables .env**:
-  - `PRINTER_CONNECTION_TYPE=network` (opciones: network, file, windows)
+  - `PRINTER_CONNECTION_TYPE=network` (opciones: network, linux_file/usb/file, windows_share/smb/windows)
   - `PRINTER_IP_ADDRESS=192.168.1.100`
   - `PRINTER_PORT=9100`
   - `PRINTER_FILE_PATH=/dev/usb/lp0`
