@@ -4,6 +4,7 @@ use App\Mail\CashRegisterClosingReportMail;
 use App\Mail\LowStockAlertMail;
 use App\Mail\PettyCashWithdrawalMail;
 use App\Mail\UserPasswordResetMail;
+use App\Mail\UserWelcomeMail;
 use App\Models\PettyCashTransaction;
 use App\Models\User;
 use Illuminate\Support\Facades\Route;
@@ -55,6 +56,12 @@ if (app()->environment('local')) {
             }
 
             return new PettyCashWithdrawalMail($transaction);
+        });
+
+        Route::get('/welcome', function () {
+            $user = User::first() ?? new User(['name' => 'Ana Garcia', 'email' => 'ana.garcia@cronos.pos']);
+
+            return new UserWelcomeMail($user, 'Xk9mPq2wR4tB');
         });
 
         Route::get('/cash-register-closing', function () {

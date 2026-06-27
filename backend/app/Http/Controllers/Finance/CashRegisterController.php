@@ -13,7 +13,8 @@ class CashRegisterController extends Controller
     {
         $user = $request->user();
 
-        $cashRegister = CashRegister::where('user_id', $user->id)
+        $cashRegister = CashRegister::with('user:id,name')
+            ->where('user_id', $user->id)
             ->whereNull('closed_at')
             ->latest('opened_at')
             ->first();

@@ -21,6 +21,7 @@ class ProfileController extends Controller
                 'name' => $user->name,
                 'email' => $user->email,
                 'phone' => $user->phone,
+                'phone_country_code' => $user->phone_country_code,
                 'avatar_url' => $user->avatar_url,
                 'roles' => $user->roles->pluck('name'),
                 'two_factor_enabled' => (bool) $user->two_factor_confirmed_at,
@@ -34,11 +35,12 @@ class ProfileController extends Controller
         $request->validate([
             'name' => 'sometimes|required|string|max:150',
             'phone' => 'nullable|string|max:20',
+            'phone_country_code' => 'nullable|string|max:5',
             'avatar_url' => 'nullable|string|max:500',
         ]);
 
         $user = $request->user();
-        $user->update($request->only(['name', 'phone', 'avatar_url']));
+        $user->update($request->only(['name', 'phone', 'phone_country_code', 'avatar_url']));
 
         return response()->json([
             'status' => 'success',

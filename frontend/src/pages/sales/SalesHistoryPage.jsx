@@ -224,7 +224,7 @@ export default function SalesHistoryPage() {
       const url = window.URL.createObjectURL(new Blob([res.data]));
       const link = document.createElement('a');
       link.href = url;
-      link.setAttribute('download', `ventas_cronos_${new Date().toISOString().split('T')[0]}.csv`);
+      link.setAttribute('download', `ventas_cronos_${new Date().toISOString().split('T')[0]}.xlsx`);
       document.body.appendChild(link);
       link.click();
       link.remove();
@@ -351,7 +351,7 @@ export default function SalesHistoryPage() {
         />
         <div className="ml-auto">
           <Button
-            label={exporting ? 'Exportando...' : 'Exportar CSV'}
+            label={exporting ? 'Exportando...' : 'Exportar Excel'}
             icon="pi pi-download"
             onClick={handleExport}
             disabled={exporting}

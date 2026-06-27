@@ -85,6 +85,7 @@ export default function ProductFormPage() {
 
   const validate = () => {
     if (!formData.sku.trim()) return 'El SKU es obligatorio.';
+    if (!isEditing && !formData.sku.startsWith('AMR-')) return 'El SKU debe iniciar con el prefijo AMR-.';
     if (!formData.name.trim()) return 'El nombre es obligatorio.';
     if (!formData.category_id) return 'Selecciona una categoria.';
     if (formData.cost_price == null || formData.cost_price < 0) return 'El costo debe ser mayor o igual a 0.';
@@ -99,7 +100,8 @@ export default function ProductFormPage() {
     };
 
     if (isEditing) {
-      await api.put(`/products/${id}`, payload);
+      const { sku, ...editPayload } = payload;
+      await api.put(`/products/${id}`, editPayload);
     } else {
       await api.post('/products', payload);
     }
@@ -201,14 +203,27 @@ export default function ProductFormPage() {
           <div className="space-y-4">
             <div>
               <label className="mb-1.5 block text-sm font-medium text-slate-700">SKU *</label>
-              <InputText
-                value={formData.sku}
-                onChange={(e) => set('sku', e.target.value.toUpperCase())}
-                placeholder="Ej: REF-500ML"
-                disabled={saving}
-                className="w-full rounded-lg border-slate-200 px-3 py-2.5 text-sm font-mono"
-                pt={{ root: { className: 'w-full' } }}
-              />
+              {isEditing ? (
+                <InputText
+                  value={formData.sku}
+                  readOnly
+                  className="w-full rounded-lg border-slate-200 bg-slate-50 px-3 py-2.5 text-sm font-mono cursor-not-allowed"
+                  pt={{ root: { className: 'w-full' } }}
+                />
+              ) : (
+                <div className="flex">
+                  <span className="inline-flex items-center rounded-l-lg border border-r-0 border-slate-200 bg-slate-100 px-3 text-sm font-mono font-semibold text-slate-600">AMR-</span>
+                  <InputText
+                    value={formData.sku.startsWith('AMR-') ? formData.sku.slice(4) : formData.sku}
+                    onChange={(e) => set('sku', 'AMR-' + e.target.value.toUpperCase().replace(/^AMR-/i, ''))}
+                    placeholder="Ej: 102"
+                    disabled={saving}
+                    className="w-full rounded-r-lg rounded-l-none border-slate-200 px-3 py-2.5 text-sm font-mono"
+                    pt={{ root: { className: 'w-full' } }}
+                  />
+                </div>
+              )}
+              {isEditing && <p className="mt-1 text-xs text-slate-400">El SKU no es editable una vez dado de alta.</p>}
               {fieldErrors.sku && <p className="mt-1 text-xs text-rose-500">{fieldErrors.sku}</p>}
             </div>
 

@@ -1679,3 +1679,64 @@ El contenedor del ticket usaba `width: 48mm` que a 96 DPI equivale a ~181px, per
 
 **Infraestructura (modificados):**
 - `docker-compose.yml` — Variables de entorno PRINTER_* en servicio backend
+
+---
+
+## 26. Robusteces Operativas: Turno, Excel, SKU, Welcome Mail & Perfil Avanzado [🟢 Completado]
+
+### Tarea 1: Tarjeta de Estado de Turno de Caja en el POS [🟢 Completado]
+- Card compacta en la parte superior de la interfaz POS (post-apertura de caja)
+- Datos en tiempo real: nombre del cajero, fecha local formateada, reloj segundo a segundo via `useEffect`+`setInterval`
+- Metadatos de control: Folio de turno (8 chars UUID uppercase), fondo inicial formateado como moneda MXN
+- Backend: `CashRegisterController::active()` ahora incluye `with('user:id,name')` para eager loading del operador
+
+### Tarea 2: Migracion de CSV a Excel Estructurado (.xlsx) [🟢 Completado]
+- Eliminada generacion CSV rustica del `SalesExportController`
+- Integrado `PhpOffice\PhpSpreadsheet` (ya existente en `composer.json`) para despachar `.xlsx`
+- Cabecera institucional estilizada: "CRONOS POS - HISTORIAL DE TRANSACCIONES" con fondo indigo, sucursal actual, rango de fechas, conteo de registros
+- Columnas con texto en negrita (fondo slate oscuro), anchos auto-ajustados, formato moneda $#,##0.00, zebra striping
+- Frontend: Boton "Exportar CSV" renombrado a "Exportar Excel", descarga como `.xlsx`
+
+### Tarea 3: Homologacion de SKU con Prefijo AMR- e Inmutabilidad [🟢 Completado]
+- **Formulario de Alta**: Input de SKU con prefijo visual fijo "AMR-" (addon izquierdo) + conversion automatica a MAYUSCULAS. El estado React siempre almacena "AMR-" + valor capturado
+- **Formulario de Edicion**: Campo SKU completamente `readOnly` con fondo `bg-slate-50`, leyenda "El SKU no es editable una vez dado de alta"
+- **Validacion**: Frontend valida que el SKU inicie con "AMR-" antes de enviar. Backend recibe el SKU completo
+- **Proteccion submit**: En modo edicion, el SKU se excluye del payload enviado al backend
+
+### Tarea 4: Registro de Usuarios con Contrasena de Sistema y Welcome Mail [🟢 Completado]
+- **Frontend**: Eliminados campos "Contrasena" y "Confirmar Contrasena" del modal de creacion de usuario. Banner informativo azul indica que la contrasena sera generada y enviada por correo
+- **Backend**: `UserController::store()` genera `Str::random(12)` como contrasena temporal, almacena hash en PostgreSQL, registra `password_restored_at` con timestamp actual
+- **StoreUserRequest**: Removida regla de validacion `password` (ya no se envia desde el frontend)
+- **Mailable**: `UserWelcomeMail` (ShouldQueue) con vista Blade `mail.user-welcome` que extiende layout corporativo. Muestra: saludo personalizado, correo de acceso, contrasena temporal en monospace, boton CTA "Iniciar Sesion", banner de advertencia para cambio de contrasena
+- **Preview**: Registrado en `MailPreviewController` (slug `welcome`) y en `routes/web.php` bajo `/mail-preview/welcome`
+
+### Tarea 5: Telefonia Internacional y Generador de Contrasenas en Perfil [🟢 Completado]
+- **Campo Telefono con Lada**: Dropdown PrimeReact para seleccionar pais (Mexico +52, USA +1) + InputMask con mascara exacta `(999) 999-9999`. Cambio de pais resetea el campo de telefono
+- **Migracion**: Columna `phone_country_code` (varchar 5, nullable) agregada a tabla `users`
+- **Backend**: `ProfileController::update()` acepta y almacena `phone_country_code`. `show()` retorna el campo en la respuesta
+- **Generador de Contrasenas**: Panel interactivo dentro de la seccion de seguridad con Slider (8-32 chars), Checkboxes (mayusculas/minusculas/numeros/simbolos), generacion via `crypto.getRandomValues()`, vista previa en monospace, boton "Aplicar Contrasena" que inyecta en ambos campos del formulario
+- **Forzar Logout**: Cambio de contrasena exitoso revoca token local, limpia sesion y redirige a `/login` con toast informativo via Sonner
+
+### Archivos Creados en esta Fase
+**Backend (nuevos):**
+- `app/Mail/UserWelcomeMail.php` — Mailable ShouldQueue con contrasena temporal
+- `resources/views/mail/user-welcome.blade.php` — Vista Blade ejecutiva con layout corporativo
+- `database/migrations/2026_06_27_000001_add_phone_country_code_to_users.php` — Columna phone_country_code en users
+
+### Archivos Modificados en esta Fase
+**Backend (modificados):**
+- `app/Http/Controllers/Finance/CashRegisterController.php` — Eager load user en active()
+- `app/Http/Controllers/Sales/SalesExportController.php` — Reescrito: PhpSpreadsheet .xlsx con cabecera institucional
+- `app/Http/Controllers/Admin/UserController.php` — Auto-genera contrasena con Str::random(12), envia UserWelcomeMail
+- `app/Http/Controllers/Admin/MailPreviewController.php` — Agregado slug 'welcome' con preview de UserWelcomeMail
+- `app/Http/Controllers/Profile/ProfileController.php` — Acepta phone_country_code en update(), retorna en show()
+- `app/Http/Requests/User/StoreUserRequest.php` — Removida regla 'password'
+- `app/Models/User.php` — Agregado phone_country_code a fillable
+- `routes/web.php` — Ruta /mail-preview/welcome
+
+**Frontend (modificados):**
+- `src/pages/pos/POSPage.jsx` — Tarjeta de estado de turno con reloj en tiempo real, folio, fondo inicial
+- `src/pages/sales/SalesHistoryPage.jsx` — Boton "Exportar Excel" (.xlsx), descarga con nombre .xlsx
+- `src/pages/catalog/ProductFormPage.jsx` — Prefijo AMR- forzado en alta, SKU readOnly en edicion, exclusion de SKU en payload de update
+- `src/pages/admin/UsersPage.jsx` — Eliminados campos contrasena del modal, banner informativo de contrasena auto-generada
+- `src/pages/profile/ProfilePage.jsx` — Reescrito: Dropdown lada internacional + InputMask, generador de contrasenas con Slider/Checkboxes/crypto, logout forzado post-cambio contrasena

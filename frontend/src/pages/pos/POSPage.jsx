@@ -330,8 +330,50 @@ export default function POSPage() {
     );
   }
 
+  const [currentTime, setCurrentTime] = useState(new Date());
+
+  useEffect(() => {
+    const timer = setInterval(() => setCurrentTime(new Date()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const shiftFolio = cashRegister?.id ? cashRegister.id.substring(0, 8).toUpperCase() : '---';
+  const cashierName = cashRegister?.user?.name || 'Operador';
+  const formattedDate = currentTime.toLocaleDateString('es-MX', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+  const formattedTime = currentTime.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const formattedOpeningBalance = parseFloat(cashRegister?.opening_balance || 0).toLocaleString('es-MX', { style: 'currency', currency: 'MXN' });
+
   return (
     <AppLayout>
+      {/* Shift Status Card */}
+      <div className="mb-5 rounded-xl bg-white px-5 py-3.5 shadow-sm ring-1 ring-slate-200">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-indigo-50">
+              <i className="pi pi-user text-indigo-600" />
+            </div>
+            <div>
+              <p className="text-sm font-semibold text-slate-900">{cashierName}</p>
+              <p className="text-xs text-slate-500 capitalize">{formattedDate}</p>
+            </div>
+          </div>
+          <div className="text-right">
+            <p className="text-lg font-bold tabular-nums text-indigo-600">{formattedTime}</p>
+          </div>
+          <div className="flex items-center gap-4 rounded-lg bg-slate-50 px-4 py-2">
+            <div>
+              <p className="text-xs text-slate-500">Turno</p>
+              <p className="text-xs font-mono font-semibold text-slate-700">{shiftFolio}</p>
+            </div>
+            <div className="h-6 w-px bg-slate-200" />
+            <div>
+              <p className="text-xs text-slate-500">Fondo inicial</p>
+              <p className="text-sm font-semibold text-emerald-600">{formattedOpeningBalance}</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         {/* Product catalog */}
         <div className="lg:col-span-2">
