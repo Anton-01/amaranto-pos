@@ -42,14 +42,27 @@ class PrinterService
         $type = config('printer.connection_type', 'network');
 
         return match ($type) {
-            'windows' => new WindowsPrintConnector(config('printer.windows_share')),
-            'file' => new FilePrintConnector(config('printer.file_path', '/dev/usb/lp0')),
+            'windows_share', 'smb', 'windows' => new WindowsPrintConnector(
+                config('printer.windows_share', 'smb://localhost/printer'),
+            ),
+            'linux_file', 'usb', 'file' => $this->createFileConnector(),
             'network' => new NetworkPrintConnector(
                 config('printer.ip_address', '192.168.1.100'),
                 (int) config('printer.port', 9100),
             ),
             default => throw new RuntimeException("Tipo de conexión de impresora no soportado: {$type}"),
         };
+    }
+
+    private function createFileConnector(): FilePrintConnector
+    {
+        $path = config('printer.file_path', '/dev/usb/lp0');
+
+        if (!file_exists($path)) {
+            throw new RuntimeException("Dispositivo de impresión no encontrado: {$path}");
+        }
+
+        return new FilePrintConnector($path);
     }
 
     private function configureCodePage(Printer $printer): void
