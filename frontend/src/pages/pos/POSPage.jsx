@@ -98,6 +98,13 @@ export default function POSPage() {
     })();
   }, [isOnline, fetchData]);
 
+  const [currentTime, setCurrentTime] = useState(new Date());
+
+  useEffect(() => {
+    const timer = setInterval(() => setCurrentTime(new Date()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+
   const handleOpenCash = async () => {
     setOpeningCash(true);
     try {
@@ -329,13 +336,6 @@ export default function POSPage() {
       </AppLayout>
     );
   }
-
-  const [currentTime, setCurrentTime] = useState(new Date());
-
-  useEffect(() => {
-    const timer = setInterval(() => setCurrentTime(new Date()), 1000);
-    return () => clearInterval(timer);
-  }, []);
 
   const shiftFolio = cashRegister?.id ? cashRegister.id.substring(0, 8).toUpperCase() : '---';
   const cashierName = cashRegister?.user?.name || 'Operador';
