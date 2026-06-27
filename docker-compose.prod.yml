@@ -1,0 +1,64 @@
+# ==============================================================
+# Cronos POS — Docker Compose Production
+# Arquitectura: Backend (API + Reverb + Queue) + Frontend (Nginx SPA) + Redis
+# Base de Datos: DigitalOcean Managed PostgreSQL (externa)
+# ==============================================================
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile.prod
+    container_name: cronos-backend
+    restart: always
+    ports:
+      - "127.0.0.1:8000:8000"
+      - "127.0.0.1:8080:8080"
+    env_file:
+      - .env.production
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - cronos-network
+    healthcheck:
+      test: ["CMD-SHELL", "php artisan about > /dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile.prod
+    container_name: cronos-frontend
+    restart: always
+    ports:
+      - "127.0.0.1:3000:80"
+    depends_on:
+      - backend
+    networks:
+      - cronos-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: cronos-redis
+    restart: always
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - cronos-network
+
+volumes:
+  redis-data:
+
+networks:
+  cronos-network:
+    driver: bridge
