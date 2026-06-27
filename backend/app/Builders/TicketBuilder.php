@@ -45,6 +45,11 @@ class TicketBuilder
             $cambio = $this->formatMoney((float) $order->amount_change);
         }
 
+        $descuentoTotal = null;
+        if ((float) $order->discount_total > 0) {
+            $descuentoTotal = $this->formatMoney((float) $order->discount_total);
+        }
+
         $qrContent = config('app.url') . '/orders/' . $order->id;
 
         return new TicketDTO(
@@ -64,6 +69,7 @@ class TicketBuilder
             totalPublico: $this->formatMoney((float) $order->total),
             recibido: $recibido,
             cambio: $cambio,
+            descuentoTotal: $descuentoTotal,
             leyendaPersonalizada: $order->custom_legend,
             mensajePie: $ticketConfig->footer_message ?? '',
             version: $ticketConfig->version,
@@ -189,6 +195,11 @@ class TicketBuilder
         }
 
         $lines[] = $this->separator('-');
+
+        if ($dto->descuentoTotal) {
+            $lines[] = $this->padLine('Descuento:', '-' . $dto->descuentoTotal);
+        }
+
         $lines[] = $this->padLine('Subtotal:', $dto->subtotalNeto);
         $lines[] = $this->padLine($dto->ivaLabel . ':', $dto->ivaMonto);
         $lines[] = $this->separator('=');

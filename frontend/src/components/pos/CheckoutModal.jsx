@@ -3,6 +3,9 @@ import { Dialog } from 'primereact/dialog';
 import { Dropdown } from 'primereact/dropdown';
 import { InputNumber } from 'primereact/inputnumber';
 import { Button } from 'primereact/button';
+import { Checkbox } from 'primereact/checkbox';
+import { RadioButton } from 'primereact/radiobutton';
+import { AutoComplete } from 'primereact/autocomplete';
 import { toast } from 'sonner';
 import api from '../../api/axios';
 import TicketPreview from './TicketPreview';
@@ -17,10 +20,24 @@ export default function CheckoutModal({ visible, onHide, cart, taxRate = 0.16, o
   const [ticketConfig, setTicketConfig] = useState(null);
   const ticketRef = useRef(null);
 
+  const [applyDiscount, setApplyDiscount] = useState(false);
+  const [discountMode, setDiscountMode] = useState('direct');
+  const [discountSubType, setDiscountSubType] = useState('fixed');
+  const [discountValue, setDiscountValue] = useState(null);
+  const [couponQuery, setCouponQuery] = useState('');
+  const [couponSuggestions, setCouponSuggestions] = useState([]);
+  const [selectedCoupon, setSelectedCoupon] = useState(null);
+
   useEffect(() => {
     if (visible) {
       setCustomLegend('');
       setAmountReceived(null);
+      setApplyDiscount(false);
+      setDiscountMode('direct');
+      setDiscountSubType('fixed');
+      setDiscountValue(null);
+      setCouponQuery('');
+      setSelectedCoupon(null);
       Promise.all([
         api.get('/ticket-configs/active'),
         api.get('/payment-methods', { params: { status: 'active' } }),
@@ -37,7 +54,36 @@ export default function CheckoutModal({ visible, onHide, cart, taxRate = 0.16, o
     }
   }, [visible]);
 
-  const totalGross = cart.reduce((sum, i) => sum + (i.sale_price * i.quantity) - i.discount, 0);
+  const totalGrossBefore = cart.reduce((sum, i) => sum + (i.sale_price * i.quantity) - i.discount, 0);
+
+  const computedDiscount = useMemo(() => {
+    if (!applyDiscount) return 0;
+
+    if (discountMode === 'direct') {
+      if (discountSubType === 'fixed' && discountValue > 0) {
+        return Math.min(discountValue, totalGrossBefore);
+      }
+      if (discountSubType === 'percentage' && discountValue > 0) {
+        return Math.min(Math.round(totalGrossBefore * (discountValue / 100) * 100) / 100, totalGrossBefore);
+      }
+    }
+
+    if (discountMode === 'coupon' && selectedCoupon) {
+      if (selectedCoupon.type === 'percentage') {
+        return Math.min(Math.round(totalGrossBefore * (parseFloat(selectedCoupon.value) / 100) * 100) / 100, totalGrossBefore);
+      }
+      if (selectedCoupon.type === 'fixed_amount') {
+        return Math.min(parseFloat(selectedCoupon.value), totalGrossBefore);
+      }
+      if (selectedCoupon.type === 'freebie_100') {
+        return totalGrossBefore;
+      }
+    }
+
+    return 0;
+  }, [applyDiscount, discountMode, discountSubType, discountValue, selectedCoupon, totalGrossBefore]);
+
+  const totalGross = totalGrossBefore - computedDiscount;
   const subtotal = totalGross / (1 + taxRate);
   const ivaTotal = totalGross - subtotal;
   const total = totalGross;
@@ -47,22 +93,49 @@ export default function CheckoutModal({ visible, onHide, cart, taxRate = 0.16, o
   const amountChange = isCash && amountReceived != null ? Math.max(0, amountReceived - total) : 0;
   const cashInsufficient = isCash && (amountReceived == null || amountReceived < total);
 
+  const discountType = useMemo(() => {
+    if (!applyDiscount || computedDiscount === 0) return 'none';
+    if (discountMode === 'direct') return discountSubType;
+    if (discountMode === 'coupon' && selectedCoupon) {
+      if (selectedCoupon.type === 'percentage') return 'percentage';
+      return 'fixed';
+    }
+    return 'none';
+  }, [applyDiscount, computedDiscount, discountMode, discountSubType, selectedCoupon]);
+
+  const discountValueForPayload = useMemo(() => {
+    if (!applyDiscount || computedDiscount === 0) return 0;
+    if (discountMode === 'direct') return discountValue || 0;
+    if (discountMode === 'coupon' && selectedCoupon) return parseFloat(selectedCoupon.value);
+    return 0;
+  }, [applyDiscount, computedDiscount, discountMode, discountValue, selectedCoupon]);
+
   const previewOrder = useMemo(() => ({
     items: cart,
     subtotal,
     iva_total: ivaTotal,
     total,
+    discount_total: computedDiscount,
     amount_received: isCash ? amountReceived : null,
     amount_change: isCash ? amountChange : null,
     payment_method: selectedMethod || { name: 'N/A', slug: '' },
     created_at: new Date().toISOString(),
-  }), [cart, subtotal, ivaTotal, total, amountReceived, amountChange, isCash, selectedMethod]);
+  }), [cart, subtotal, ivaTotal, total, computedDiscount, amountReceived, amountChange, isCash, selectedMethod]);
 
   useEffect(() => {
     if (!isCash) {
       setAmountReceived(null);
     }
   }, [isCash]);
+
+  const searchCoupons = async (e) => {
+    try {
+      const res = await api.get('/promotions/search', { params: { query: e.query } });
+      setCouponSuggestions(res.data.data);
+    } catch {
+      setCouponSuggestions([]);
+    }
+  };
 
   const handleSubmit = async () => {
     if (!ticketConfig) {
@@ -82,6 +155,9 @@ export default function CheckoutModal({ visible, onHide, cart, taxRate = 0.16, o
       custom_legend: customLegend || null,
       amount_received: isCash ? amountReceived : total,
       amount_change: isCash ? Math.round(amountChange * 100) / 100 : 0,
+      discount_type: discountType,
+      discount_value: discountValueForPayload,
+      promotion_id: (applyDiscount && discountMode === 'coupon' && selectedCoupon) ? selectedCoupon.id : null,
       items: cart.map(i => ({
         product_id: i.product_id,
         quantity: i.quantity,
@@ -118,7 +194,7 @@ export default function CheckoutModal({ visible, onHide, cart, taxRate = 0.16, o
       api.post(`/orders/${order.id}/print`).then(() => {
         toast.success('Ticket enviado a la impresora.');
       }).catch(() => {
-        toast.warning('No se pudo imprimir directamente. Usa la impresión del navegador.');
+        toast.warning('No se pudo imprimir directamente. Usa la impresion del navegador.');
       });
 
       onSuccess?.(order, ticketConfig);
@@ -259,9 +335,146 @@ export default function CheckoutModal({ visible, onHide, cart, taxRate = 0.16, o
             <p className="mt-1 text-right text-xs text-slate-400">{customLegend.length}/500</p>
           </div>
 
+          {/* Discount / Coupon Section */}
+          <div className="rounded-lg border border-slate-200 p-3">
+            <div className="flex items-center gap-2">
+              <Checkbox
+                inputId="applyDiscount"
+                checked={applyDiscount}
+                onChange={(e) => {
+                  setApplyDiscount(e.checked);
+                  if (!e.checked) {
+                    setDiscountValue(null);
+                    setSelectedCoupon(null);
+                    setCouponQuery('');
+                  }
+                }}
+                disabled={submitting}
+              />
+              <label htmlFor="applyDiscount" className="text-sm font-medium text-slate-700 cursor-pointer select-none">
+                Aplicar descuento o cupon?
+              </label>
+            </div>
+
+            {applyDiscount && (
+              <div className="mt-3 space-y-3">
+                <div className="flex gap-4">
+                  <div className="flex items-center gap-2">
+                    <RadioButton
+                      inputId="modeDirect"
+                      name="discountMode"
+                      value="direct"
+                      onChange={(e) => { setDiscountMode(e.value); setSelectedCoupon(null); setCouponQuery(''); }}
+                      checked={discountMode === 'direct'}
+                      disabled={submitting}
+                    />
+                    <label htmlFor="modeDirect" className="text-xs font-medium text-slate-600 cursor-pointer">
+                      Descuento Directo
+                    </label>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <RadioButton
+                      inputId="modeCoupon"
+                      name="discountMode"
+                      value="coupon"
+                      onChange={(e) => { setDiscountMode(e.value); setDiscountValue(null); }}
+                      checked={discountMode === 'coupon'}
+                      disabled={submitting}
+                    />
+                    <label htmlFor="modeCoupon" className="text-xs font-medium text-slate-600 cursor-pointer">
+                      Cupon Activo
+                    </label>
+                  </div>
+                </div>
+
+                {discountMode === 'direct' && (
+                  <div className="flex items-end gap-2">
+                    <div className="flex-1">
+                      <InputNumber
+                        value={discountValue}
+                        onValueChange={(e) => setDiscountValue(e.value)}
+                        min={0}
+                        max={discountSubType === 'percentage' ? 100 : 9999999}
+                        minFractionDigits={2}
+                        maxFractionDigits={2}
+                        disabled={submitting}
+                        placeholder={discountSubType === 'fixed' ? 'Monto $' : 'Porcentaje %'}
+                        className="w-full"
+                        inputClassName="w-full rounded-lg border-slate-200 px-3 py-2 text-sm"
+                        pt={{ root: { className: 'w-full' } }}
+                      />
+                    </div>
+                    <Dropdown
+                      value={discountSubType}
+                      options={[
+                        { label: '$ Fijo', value: 'fixed' },
+                        { label: '% Porcentaje', value: 'percentage' },
+                      ]}
+                      onChange={(e) => { setDiscountSubType(e.value); setDiscountValue(null); }}
+                      disabled={submitting}
+                      className="w-36 text-sm"
+                      pt={{ root: { className: 'w-36' } }}
+                    />
+                  </div>
+                )}
+
+                {discountMode === 'coupon' && (
+                  <AutoComplete
+                    value={selectedCoupon}
+                    suggestions={couponSuggestions}
+                    completeMethod={searchCoupons}
+                    field="name"
+                    onChange={(e) => {
+                      if (typeof e.value === 'string') {
+                        setCouponQuery(e.value);
+                        setSelectedCoupon(null);
+                      } else {
+                        setSelectedCoupon(e.value);
+                        setCouponQuery('');
+                      }
+                    }}
+                    placeholder="Buscar cupon por nombre..."
+                    disabled={submitting}
+                    className="w-full"
+                    inputClassName="w-full rounded-lg border-slate-200 px-3 py-2 text-sm"
+                    pt={{ root: { className: 'w-full' } }}
+                    itemTemplate={(item) => (
+                      <div className="flex items-center justify-between px-2 py-1">
+                        <span className="text-sm font-medium text-slate-800">{item.name}</span>
+                        <span className="ml-2 rounded bg-indigo-50 px-1.5 py-0.5 text-xs font-semibold text-indigo-700">
+                          {item.type === 'percentage' ? `${item.value}%` : item.type === 'freebie_100' ? '100%' : `$${parseFloat(item.value).toFixed(2)}`}
+                        </span>
+                      </div>
+                    )}
+                  />
+                )}
+
+                {computedDiscount > 0 && (
+                  <div className="rounded-md bg-amber-50 border border-amber-200 px-3 py-2 text-center">
+                    <span className="text-xs text-amber-700 font-medium">Descuento aplicado</span>
+                    <p className="text-lg font-bold text-amber-800">
+                      -${computedDiscount.toLocaleString('es-MX', { minimumFractionDigits: 2 })}
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Totals breakdown */}
           <div className="rounded-lg bg-slate-50 p-3 text-sm">
             <div className="flex justify-between text-slate-600">
-              <span>Subtotal</span>
+              <span>Subtotal (bruto)</span>
+              <span>${totalGrossBefore.toLocaleString('es-MX', { minimumFractionDigits: 2 })}</span>
+            </div>
+            {computedDiscount > 0 && (
+              <div className="flex justify-between text-amber-700 font-medium">
+                <span>Descuento</span>
+                <span>-${computedDiscount.toLocaleString('es-MX', { minimumFractionDigits: 2 })}</span>
+              </div>
+            )}
+            <div className="flex justify-between text-slate-600">
+              <span>Subtotal Neto</span>
               <span>${subtotal.toLocaleString('es-MX', { minimumFractionDigits: 2 })}</span>
             </div>
             <div className="flex justify-between text-slate-600">

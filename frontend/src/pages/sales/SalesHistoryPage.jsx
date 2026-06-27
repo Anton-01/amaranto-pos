@@ -460,6 +460,11 @@ export default function SalesHistoryPage() {
           <Column body={vendorTemplate} header="Vendedor" />
           <Column body={paymentTemplate} header="Método de Pago" style={{ width: '140px' }} />
           <Column body={totalTemplate} header="Total" style={{ width: '100px' }} />
+          <Column body={(row) => {
+            const val = parseFloat(row.discount_total ?? 0);
+            if (val === 0) return <span className="text-xs text-slate-400">-</span>;
+            return <span className="text-sm font-semibold text-amber-600">-{fmt(val)}</span>;
+          }} header="Descuento" style={{ width: '100px' }} />
           <Column body={receivedTemplate} header="Recibido" style={{ width: '100px' }} />
           <Column body={changeTemplate} header="Cambio" style={{ width: '90px' }} />
           <Column body={statusTemplate} header="Estatus" style={{ width: '100px' }} />
@@ -573,6 +578,20 @@ export default function SalesHistoryPage() {
               </div>
 
               <div className="rounded-lg bg-slate-50 p-3">
+                {parseFloat(detailOrder.discount_total ?? 0) > 0 && (
+                  <div className="flex justify-between text-sm font-semibold text-amber-700">
+                    <span>
+                      Descuento
+                      {detailOrder.promotion && (
+                        <span className="ml-1 text-xs font-normal text-amber-600">({detailOrder.promotion.name})</span>
+                      )}
+                      {detailOrder.discount_type === 'percentage' && (
+                        <span className="ml-1 text-xs font-normal text-amber-600">({detailOrder.discount_value}%)</span>
+                      )}
+                    </span>
+                    <span>-{fmt(detailOrder.discount_total)}</span>
+                  </div>
+                )}
                 <div className="flex justify-between text-sm text-slate-600">
                   <span>Subtotal</span><span>{fmt(detailOrder.subtotal)}</span>
                 </div>

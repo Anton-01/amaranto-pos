@@ -17,7 +17,7 @@ class SalesExportController extends Controller
 {
     public function export(Request $request): StreamedResponse
     {
-        $query = Order::with(['paymentMethod', 'cashRegister.user'])
+        $query = Order::with(['paymentMethod', 'cashRegister.user', 'promotion'])
             ->orderByDesc('created_at');
 
         if ($request->filled('date_from')) {
@@ -60,7 +60,7 @@ class SalesExportController extends Controller
             'alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER, 'vertical' => Alignment::VERTICAL_CENTER],
         ];
 
-        $sheet->mergeCells('A1:H1');
+        $sheet->mergeCells('A1:I1');
         $sheet->setCellValue('A1', 'CRONOS POS - HISTORIAL DE TRANSACCIONES');
         $sheet->getStyle('A1')->applyFromArray($headerStyle);
         $sheet->getRowDimension(1)->setRowHeight(36);
@@ -71,15 +71,15 @@ class SalesExportController extends Controller
             'alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER],
         ];
 
-        $sheet->mergeCells('A2:H2');
+        $sheet->mergeCells('A2:I2');
         $sheet->setCellValue('A2', 'Sucursal: ' . $branchName);
         $sheet->getStyle('A2')->applyFromArray($subHeaderStyle);
 
-        $sheet->mergeCells('A3:H3');
+        $sheet->mergeCells('A3:I3');
         $sheet->setCellValue('A3', 'Periodo: ' . $dateFromLabel . ' a ' . $dateToLabel . '  |  Generado: ' . now()->format('d/m/Y H:i:s') . '  |  Registros: ' . $orders->count());
         $sheet->getStyle('A3')->applyFromArray($subHeaderStyle);
 
-        $columnHeaders = ['ID Ticket', 'Fecha/Hora', 'Vendedor', 'Metodo de Pago', 'Subtotal', 'IVA', 'Total', 'Estatus'];
+        $columnHeaders = ['ID Ticket', 'Fecha/Hora', 'Vendedor', 'Metodo de Pago', 'Descuento', 'Subtotal', 'IVA', 'Total', 'Estatus'];
         $colHeaderStyle = [
             'font' => ['bold' => true, 'size' => 10, 'color' => ['rgb' => 'FFFFFF']],
             'fill' => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['rgb' => '334155']],
@@ -91,7 +91,7 @@ class SalesExportController extends Controller
         foreach ($columnHeaders as $col => $header) {
             $sheet->setCellValue([$col + 1, $row], $header);
         }
-        $sheet->getStyle("A{$row}:H{$row}")->applyFromArray($colHeaderStyle);
+        $sheet->getStyle("A{$row}:I{$row}")->applyFromArray($colHeaderStyle);
         $sheet->getRowDimension($row)->setRowHeight(24);
 
         $dataStyle = [
@@ -105,29 +105,30 @@ class SalesExportController extends Controller
             $sheet->setCellValue("B{$row}", $order->created_at?->format('d/m/Y H:i'));
             $sheet->setCellValue("C{$row}", $order->cashRegister?->user?->name ?? 'N/A');
             $sheet->setCellValue("D{$row}", $order->paymentMethod?->name ?? 'N/A');
-            $sheet->setCellValue("E{$row}", (float) $order->subtotal);
-            $sheet->setCellValue("F{$row}", (float) $order->iva_total);
-            $sheet->setCellValue("G{$row}", (float) $order->total);
-            $sheet->setCellValue("H{$row}", $order->status === 'completed' ? 'Completado' : 'Cancelado');
+            $sheet->setCellValue("E{$row}", (float) ($order->discount_total ?? 0));
+            $sheet->setCellValue("F{$row}", (float) $order->subtotal);
+            $sheet->setCellValue("G{$row}", (float) $order->iva_total);
+            $sheet->setCellValue("H{$row}", (float) $order->total);
+            $sheet->setCellValue("I{$row}", $order->status === 'completed' ? 'Completado' : 'Cancelado');
 
-            $sheet->getStyle("E{$row}:G{$row}")->getNumberFormat()->setFormatCode('$#,##0.00');
+            $sheet->getStyle("E{$row}:H{$row}")->getNumberFormat()->setFormatCode('$#,##0.00');
             $row++;
         }
 
         $lastRow = $row - 1;
         if ($lastRow >= 6) {
-            $sheet->getStyle("A6:H{$lastRow}")->applyFromArray($dataStyle);
+            $sheet->getStyle("A6:I{$lastRow}")->applyFromArray($dataStyle);
 
             for ($r = 6; $r <= $lastRow; $r++) {
                 if ($r % 2 === 0) {
-                    $sheet->getStyle("A{$r}:H{$r}")->getFill()
+                    $sheet->getStyle("A{$r}:I{$r}")->getFill()
                         ->setFillType(Fill::FILL_SOLID)
                         ->getStartColor()->setRGB('F8FAFC');
                 }
             }
         }
 
-        foreach (range('A', 'H') as $col) {
+        foreach (range('A', 'I') as $col) {
             $sheet->getColumnDimension($col)->setAutoSize(true);
         }
 

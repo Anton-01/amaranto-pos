@@ -40,6 +40,7 @@
 | Correos Corporativos Centralizados | [🟢 Completado] | N/A | Master layout Blade, 4 Mailables ShouldQueue (Redis), preview routes local-only |
 | Visualizador In-App Plantillas Email | [🟢 Completado] | [🟢 Completado] | MailPreviewController render HTML, iframe srcDoc aislado, viewport Desktop/Mobile |
 | Motor Impresión Directa ESC/POS | [🟢 Completado y Operativo] | [🟢 Completado y Operativo] | mike42/escpos-php, DTO/Builder/Service SOLID, 58mm/32chars, QR nativo, multi-conector (network/file/windows) |
+| Descuentos y Cupones en Checkout | [🟢 Completado] | [🟢 Completado] | Descuento directo (fijo/porcentual) + cupón por autocomplete, audit trail en orders, propagación completa (ticket, historial, finanzas, Excel, ESC/POS) |
 
 ## 3. Detalle del Modulo Completado: Migraciones & Modelos Base
 
@@ -1740,3 +1741,130 @@ El contenedor del ticket usaba `width: 48mm` que a 96 DPI equivale a ~181px, per
 - `src/pages/catalog/ProductFormPage.jsx` — Prefijo AMR- forzado en alta, SKU readOnly en edicion, exclusion de SKU en payload de update
 - `src/pages/admin/UsersPage.jsx` — Eliminados campos contrasena del modal, banner informativo de contrasena auto-generada
 - `src/pages/profile/ProfilePage.jsx` — Reescrito: Dropdown lada internacional + InputMask, generador de contrasenas con Slider/Checkboxes/crypto, logout forzado post-cambio contrasena
+
+---
+
+## 27. Modulo de Descuentos y Cupones en Checkout [🟢 COMPLETADO]
+
+### Arquitectura del Sistema de Descuentos
+
+#### Tipos de Descuento Soportados
+1. **Descuento Directo Fijo** — El cajero ingresa un monto fijo en pesos (ej: $50.00) que se resta del total bruto
+2. **Descuento Directo Porcentual** — El cajero ingresa un porcentaje (ej: 10%) que se aplica sobre el total bruto
+3. **Cupon/Promocion** — El cajero busca una promocion activa via autocomplete predictivo; el tipo y valor se heredan de la promocion seleccionada
+
+#### Formula Matematica (Tax-Inclusive con Descuento)
+1. Se calcula `totalGross` = suma de (precio_unitario × cantidad) por cada item
+2. Se aplica descuento global: `discountTotal = valor_fijo` o `totalGross × porcentaje / 100`
+3. `totalAfterDiscount = totalGross - discountTotal`
+4. Desglose fiscal inverso: `subtotal = totalAfterDiscount / (1 + taxRate)`, `ivaTotal = totalAfterDiscount - subtotal`
+5. Distribucion proporcional del descuento en cada `order_item`: `itemDiscountShare = discountTotal × (itemFinal / totalGross)`
+
+### Migracion: 2026_06_27_000002_add_discount_columns_to_orders
+- ENUM nativo PostgreSQL `discount_type` con valores: `fixed`, `percentage`, `none`
+- Columnas agregadas a `orders`:
+  - `promotion_id` UUID FK nullable → `promotions(id) ON DELETE SET NULL`
+  - `discount_value` NUMERIC(12,2) default 0.00
+  - `discount_total` NUMERIC(12,2) default 0.00
+  - `discount_type` discount_type NOT NULL DEFAULT 'none'
+
+### Backend
+
+#### Modelo: Order (Modificado)
+- Agregados a `$fillable`: `promotion_id`, `discount_type`, `discount_value`, `discount_total`
+- Casts `decimal:2` para `discount_value` y `discount_total`
+- Nueva relacion: `promotion()` BelongsTo → Promotion
+
+#### PromotionSearchController (Nuevo — Invokable)
+- **Endpoint**: `GET /api/promotions/search?q=texto`
+- Filtra promociones por: `is_active = true`, `start_date <= now`, `end_date >= now`, `name ILIKE %query%`
+- Retorna max 10 resultados con campos: id, name, type, value, start_date, end_date
+
+#### StoreOrderRequest (Modificado)
+- Nuevas reglas: `discount_type` (nullable, in:fixed,percentage,none), `discount_value` (nullable, numeric, min:0), `promotion_id` (nullable, uuid, exists:promotions,id)
+
+#### OrderController::store() (Modificado)
+- Primer paso: calcula `totalGross` sin descuento (suma de precios × cantidades)
+- Segundo paso: aplica descuento global segun tipo (fixed o percentage)
+- Tercer paso: distribuye descuento proporcionalmente entre items para coherencia historica
+- Cada `order_item` recibe: `discount_amount_at_sale` = su parte proporcional del descuento global
+- `expected_closing_balance` del cash register se incrementa por `totalAfterDiscount`
+- Almacena `promotion_id`, `discount_type`, `discount_value`, `discount_total` en la orden
+- Relaciones `index()` y `show()` cargan `promotion` con eager loading
+
+#### TicketDTO (Modificado)
+- Nueva propiedad: `public ?string $descuentoTotal`
+
+#### TicketBuilder (Modificado)
+- `build()` calcula `$descuentoTotal` desde `$order->discount_total`
+- `buildTextLines()` inserta linea `Descuento: -$X.XX` antes del subtotal cuando hay descuento
+
+#### PrinterService (Modificado)
+- `printTotals()` imprime linea de descuento con enfasis (bold) antes del subtotal cuando `$dto->descuentoTotal` esta presente
+
+#### AnalyticsController (Modificado)
+- `financialSummary()` incluye `COALESCE(SUM(discount_total), 0) as total_discounts` en la consulta de ventas
+- Retorna `total_discounts` en el JSON de respuesta
+
+#### DailySummaryController (Modificado)
+- Agregado `COALESCE(SUM(discount_total), 0) as total_discounts` a la consulta de resumen diario
+
+#### SalesExportController (Modificado)
+- Agregada columna "Descuento" entre "Metodo de Pago" y "Subtotal" en el Excel .xlsx
+- Rango de columnas expandido de A-H a A-I
+- Carga relacion `promotion` en la consulta
+
+#### Ruta API (Modificada)
+- `GET /api/promotions/search` registrada ANTES de las rutas resource de promociones para evitar conflicto con {id}
+
+### Frontend
+
+#### CheckoutModal.jsx (Reescrito)
+- Nuevos imports: Checkbox, RadioButton, AutoComplete de PrimeReact
+- Estados: `applyDiscount`, `discountMode` (direct|coupon), `discountSubType` (fixed|percentage), `discountValue`, `couponQuery`, `couponSuggestions`, `selectedCoupon`
+- `computedDiscount` (useMemo): calcula descuento monetario real segun modo y tipo
+- `searchCoupons()`: llama `GET /api/promotions/search?q=` para autocomplete
+- UI: Checkbox "Aplicar descuento o cupon?" → panel condicional con RadioButtons (Directo/Cupon), InputNumber+Dropdown para directo, AutoComplete para cupon
+- Totals breakdown: Subtotal (bruto), Descuento (amber, condicional), Subtotal Neto, IVA, Total
+- Payload incluye `discount_type`, `discount_value`, `promotion_id`
+- `previewOrder` incluye `discount_total` para TicketPreview en tiempo real
+
+#### TicketPreview.jsx (Modificado)
+- Extrae `discountTotal` de los datos de la orden
+- Muestra linea `Descuento: -$X.XX` en seccion de totales cuando `discountTotal > 0`
+
+#### SalesHistoryPage.jsx (Modificado)
+- Columna "Descuento" en DataTable con estilo amber cuando `discount_total > 0`
+- Modal de detalle muestra info de descuento: nombre de promocion (si aplica), tipo y valor, monto total descontado
+
+#### FinanceDashboardPage.jsx (Modificado)
+- KPI "Ingreso Neto" muestra total de descuentos en texto amber cuando `total_discounts > 0`
+
+### Integridad de Modulos Existentes (Verificada)
+- **CashRegisterClosingController**: No requiere cambios — usa `SUM(total)` que ya refleja montos post-descuento; `expected_closing_balance` se incrementa por el total con descuento aplicado
+- **DashboardController**: No requiere cambios — usa `SUM(total)` que incluye descuentos naturalmente
+- **Cierre de Caja (Blind Closing)**: Integridad preservada — la formula `Fondo + Ventas - Retiros` opera sobre totales post-descuento
+
+### Archivos Creados en esta Fase
+**Backend (nuevos):**
+- `database/migrations/2026_06_27_000002_add_discount_columns_to_orders.php`
+- `app/Http/Controllers/Promotion/PromotionSearchController.php`
+
+### Archivos Modificados en esta Fase
+**Backend (modificados):**
+- `app/Models/Order.php` — promotion_id, discount_type, discount_value, discount_total en fillable/casts, relacion promotion()
+- `app/Http/Controllers/Sales/OrderController.php` — Logica de descuento global con distribucion proporcional, eager load promotion
+- `app/Http/Requests/Order/StoreOrderRequest.php` — Reglas discount_type, discount_value, promotion_id
+- `app/DTOs/TicketDTO.php` — Propiedad descuentoTotal
+- `app/Builders/TicketBuilder.php` — Linea de descuento en buildTextLines()
+- `app/Services/PrinterService.php` — Impresion de descuento con enfasis
+- `app/Http/Controllers/Finance/AnalyticsController.php` — total_discounts en financialSummary
+- `app/Http/Controllers/Sales/DailySummaryController.php` — total_discounts en resumen diario
+- `app/Http/Controllers/Sales/SalesExportController.php` — Columna Descuento en Excel, rango A-I
+- `routes/api.php` — Ruta GET /api/promotions/search
+
+**Frontend (modificados):**
+- `src/components/pos/CheckoutModal.jsx` — UI completa de descuentos/cupones con autocomplete, calculo reactivo, payload extendido
+- `src/components/pos/TicketPreview.jsx` — Linea de descuento en totales
+- `src/pages/sales/SalesHistoryPage.jsx` — Columna y detalle de descuento
+- `src/pages/finance/FinanceDashboardPage.jsx` — KPI con total_discounts

@@ -146,6 +146,9 @@ export default function FinanceDashboardPage() {
                 <p className="text-sm text-slate-500">Ingreso Neto (sin IVA)</p>
                 <p className="mt-1 text-2xl font-bold text-indigo-600">${fmt(summary.net_income)}</p>
                 <p className="mt-0.5 text-xs text-slate-400">IVA: ${fmt(summary.total_tax)} ({(summary.tax_rate * 100).toFixed(0)}%)</p>
+                {summary.total_discounts > 0 && (
+                  <p className="mt-0.5 text-xs font-medium text-amber-600">Descuentos: -${fmt(summary.total_discounts)}</p>
+                )}
               </div>
               <div className="rounded-xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
                 <p className="text-sm text-slate-500">Fondo Inversion ({summary.split.investment_pct}%)</p>

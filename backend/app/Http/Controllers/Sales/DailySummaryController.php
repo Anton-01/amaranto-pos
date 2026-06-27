@@ -18,6 +18,7 @@ class DailySummaryController extends Controller
                 DB::raw('COALESCE(SUM(total), 0) as gross_income'),
                 DB::raw('COALESCE(SUM(subtotal), 0) as net_income'),
                 DB::raw('COALESCE(SUM(iva_total), 0) as total_tax'),
+                DB::raw('COALESCE(SUM(discount_total), 0) as total_discounts'),
                 DB::raw('COUNT(*) as order_count')
             )
             ->where('status', 'completed')
@@ -57,6 +58,7 @@ class DailySummaryController extends Controller
                 'gross_income' => round((float) $sales->gross_income, 2),
                 'net_income' => round((float) $sales->net_income, 2),
                 'total_tax' => round((float) $sales->total_tax, 2),
+                'total_discounts' => round((float) $sales->total_discounts, 2),
                 'order_count' => (int) $sales->order_count,
                 'by_payment' => $byPayment->map(fn ($row) => [
                     'name' => $row->name,

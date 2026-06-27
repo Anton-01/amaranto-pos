@@ -22,7 +22,7 @@ class OrderController extends Controller
 {
     public function index(Request $request): JsonResponse
     {
-        $query = Order::with(['items.product', 'items.promotion', 'ticketConfig', 'paymentMethod', 'cashRegister.user'])
+        $query = Order::with(['items.product', 'items.promotion', 'ticketConfig', 'paymentMethod', 'cashRegister.user', 'promotion'])
             ->orderByDesc('created_at');
 
         if ($request->filled('date_from')) {
@@ -62,7 +62,7 @@ class OrderController extends Controller
 
     public function show(Order $order): JsonResponse
     {
-        $order->load(['items.product', 'items.promotion', 'ticketConfig', 'cashRegister.user', 'paymentMethod', 'canceledByUser']);
+        $order->load(['items.product', 'items.promotion', 'ticketConfig', 'cashRegister.user', 'paymentMethod', 'canceledByUser', 'promotion']);
 
         return response()->json([
             'status' => 'success',
@@ -130,17 +130,14 @@ class OrderController extends Controller
                 }
 
                 $finalLineTotal = $lineGross - $discount;
-                $netPrice = $finalLineTotal / (1 + $taxRate);
-                $tax = $finalLineTotal - $netPrice;
 
                 $itemsData[] = [
                     'product_id' => $product->id,
                     'promotion_id' => $promotionId,
                     'quantity' => $quantity,
-                    'base_price_at_sale' => round($netPrice / $quantity, 2),
-                    'discount_amount_at_sale' => round($discount, 2),
-                    'final_price_at_sale' => round($finalLineTotal, 2),
-                    'tax_amount_at_sale' => round($tax, 2),
+                    'line_gross' => $lineGross,
+                    'item_discount' => $discount,
+                    'final_line_total' => $finalLineTotal,
                 ];
 
                 $totalGross += $finalLineTotal;
@@ -150,33 +147,68 @@ class OrderController extends Controller
                 }
             }
 
-            $subtotal = round($totalGross / (1 + $taxRate), 2);
-            $ivaTotal = round($totalGross - $subtotal, 2);
-            $total = round($totalGross, 2);
+            $discountType = $request->input('discount_type', 'none');
+            $discountValue = (float) $request->input('discount_value', 0);
+            $globalPromotionId = $request->input('promotion_id');
+            $discountTotal = 0;
+
+            if ($discountType === 'fixed' && $discountValue > 0) {
+                $discountTotal = min($discountValue, $totalGross);
+            } elseif ($discountType === 'percentage' && $discountValue > 0) {
+                $discountTotal = round($totalGross * ($discountValue / 100), 2);
+                $discountTotal = min($discountTotal, $totalGross);
+            }
+
+            $totalAfterDiscount = round($totalGross - $discountTotal, 2);
+            $subtotal = round($totalAfterDiscount / (1 + $taxRate), 2);
+            $ivaTotal = round($totalAfterDiscount - $subtotal, 2);
+
+            $savedItems = [];
+            foreach ($itemsData as $itemData) {
+                $proportion = $totalGross > 0 ? $itemData['final_line_total'] / $totalGross : 0;
+                $itemDiscountShare = round($discountTotal * $proportion, 2);
+                $adjustedFinal = $itemData['final_line_total'] - $itemDiscountShare;
+                $netPrice = $adjustedFinal / (1 + $taxRate);
+                $tax = $adjustedFinal - $netPrice;
+
+                $savedItems[] = [
+                    'product_id' => $itemData['product_id'],
+                    'promotion_id' => $itemData['promotion_id'],
+                    'quantity' => $itemData['quantity'],
+                    'base_price_at_sale' => round($netPrice / $itemData['quantity'], 2),
+                    'discount_amount_at_sale' => round($itemData['item_discount'] + $itemDiscountShare, 2),
+                    'final_price_at_sale' => round($adjustedFinal, 2),
+                    'tax_amount_at_sale' => round($tax, 2),
+                ];
+            }
 
             $order = Order::create([
                 'cash_register_id' => $cashRegister->id,
                 'ticket_config_id' => $activeConfig->id,
                 'payment_method_id' => $request->payment_method_id,
+                'promotion_id' => $globalPromotionId,
+                'discount_type' => $discountType,
+                'discount_value' => $discountValue,
+                'discount_total' => round($discountTotal, 2),
                 'subtotal' => $subtotal,
                 'iva_total' => $ivaTotal,
-                'total' => $total,
+                'total' => $totalAfterDiscount,
                 'amount_received' => $request->amount_received,
                 'amount_change' => $request->amount_change,
                 'custom_legend' => $request->custom_legend,
                 'status' => 'completed',
             ]);
 
-            foreach ($itemsData as $itemData) {
+            foreach ($savedItems as $itemData) {
                 $order->items()->create($itemData);
             }
 
-            $cashRegister->increment('expected_closing_balance', $total);
+            $cashRegister->increment('expected_closing_balance', $totalAfterDiscount);
 
             return $order;
         });
 
-        $order->load(['items.product', 'items.promotion', 'ticketConfig', 'paymentMethod']);
+        $order->load(['items.product', 'items.promotion', 'ticketConfig', 'paymentMethod', 'promotion']);
 
         return response()->json([
             'status' => 'success',
