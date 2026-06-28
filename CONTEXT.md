@@ -2086,3 +2086,56 @@ El metodo `$printer->text()` de `mike42/escpos-php` valida que el input sea UTF-
 **Infraestructura (modificados):**
 - `backend/Dockerfile.dev` — Agregado `samba-client` a `apk add --no-cache`
 - `backend/Dockerfile.prod` — Agregado `samba-client` a `apk add --no-cache` (Stage 2 runtime)
+
+---
+
+## 30. Limpieza de Flujo de Checkout (Eliminacion window.print) & Correccion Modal Reimpresion [🟢 Completado]
+
+### Tarea 1: Eliminacion Definitiva de window.print() del Flujo de Checkout [🟢 Completado]
+
+#### Problema
+El flujo de cobro en el POS disparaba `window.print()` via `setTimeout(350ms)` despues de confirmar la venta, abriendo el dialogo de impresion nativo del navegador. Esto era un comportamiento heredado anterior al motor ESC/POS que ya opera de forma directa y silenciosa contra la ticketera fisica.
+
+#### Solucion Implementada
+
+##### POSPage.jsx
+- **Eliminado** `window.print()` de `handleCheckoutSuccess()` — el callback ahora solo cierra la modal, limpia el carrito y refresca datos
+- **Eliminados** los estados `activeOrderForPrinting` y `activeTicketConfigForPrinting` (ya no se necesita renderizar ticket oculto para impresion CSS)
+- **Eliminado** el `<div className="hidden print:block">` con TicketPreview que servia exclusivamente para la impresion via navegador
+- **Eliminado** el import de `TicketPreview` (ya no se usa en este componente)
+- **Simplificada** la firma de `handleCheckoutSuccess` a `(order)` — ya no recibe `ticketConfig`
+
+##### CheckoutModal.jsx
+- **Eliminado** import de `useCallback` (no utilizado)
+- **Actualizado** flujo post-venta exitosa: el `axios.post(/orders/${orderId}/print)` sigue siendo fire-and-forget contra el backend ESC/POS
+- **Toasts mejorados**: Exito de impresion muestra "Venta procesada e impresa con exito!". Si la ticketera falla, muestra "Venta procesada con exito!" + warning "No se pudo enviar a la ticketera. Puedes reimprimir desde el historial."
+- **Simplificada** la invocacion de `onSuccess` a `(order)` en las 3 rutas (online exitoso, offline intencional, offline por error de red)
+
+##### Flujo Resultante (Post-Cobro)
+1. Usuario confirma cobro → `POST /api/orders` crea la orden
+2. Backend ESC/POS recibe `POST /api/orders/{id}/print` de forma asincrona (fire-and-forget)
+3. Toast de confirmacion muestra exito (con o sin impresion fisica)
+4. Modal se cierra, carrito se limpia, catalogo se refresca
+5. **Ninguna ventana emergente del sistema operativo se abre**
+
+### Tarea 2: Correccion de Maquetacion en Modal de Reimpresion [🟢 Completado]
+
+#### Problema
+En la modal de reimpresion de SalesHistoryPage, los botones "Ticketera" y "Navegador" se encimaban sobre el titulo "Reimprimir Ticket" debido a `flex items-center justify-between` en una sola fila que colapsaba en pantallas medianas.
+
+#### Solucion Implementada (SalesHistoryPage.jsx)
+- **Contenedor principal**: Migrado de `<div className="p-6">` a `<div className="flex flex-col gap-4 p-6">` para flujo vertical con espaciado uniforme
+- **Cabecera**: El titulo "Reimprimir Ticket" ocupa su propio bloque sin competir por espacio horizontal
+- **Fila de acciones**: Los botones "Ticketera" y "Navegador" agrupados en `<div className="flex items-center justify-end gap-2 print:hidden">`, posicionados debajo del titulo y arriba del preview
+- **Cuerpo del ticket**: El TicketPreview con borde discontinuo mantiene margen superior limpio respecto a los botones via `gap-4` del contenedor padre
+- Ambos bloques (cabecera y acciones) ocultos en impresion con `print:hidden`
+
+### Tarea 3: Compilacion y Verificacion [🟢 Completado]
+- Build de Vite ejecutado exitosamente sin errores de CSS ni de JavaScript
+- La modal se adapta de forma responsiva gracias al flujo de columna vertical con `gap-4`
+
+### Archivos Modificados en esta Fase
+**Frontend (modificados):**
+- `src/components/pos/CheckoutModal.jsx` — Eliminado useCallback, toasts mejorados, onSuccess simplificado
+- `src/pages/pos/POSPage.jsx` — Eliminado window.print(), estados de impresion, div print:block, import TicketPreview
+- `src/pages/sales/SalesHistoryPage.jsx` — Modal reimpresion reestructurada con flex-col gap-4, titulo y botones en bloques separados

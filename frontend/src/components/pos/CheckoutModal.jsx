@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { Dialog } from 'primereact/dialog';
 import { Dropdown } from 'primereact/dropdown';
 import { InputNumber } from 'primereact/inputnumber';
@@ -179,7 +179,7 @@ export default function CheckoutModal({ visible, onHide, cart, taxRate = 0.16, o
         description: 'Se sincronizara automaticamente al recuperar conexion.',
       });
 
-      onSuccess?.(offlineOrder, ticketConfig);
+      onSuccess?.(offlineOrder);
       onHide();
       setSubmitting(false);
       return;
@@ -189,15 +189,14 @@ export default function CheckoutModal({ visible, onHide, cart, taxRate = 0.16, o
       const res = await api.post('/orders', payload);
       const order = res.data.data;
 
-      toast.success('Orden registrada exitosamente.');
-
       api.post(`/orders/${order.id}/print`).then(() => {
-        toast.success('Ticket enviado a la impresora.');
+        toast.success('Venta procesada e impresa con exito!');
       }).catch(() => {
-        toast.warning('No se pudo imprimir directamente. Usa la impresion del navegador.');
+        toast.success('Venta procesada con exito!');
+        toast.warning('No se pudo enviar a la ticketera. Puedes reimprimir desde el historial.');
       });
 
-      onSuccess?.(order, ticketConfig);
+      onSuccess?.(order);
 
       onHide();
     } catch (err) {
@@ -216,7 +215,7 @@ export default function CheckoutModal({ visible, onHide, cart, taxRate = 0.16, o
           description: 'Se sincronizara automaticamente al recuperar conexion.',
         });
 
-        onSuccess?.(offlineOrder, ticketConfig);
+        onSuccess?.(offlineOrder);
         onHide();
       } else if (data?.code === 'ERR_POS_CASH_REGISTER_REQUIRED') {
         toast.error('Caja no abierta', { description: data.message });

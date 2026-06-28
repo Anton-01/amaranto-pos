@@ -8,7 +8,6 @@ import { toast } from 'sonner';
 import api from '../../api/axios';
 import AppLayout from '../../components/layout/AppLayout';
 import CheckoutModal from '../../components/pos/CheckoutModal';
-import TicketPreview from '../../components/pos/TicketPreview';
 import useOnlineStatus, { getOfflineQueue, clearOfflineQueue } from '../../hooks/useOnlineStatus';
 
 export default function POSPage() {
@@ -28,9 +27,6 @@ export default function POSPage() {
   const [openingBalance, setOpeningBalance] = useState(0);
   const [openingCash, setOpeningCash] = useState(false);
   const [taxRate, setTaxRate] = useState(0.16);
-
-  const [activeOrderForPrinting, setActiveOrderForPrinting] = useState(null);
-  const [activeTicketConfigForPrinting, setActiveTicketConfigForPrinting] = useState(null);
 
   const checkCashRegister = useCallback(async () => {
     try {
@@ -237,17 +233,10 @@ export default function POSPage() {
   const ivaTotal = totalGross - subtotal;
   const total = totalGross;
 
-  const handleCheckoutSuccess = (order, ticketConfig) => {
-    setActiveOrderForPrinting(order);
-    setActiveTicketConfigForPrinting(ticketConfig);
-
+  const handleCheckoutSuccess = () => {
     setShowCheckout(false);
     setCart([]);
     fetchData();
-
-    setTimeout(() => {
-      window.print();
-    }, 350);
   };
 
   if (cashRegister === undefined) {
@@ -570,16 +559,6 @@ export default function POSPage() {
         isOnline={isOnline}
       />
 
-      {/* Hidden print-only ticket rendered outside any Dialog */}
-      {activeOrderForPrinting && activeTicketConfigForPrinting && (
-        <div className="hidden print:block">
-          <TicketPreview
-            order={activeOrderForPrinting}
-            ticketConfig={activeTicketConfigForPrinting}
-            taxRate={taxRate}
-          />
-        </div>
-      )}
     </AppLayout>
   );
 }
