@@ -2039,7 +2039,50 @@ Conector personalizado `SambaAuthPrintConnector` que implementa la interfaz `Pri
 | `PRINTER_CONNECTION_TYPE` | `network` (default) | `NetworkPrintConnector` (lee `PRINTER_IP_ADDRESS` + `PRINTER_PORT`) |
 
 ### Nota de Despliegue
-Requiere `smbclient` instalado en el contenedor Docker. Agregar al Dockerfile si no existe:
-```dockerfile
-RUN apk add --no-cache samba-client
-```
+El paquete `samba-client` esta instalado de forma permanente en ambos Dockerfiles (Dev y Prod) como dependencia del sistema en el bloque `apk add --no-cache`. No requiere instalacion manual adicional.
+
+---
+
+## 30. Bypass UTF-8 en PrinterService & Paridad samba-client en Docker [🟢 COMPLETADO]
+
+### Problema Diagnosticado
+El metodo `$printer->text()` de `mike42/escpos-php` valida que el input sea UTF-8 valido. Al convertir strings con caracteres espanoles (acentos, ene) a CP858 via `iconv()`, los bytes resultantes (ej: 0xA0 para 'a') son rechazados con la excepcion `Input must be UTF-8`, deteniendo fisicamente la impresion en textos como la direccion ("Morelia, ").
+
+### Solucion Implementada
+
+#### 1. Metodo writeRaw() — Bypass del Validador UTF-8
+- **Ubicacion**: `App\Services\PrinterService::writeRaw(Printer $printer, string $text): void`
+- Convierte texto UTF-8 a CP858 via `iconv('UTF-8', 'CP858//TRANSLIT//IGNORE', $text)`
+- Escribe los bytes crudos directamente al conector fisico via `$printer->getPrintConnector()->write()`, evadiendo completamente la validacion de encoding de la libreria
+- Fallback seguro: si `iconv()` retorna `false`, envia el texto original sin conversion
+
+#### 2. Eliminacion del Metodo encode()
+- Removido el metodo privado `encode(string $text): string` que era el helper anterior
+- Toda la logica de conversion de encoding esta ahora encapsulada en `writeRaw()`
+
+#### 3. Reemplazo Sistematico en Todos los Metodos de Impresion
+- `printHeader()`: 7 llamadas migradas de `$printer->text($this->encode(...))` a `$this->writeRaw($printer, ...)`
+- `printMetadata()`: 6 llamadas migradas
+- `printItems()`: 2 llamadas migradas + loop interno migrado
+- `printTotals()`: 10 llamadas migradas (incluyendo descuento, recibido, cambio)
+- `printFooter()`: 3 llamadas migradas + loop internos migrados
+- Comandos de control fisico preservados intactos: `setJustification()`, `setEmphasis()`, `feed()`, `cut()`, `qrCode()`, `selectCharacterTable()`
+
+#### 4. Consolidacion de samba-client en Infraestructura Docker
+- **Dockerfile.dev** (Alpine): `samba-client` agregado al bloque `apk add --no-cache` permanentemente
+- **Dockerfile.prod** (Alpine multi-stage): `samba-client` agregado al bloque `apk add --no-cache` del Stage 2 (runtime)
+- Garantiza que el binario `smbclient` este siempre en el `$PATH` del sistema al reconstruir contenedores locales o desplegar en DigitalOcean via CI/CD
+
+### Paridad de Entornos Verificada
+| Entorno | Dockerfile | samba-client | writeRaw() | Estado |
+| :--- | :--- | :--- | :--- | :--- |
+| Desarrollo Local | `backend/Dockerfile.dev` | [🟢 Instalado] | [🟢 Activo] | Operativo |
+| Produccion DigitalOcean | `backend/Dockerfile.prod` | [🟢 Instalado] | [🟢 Activo] | Operativo |
+
+### Archivos Modificados en esta Fase
+**Backend (modificados):**
+- `app/Services/PrinterService.php` — Removido `encode()`, agregado `writeRaw()`, reemplazadas todas las llamadas `$printer->text($this->encode(...))` por `$this->writeRaw($printer, ...)`
+
+**Infraestructura (modificados):**
+- `backend/Dockerfile.dev` — Agregado `samba-client` a `apk add --no-cache`
+- `backend/Dockerfile.prod` — Agregado `samba-client` a `apk add --no-cache` (Stage 2 runtime)
