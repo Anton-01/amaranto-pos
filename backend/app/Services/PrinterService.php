@@ -71,32 +71,38 @@ class PrinterService
 
     private function configureCodePage(Printer $printer): void
     {
-        // CP858 supports Spanish characters (ñ, accents)
         $printer->selectCharacterTable(13);
+    }
+
+    private function writeRaw(Printer $printer, string $text): void
+    {
+        $encoded = iconv('UTF-8', 'CP858//TRANSLIT//IGNORE', $text);
+
+        $printer->getPrintConnector()->write($encoded !== false ? $encoded : $text);
     }
 
     private function printHeader(Printer $printer, TicketDTO $dto): void
     {
         $printer->setJustification(Printer::JUSTIFY_CENTER);
         $printer->setEmphasis(true);
-        $printer->text($this->encode($dto->empresa) . "\n");
+        $this->writeRaw($printer, $dto->empresa . "\n");
         $printer->setEmphasis(false);
 
         if ($dto->rfc) {
-            $printer->text($this->encode('RFC: ' . $dto->rfc) . "\n");
+            $this->writeRaw($printer, 'RFC: ' . $dto->rfc . "\n");
         }
         if ($dto->direccion) {
             foreach ($this->builder->wrapText($dto->direccion, TicketBuilder::LINE_WIDTH) as $line) {
-                $printer->text($this->encode($line) . "\n");
+                $this->writeRaw($printer, $line . "\n");
             }
         }
         if ($dto->telefono) {
-            $printer->text($this->encode('Tel: ' . $dto->telefono) . "\n");
+            $this->writeRaw($printer, 'Tel: ' . $dto->telefono . "\n");
         }
         if ($dto->mensajeCabecera) {
             $printer->feed(1);
             foreach ($this->builder->wrapText($dto->mensajeCabecera, TicketBuilder::LINE_WIDTH) as $line) {
-                $printer->text($this->encode($line) . "\n");
+                $this->writeRaw($printer, $line . "\n");
             }
         }
     }
@@ -105,24 +111,24 @@ class PrinterService
     {
         $printer->setJustification(Printer::JUSTIFY_LEFT);
 
-        $printer->text($this->encode($this->builder->separator('=')) . "\n");
-        $printer->text($this->encode($this->builder->padLine('Folio:', $dto->folio)) . "\n");
-        $printer->text($this->encode($this->builder->padLine('Fecha:', $dto->fechaHora)) . "\n");
-        $printer->text($this->encode($this->builder->padLine('Pago:', $dto->metodoPago)) . "\n");
-        $printer->text($this->encode($this->builder->padLine('Operador:', $dto->operador)) . "\n");
-        $printer->text($this->encode($this->builder->separator('=')) . "\n");
+        $this->writeRaw($printer, $this->builder->separator('=') . "\n");
+        $this->writeRaw($printer, $this->builder->padLine('Folio:', $dto->folio) . "\n");
+        $this->writeRaw($printer, $this->builder->padLine('Fecha:', $dto->fechaHora) . "\n");
+        $this->writeRaw($printer, $this->builder->padLine('Pago:', $dto->metodoPago) . "\n");
+        $this->writeRaw($printer, $this->builder->padLine('Operador:', $dto->operador) . "\n");
+        $this->writeRaw($printer, $this->builder->separator('=') . "\n");
     }
 
     private function printItems(Printer $printer, TicketDTO $dto): void
     {
         $printer->setJustification(Printer::JUSTIFY_LEFT);
 
-        $printer->text($this->encode($this->builder->padLine('PRODUCTO', 'IMPORTE')) . "\n");
-        $printer->text($this->encode($this->builder->separator('-')) . "\n");
+        $this->writeRaw($printer, $this->builder->padLine('PRODUCTO', 'IMPORTE') . "\n");
+        $this->writeRaw($printer, $this->builder->separator('-') . "\n");
 
         foreach ($dto->items as $item) {
             foreach ($this->builder->formatProductLine($item) as $line) {
-                $printer->text($this->encode($line) . "\n");
+                $this->writeRaw($printer, $line . "\n");
             }
         }
     }
@@ -131,27 +137,27 @@ class PrinterService
     {
         $printer->setJustification(Printer::JUSTIFY_LEFT);
 
-        $printer->text($this->encode($this->builder->separator('-')) . "\n");
+        $this->writeRaw($printer, $this->builder->separator('-') . "\n");
 
         if ($dto->descuentoTotal) {
             $printer->setEmphasis(true);
-            $printer->text($this->encode($this->builder->padLine('Descuento:', '-' . $dto->descuentoTotal)) . "\n");
+            $this->writeRaw($printer, $this->builder->padLine('Descuento:', '-' . $dto->descuentoTotal) . "\n");
             $printer->setEmphasis(false);
         }
 
-        $printer->text($this->encode($this->builder->padLine('Subtotal:', $dto->subtotalNeto)) . "\n");
-        $printer->text($this->encode($this->builder->padLine($dto->ivaLabel . ':', $dto->ivaMonto)) . "\n");
-        $printer->text($this->encode($this->builder->separator('=')) . "\n");
+        $this->writeRaw($printer, $this->builder->padLine('Subtotal:', $dto->subtotalNeto) . "\n");
+        $this->writeRaw($printer, $this->builder->padLine($dto->ivaLabel . ':', $dto->ivaMonto) . "\n");
+        $this->writeRaw($printer, $this->builder->separator('=') . "\n");
 
         $printer->setEmphasis(true);
-        $printer->text($this->encode($this->builder->padLine('TOTAL:', $dto->totalPublico)) . "\n");
+        $this->writeRaw($printer, $this->builder->padLine('TOTAL:', $dto->totalPublico) . "\n");
         $printer->setEmphasis(false);
 
         if ($dto->recibido) {
-            $printer->text($this->encode($this->builder->separator('-')) . "\n");
-            $printer->text($this->encode($this->builder->padLine('Recibido:', $dto->recibido)) . "\n");
+            $this->writeRaw($printer, $this->builder->separator('-') . "\n");
+            $this->writeRaw($printer, $this->builder->padLine('Recibido:', $dto->recibido) . "\n");
             $printer->setEmphasis(true);
-            $printer->text($this->encode($this->builder->padLine('Cambio:', $dto->cambio ?? '$0.00')) . "\n");
+            $this->writeRaw($printer, $this->builder->padLine('Cambio:', $dto->cambio ?? '$0.00') . "\n");
             $printer->setEmphasis(false);
         }
     }
@@ -162,7 +168,7 @@ class PrinterService
             $printer->feed(1);
             $printer->setJustification(Printer::JUSTIFY_LEFT);
             foreach ($this->builder->wrapText($dto->leyendaPersonalizada, TicketBuilder::LINE_WIDTH) as $line) {
-                $printer->text($this->encode($line) . "\n");
+                $this->writeRaw($printer, $line . "\n");
             }
         }
 
@@ -170,13 +176,13 @@ class PrinterService
             $printer->feed(1);
             $printer->setJustification(Printer::JUSTIFY_CENTER);
             foreach ($this->builder->wrapText($dto->mensajePie, TicketBuilder::LINE_WIDTH) as $line) {
-                $printer->text($this->encode($line) . "\n");
+                $this->writeRaw($printer, $line . "\n");
             }
         }
 
         $printer->setJustification(Printer::JUSTIFY_CENTER);
         $printer->feed(1);
-        $printer->text($this->encode('v' . $dto->version) . "\n");
+        $this->writeRaw($printer, 'v' . $dto->version . "\n");
     }
 
     private function printQr(Printer $printer, TicketDTO $dto): void
@@ -184,12 +190,5 @@ class PrinterService
         $printer->feed(1);
         $printer->setJustification(Printer::JUSTIFY_CENTER);
         $printer->qrCode($dto->qrContent, Printer::QR_ECLEVEL_M, 5, Printer::QR_MODEL_2);
-    }
-
-    private function encode(string $text): string
-    {
-        $encoded = iconv('UTF-8', 'CP858//TRANSLIT//IGNORE', $text);
-
-        return $encoded !== false ? $encoded : $text;
     }
 }
