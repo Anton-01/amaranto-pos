@@ -172,7 +172,7 @@ export default function PromotionsPage() {
     const isCurrentlyActive = row.is_active && new Date(row.start_date) <= now && new Date(row.end_date) >= now;
     const label = isCurrentlyActive ? 'Vigente' : row.is_active ? 'Programada' : 'Inactiva';
     return (
-      <div className="flex flex-col items-center justify-center text-center w-full mx-auto p-1">
+      <div className="flex flex-col items-start gap-0.5">
         <InputSwitch
           checked={row.is_active}
           onChange={() => handleToggleStatus(row)}
@@ -274,7 +274,7 @@ export default function PromotionsPage() {
           <Column header="Productos" body={productsTemplate} style={{ width: '10%' }} />
           <Column field="start_date" header="Inicio" body={(r) => dateTemplate(r, 'start_date')} sortable style={{ width: '12%' }} />
           <Column field="end_date" header="Fin" body={(r) => dateTemplate(r, 'end_date')} sortable style={{ width: '12%' }} />
-          <Column field="is_active" header="Estatus" body={statusTemplate} sortable bodyClassName="text-center" style={{ width: '10%' }} />
+          <Column field="is_active" header="Estatus" body={statusTemplate} sortable style={{ width: '10%' }} />
           {canManage && <Column header="Acciones" body={actionsTemplate} style={{ width: '12%' }} />}
         </DataTable>
       </div>
