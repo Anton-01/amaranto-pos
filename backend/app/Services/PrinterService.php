@@ -4,12 +4,8 @@ namespace App\Services;
 
 use App\Builders\TicketBuilder;
 use App\DTOs\TicketDTO;
-use App\Services\PrintConnectors\SambaAuthPrintConnector;
-use Mike42\Escpos\PrintConnectors\FilePrintConnector;
-use Mike42\Escpos\PrintConnectors\NetworkPrintConnector;
-use Mike42\Escpos\PrintConnectors\PrintConnector;
+use Mike42\Escpos\PrintConnectors\DummyPrintConnector;
 use Mike42\Escpos\Printer;
-use RuntimeException;
 
 class PrinterService
 {
@@ -17,9 +13,9 @@ class PrinterService
         private readonly TicketBuilder $builder,
     ) {}
 
-    public function print(TicketDTO $dto): void
+    public function generateBase64(TicketDTO $dto): string
     {
-        $connector = $this->createConnector();
+        $connector = new DummyPrintConnector();
         $printer = new Printer($connector);
 
         try {
@@ -36,37 +32,8 @@ class PrinterService
         } finally {
             $printer->close();
         }
-    }
 
-    private function createConnector(): PrintConnector
-    {
-        $type = config('printer.connection_type', 'network');
-
-        return match ($type) {
-            'windows_share', 'smb', 'windows' => new SambaAuthPrintConnector(
-                config('printer.smb_host', 'localhost'),
-                config('printer.smb_share', 'printer'),
-                config('printer.smb_user'),
-                config('printer.smb_pass'),
-            ),
-            'linux_file', 'usb', 'file' => $this->createFileConnector(),
-            'network' => new NetworkPrintConnector(
-                config('printer.ip_address', '192.168.1.100'),
-                (int) config('printer.port', 9100),
-            ),
-            default => throw new RuntimeException("Tipo de conexión de impresora no soportado: {$type}"),
-        };
-    }
-
-    private function createFileConnector(): FilePrintConnector
-    {
-        $path = config('printer.file_path', '/dev/usb/lp0');
-
-        if (!file_exists($path)) {
-            throw new RuntimeException("Dispositivo de impresión no encontrado: {$path}");
-        }
-
-        return new FilePrintConnector($path);
+        return base64_encode($connector->getData());
     }
 
     private function configureCodePage(Printer $printer): void

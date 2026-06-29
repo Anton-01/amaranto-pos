@@ -15,6 +15,7 @@ import api from '../../api/axios';
 import AppLayout from '../../components/layout/AppLayout';
 import TicketPreview from '../../components/pos/TicketPreview';
 import { useAuth } from '../../context/AuthContext';
+import useQzPrinter from '../../hooks/useQzPrinter';
 
 const quickFilters = [
   { label: 'Hoy', value: 'today' },
@@ -34,6 +35,7 @@ export default function SalesHistoryPage() {
   const { user } = useAuth();
   const userRoles = user?.roles || [];
   const isAdminOrManager = userRoles.includes('admin') || userRoles.includes('manager');
+  const qzPrinter = useQzPrinter();
 
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -172,10 +174,18 @@ export default function SalesHistoryPage() {
   const handleDirectPrint = async (orderId) => {
     setDirectPrinting(true);
     try {
-      await api.post(`/orders/${orderId}/print`);
-      toast.success('Ticket enviado a la impresora.');
+      const res = await api.post(`/orders/${orderId}/print`);
+      const printerData = res.data.printer_data;
+      if (printerData && qzPrinter.connected) {
+        await qzPrinter.printRaw(printerData);
+        toast.success('Ticket enviado a la impresora.');
+      } else if (printerData) {
+        toast.warning('QZ Tray no conectado. Usa la impresion del navegador.');
+      } else {
+        toast.error('No se generaron datos de impresion.');
+      }
     } catch {
-      toast.error('No se pudo imprimir. Verifique la conexión de la impresora.');
+      toast.error('No se pudo imprimir. Verifique la conexion de la impresora.');
     } finally {
       setDirectPrinting(false);
     }
@@ -643,7 +653,7 @@ export default function SalesHistoryPage() {
               disabled={directPrinting}
               className="cursor-pointer rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-500"
               pt={{ root: { className: 'border-0' } }}
-              tooltip="Imprimir directo a impresora térmica ESC/POS"
+              tooltip="Imprimir via QZ Tray (ESC/POS directo)"
               tooltipOptions={{ position: 'top' }}
             />
             <Button
@@ -657,7 +667,9 @@ export default function SalesHistoryPage() {
             />
           </div>
           {printOrder && printTicketConfig && (
-            <TicketPreview order={printOrder} ticketConfig={printTicketConfig} taxRate={taxRate} />
+            <div className="rounded-lg border-2 border-dashed border-slate-300 bg-slate-50 p-3 flex justify-center">
+              <TicketPreview order={printOrder} ticketConfig={printTicketConfig} taxRate={taxRate} />
+            </div>
           )}
         </div>
       </Dialog>

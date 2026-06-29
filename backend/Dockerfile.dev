@@ -10,7 +10,6 @@ RUN apk add --no-cache \
     libjpeg-turbo-dev \
     oniguruma-dev \
     linux-headers \
-    samba-client \
     $PHPIZE_DEPS \
     && docker-php-ext-configure gd --with-freetype --with-jpeg \
     && docker-php-ext-install \

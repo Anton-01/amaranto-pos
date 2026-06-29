@@ -11,7 +11,7 @@ import api from '../../api/axios';
 import TicketPreview from './TicketPreview';
 import { addToOfflineQueue } from '../../hooks/useOnlineStatus';
 
-export default function CheckoutModal({ visible, onHide, cart, taxRate = 0.16, onSuccess, isOnline = true }) {
+export default function CheckoutModal({ visible, onHide, cart, taxRate = 0.16, onSuccess, isOnline = true, qzPrinter }) {
   const [paymentMethodId, setPaymentMethodId] = useState(null);
   const [paymentMethods, setPaymentMethods] = useState([]);
   const [customLegend, setCustomLegend] = useState('');
@@ -188,13 +188,21 @@ export default function CheckoutModal({ visible, onHide, cart, taxRate = 0.16, o
     try {
       const res = await api.post('/orders', payload);
       const order = res.data.data;
+      const printerData = res.data.printer_data;
 
-      api.post(`/orders/${order.id}/print`).then(() => {
-        toast.success('Venta procesada e impresa con exito!');
-      }).catch(() => {
+      if (printerData && qzPrinter?.connected) {
+        qzPrinter.printRaw(printerData).then(() => {
+          toast.success('Venta procesada e impresa con exito!');
+        }).catch(() => {
+          toast.success('Venta procesada con exito!');
+          toast.warning('No se pudo enviar a la ticketera. Puedes reimprimir desde el historial.');
+        });
+      } else {
         toast.success('Venta procesada con exito!');
-        toast.warning('No se pudo enviar a la ticketera. Puedes reimprimir desde el historial.');
-      });
+        if (!qzPrinter?.connected) {
+          toast.info('QZ Tray no conectado. Puedes reimprimir desde el historial.');
+        }
+      }
 
       onSuccess?.(order);
 
