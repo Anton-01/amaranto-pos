@@ -91,18 +91,24 @@ export default function ProductsPage() {
     setProducts(ps => ps.map(p => p.id === row.id ? { ...p, is_active: !prev } : p));
     try {
       await api.patch(`/products/${row.id}/toggle-status`);
+      toast.success('¡Estatus actualizado correctamente!');
     } catch {
+      toast.error('Error: No se pudo actualizar el estatus.');
       setProducts(ps => ps.map(p => p.id === row.id ? { ...p, is_active: prev } : p));
-      toast.error('Error: No se pudo actualizar el estatus del registro.');
     }
   };
 
   const statusTemplate = (row) => (
-    <InputSwitch
-      checked={row.is_active}
-      onChange={() => handleToggleStatus(row)}
-      style={{ cursor: 'pointer' }}
-    />
+    <div className="flex flex-col items-center gap-1">
+      <InputSwitch
+        checked={row.is_active}
+        onChange={() => handleToggleStatus(row)}
+        style={{ cursor: 'pointer' }}
+      />
+      <span className={`text-xs font-medium transition-colors duration-200 ${row.is_active ? 'text-emerald-600' : 'text-slate-500'}`}>
+        {row.is_active ? 'Activo' : 'Inactivo'}
+      </span>
+    </div>
   );
 
   const categoryTemplate = (row) => (

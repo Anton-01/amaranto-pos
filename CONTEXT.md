@@ -43,7 +43,8 @@
 | Visualizador In-App Plantillas Email | [🟢 Completado] | [🟢 Completado] | MailPreviewController render HTML, iframe srcDoc aislado, viewport Desktop/Mobile |
 | Motor Impresión QZ Tray + Firma Digital | [🟢 COMPLETADO Y OPERATIVO] | [🟢 COMPLETADO Y OPERATIVO] | mike42/escpos-php DummyPrintConnector→Base64, QZ Tray SDK WebSocket, firma RSA SHA512, certificado digital, qz.security hooks automáticos [🟢 COMPLETADO Y OPERATIVO] |
 | Descuentos y Cupones en Checkout | [🟢 Completado] | [🟢 Completado] | Descuento directo (fijo/porcentual) + cupón por autocomplete, audit trail en orders, propagación completa (ticket, historial, finanzas, Excel, ESC/POS) |
-| Estatus Inline (Toggle Switch) | [🟢 COMPLETADO Y OPERATIVO] | [🟢 COMPLETADO Y OPERATIVO] | InputSwitch en DataTables (Productos, Categorías, Promociones, Usuarios), PATCH endpoints, actualización optimista con rollback, Emerald/Slate CSS |
+| Estatus Inline (Toggle Switch) | [🟢 COMPLETADO Y OPERATIVO] | [🟢 COMPLETADO Y OPERATIVO] | InputSwitch en DataTables (Productos, Categorías, Promociones, Usuarios), PATCH endpoints, actualización optimista con rollback, Emerald/Slate CSS, etiquetas dinámicas (Activo/Inactivo) bajo cada switch, Toast éxito/error en cada mutación |
+| Selector de Impresoras Locales (QZ Tray) | [🟢 COMPLETADO Y OPERATIVO] | [🟢 COMPLETADO Y OPERATIVO] | PrinterSetupPanel en Configuración del Sistema, escaneo QZ Tray (qz.printers.find), Dropdown PrimeReact, persistencia localStorage (cronos_active_printer), integración checkout via useQzPrinter hook [🟢 COMPLETADO Y OPERATIVO] |
 
 ## 3. Detalle del Modulo Completado: Migraciones & Modelos Base
 
@@ -2364,3 +2365,55 @@ Reemplazar los Badges/Tags de texto estatico en las columnas "Estatus" de los Da
 - `src/pages/promotions/PromotionsPage.jsx` — InputSwitch con optimistic update + rollback + label contextual
 - `src/pages/admin/UsersPage.jsx` — InputSwitch con dialogo de confirmacion + self-guard
 - `src/index.css` — Estilos globales InputSwitch (Emerald/Slate)
+
+---
+
+## 33. Enriquecimiento ToggleSwitch + Panel de Configuracion de Impresora Local [🟢 COMPLETADO Y OPERATIVO]
+
+### Tarea 1: Etiquetas Dinamicas y Toast en ToggleSwitch Inline [🟢 Completado]
+
+#### Cambios en Todas las DataTables
+- **ProductsPage, CategoriesPage, PromotionsPage, UsersPage**: El `bodyTemplate` de la columna "Estatus" fue reestructurado a un layout vertical centrado (`flex flex-col items-center gap-1`)
+- Debajo de cada `<InputSwitch>`, se agrego una etiqueta `<span>` con texto dinamico:
+  - Activo: `text-emerald-600` con texto "Activo"
+  - Inactivo: `text-slate-500` con texto "Inactivo"
+  - Promociones: Labels contextuales "Vigente" (emerald), "Programada" (blue), "Inactiva" (slate)
+- Animacion suave via `transition-colors duration-200` en la etiqueta
+- **Toast de exito**: Al completarse `axios.patch`, se dispara `toast.success('¡Estatus actualizado correctamente!')`
+- **Toast de error**: En el bloque `catch`, se dispara `toast.error('Error: No se pudo actualizar el estatus.')` ANTES del rollback visual
+
+### Tarea 2: Panel de Configuracion de Impresora Local (PrinterSetupPanel) [🟢 Completado]
+
+#### Componente: PrinterSetupPanel.jsx
+- **Ubicacion**: `src/components/settings/PrinterSetupPanel.jsx`
+- Integrado como seccion inferior en `SystemSettingsPage` (`/admin/configuracion`)
+- **Conexion QZ Tray**: Al montar, verifica `qz.websocket.isActive()` y auto-conecta si esta desconectado
+- **Indicador de estado**: Tag PrimeReact en header — "QZ Tray Conectado" (success), "Conectando..." (warning), "QZ Tray Desconectado" (danger)
+- **Boton "Escanear Impresoras Locales"**: Icono `pi pi-refresh`, invoca `qz.printers.find()` de forma asincrona, mapea resultado en Dropdown PrimeReact
+- **Dropdown de impresoras**: Muestra nombres reales de impresoras fisicas detectadas por QZ Tray
+- **Persistencia**: Al guardar, almacena en `localStorage.setItem('cronos_active_printer', selectedPrinter)` y sincroniza con el hook `useQzPrinter`
+- **Inicializacion**: Lee `localStorage.getItem('cronos_active_printer')` al montar para mostrar la impresora previamente guardada
+- **Toast de confirmacion**: "Impresora [Nombre] configurada como predeterminada"
+- **Banner de advertencia**: Si QZ Tray no esta conectado, muestra banner amber informativo
+
+### Tarea 3: Sincronizacion del Checkout con LocalStorage [🟢 Completado]
+
+#### Migracion de Clave localStorage
+- Clave migrada de `qz_printer_name` a `cronos_active_printer` en `useQzPrinter.js`
+- El hook `printRaw()` lee `printerName` del state (inicializado desde `localStorage.getItem('cronos_active_printer')`)
+- Al momento de invocar `qz.configs.create(target)`, usa la impresora guardada o fallback a `qz.printers.getDefault()`
+- **CheckoutModal**: Tras cobro exitoso, `qzPrinter.printRaw(printerData)` despacha al hardware correcto seleccionado por el usuario
+- **SalesHistoryPage**: Reimpresion via QZ Tray tambien usa la misma impresora guardada
+
+### Archivos Creados en esta Fase
+**Frontend (nuevos):**
+- `src/components/settings/PrinterSetupPanel.jsx` — Panel de configuracion de impresora local con QZ Tray SDK
+
+### Archivos Modificados en esta Fase
+**Frontend (modificados):**
+- `src/pages/catalog/ProductsPage.jsx` — Label dinamica bajo InputSwitch + toast exito/error
+- `src/pages/catalog/CategoriesPage.jsx` — Label dinamica bajo InputSwitch + toast exito/error
+- `src/pages/promotions/PromotionsPage.jsx` — Label contextual bajo InputSwitch + toast exito/error
+- `src/pages/admin/UsersPage.jsx` — Label dinamica bajo InputSwitch (Activo/Inactivo)
+- `src/pages/admin/SystemSettingsPage.jsx` — Importa PrinterSetupPanel + useQzPrinter, renderiza panel de impresora debajo de TabView
+- `src/hooks/useQzPrinter.js` — Clave localStorage migrada de `qz_printer_name` a `cronos_active_printer`

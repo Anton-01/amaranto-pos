@@ -215,16 +215,21 @@ export default function UsersPage() {
     const isActive = row.status === 'active';
     const self = isSelf(row);
     return (
-      <InputSwitch
-        checked={isActive}
-        onChange={() => {
-          if (self) return;
-          setSuspendTarget(row);
-          setShowSuspend(true);
-        }}
-        disabled={self}
-        style={{ cursor: self ? 'not-allowed' : 'pointer' }}
-      />
+      <div className="flex flex-col items-center gap-1">
+        <InputSwitch
+          checked={isActive}
+          onChange={() => {
+            if (self) return;
+            setSuspendTarget(row);
+            setShowSuspend(true);
+          }}
+          disabled={self}
+          style={{ cursor: self ? 'not-allowed' : 'pointer' }}
+        />
+        <span className={`text-xs font-medium transition-colors duration-200 ${isActive ? 'text-emerald-600' : 'text-slate-500'}`}>
+          {isActive ? 'Activo' : 'Inactivo'}
+        </span>
+      </div>
     );
   };
 

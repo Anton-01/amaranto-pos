@@ -156,9 +156,10 @@ export default function PromotionsPage() {
     setPromotions(ps => ps.map(p => p.id === row.id ? { ...p, is_active: !prev } : p));
     try {
       await api.patch(`/promotions/${row.id}/toggle-status`);
+      toast.success('¡Estatus actualizado correctamente!');
     } catch {
+      toast.error('Error: No se pudo actualizar el estatus.');
       setPromotions(ps => ps.map(p => p.id === row.id ? { ...p, is_active: prev } : p));
-      toast.error('Error: No se pudo actualizar el estatus del registro.');
     }
   };
 
@@ -167,14 +168,14 @@ export default function PromotionsPage() {
     const isCurrentlyActive = row.is_active && new Date(row.start_date) <= now && new Date(row.end_date) >= now;
     const label = isCurrentlyActive ? 'Vigente' : row.is_active ? 'Programada' : 'Inactiva';
     return (
-      <div className="flex items-center gap-2">
+      <div className="flex flex-col items-center gap-1">
         <InputSwitch
           checked={row.is_active}
           onChange={() => handleToggleStatus(row)}
           disabled={!canManage}
           style={{ cursor: canManage ? 'pointer' : 'not-allowed' }}
         />
-        <span className={`text-xs font-medium ${isCurrentlyActive ? 'text-emerald-600' : row.is_active ? 'text-blue-600' : 'text-slate-400'}`}>
+        <span className={`text-xs font-medium transition-colors duration-200 ${isCurrentlyActive ? 'text-emerald-600' : row.is_active ? 'text-blue-600' : 'text-slate-500'}`}>
           {label}
         </span>
       </div>
