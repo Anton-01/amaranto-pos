@@ -215,7 +215,7 @@ export default function UsersPage() {
     const isActive = row.status === 'active';
     const self = isSelf(row);
     return (
-      <div className="flex flex-col items-center justify-center text-center w-full mx-auto p-1">
+      <div className="flex flex-col items-start gap-0.5">
         <InputSwitch
           checked={isActive}
           onChange={() => {
@@ -377,7 +377,7 @@ export default function UsersPage() {
         >
           <Column field="name" header="Usuario" body={nameTemplate} sortable style={{ width: '25%' }} />
           <Column field="roles" header="Rol" body={roleTemplate} style={{ width: '10%' }} />
-          <Column field="status" header="Estatus" body={statusTemplate} sortable bodyClassName="text-center" style={{ width: '10%' }} />
+          <Column field="status" header="Estatus" body={statusTemplate} sortable style={{ width: '10%' }} />
           <Column header="Sesion" body={sessionTemplate} style={{ width: '10%' }} />
           <Column field="created_at" header="Creado" body={dateTemplate} sortable style={{ width: '18%' }} />
           <Column header="Acciones" body={actionsTemplate} style={{ width: '27%' }} />

@@ -110,7 +110,7 @@ export default function CategoriesPage() {
   };
 
   const statusTemplate = (row) => (
-    <div className="flex flex-col items-center justify-center text-center w-full mx-auto p-1">
+    <div className="flex flex-col items-start gap-0.5">
       <InputSwitch
         checked={row.is_active}
         onChange={() => handleToggleStatus(row)}
@@ -188,7 +188,7 @@ export default function CategoriesPage() {
         >
           <Column field="name" header="Nombre" sortable className="font-medium" />
           <Column field="products_count" header="Productos" sortable className="text-center" />
-          <Column field="is_active" header="Estatus" body={statusTemplate} sortable bodyClassName="text-center" />
+          <Column field="is_active" header="Estatus" body={statusTemplate} sortable />
           <Column header="Acciones" body={actionsTemplate} className="w-32" />
         </DataTable>
       </div>

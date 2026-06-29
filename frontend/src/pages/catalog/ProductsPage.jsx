@@ -103,7 +103,7 @@ export default function ProductsPage() {
   };
 
   const statusTemplate = (row) => (
-    <div className="flex flex-col items-center justify-center text-center w-full mx-auto p-1">
+    <div className="flex flex-col items-start gap-0.5">
       <InputSwitch
         checked={row.is_active}
         onChange={() => handleToggleStatus(row)}
@@ -314,7 +314,6 @@ export default function ProductsPage() {
             filter
             filterElement={statusFilterTemplate}
             showFilterMenu={false}
-            bodyClassName="text-center"
             style={{ width: '8%' }}
           />
           <Column
