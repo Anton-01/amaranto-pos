@@ -6,13 +6,16 @@
 
 set -euo pipefail
 
+export DOCKER_BUILDKIT=1
+export COMPOSE_DOCKER_CLI_BUILD=1
+
 APP_DIR="/opt/cronos-pos"
 COMPOSE_FILE="docker-compose.prod.yml"
 LOG_FILE="/var/log/cronos-deploy.log"
-TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
 
 log() {
-    echo "[${TIMESTAMP}] $1" | tee -a "$LOG_FILE"
+    local current_time=$(date '+%Y-%m-%d %H:%M:%S')
+    echo "[${current_time}] $1" | tee -a "$LOG_FILE"
 }
 
 log "=========================================="

@@ -190,7 +190,7 @@ export default function CheckoutModal({ visible, onHide, cart, taxRate = 0.16, o
       const order = res.data.data;
       const printerData = res.data.printer_data;
 
-      if (printerData && qzPrinter?.connected) {
+      if (printerData && qzPrinter) {
         qzPrinter.printRaw(printerData).then(() => {
           toast.success('Venta procesada e impresa con exito!');
         }).catch(() => {
@@ -199,8 +199,10 @@ export default function CheckoutModal({ visible, onHide, cart, taxRate = 0.16, o
         });
       } else {
         toast.success('Venta procesada con exito!');
-        if (!qzPrinter?.connected) {
-          toast.info('QZ Tray no conectado. Puedes reimprimir desde el historial.');
+        if (!printerData) {
+          toast.info('No se genero ticket de impresion. Puedes reimprimir desde el historial.');
+        } else if (!qzPrinter) {
+          toast.info('QZ Tray no disponible. Puedes reimprimir desde el historial.');
         }
       }
 

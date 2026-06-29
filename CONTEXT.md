@@ -41,7 +41,7 @@
 | Resiliencia Local-First (Offline) | [🟢 Completado] | [🟢 Completado] | Hook useOnlineStatus, buffer LocalStorage, background sync, indicador amber en TopBar |
 | Correos Corporativos Centralizados | [🟢 Completado] | N/A | Master layout Blade, 4 Mailables ShouldQueue (Redis), preview routes local-only |
 | Visualizador In-App Plantillas Email | [🟢 Completado] | [🟢 Completado] | MailPreviewController render HTML, iframe srcDoc aislado, viewport Desktop/Mobile |
-| Motor Impresión QZ Tray + Firma Digital | [🟢 COMPLETADO Y OPERATIVO] | [🟢 COMPLETADO Y OPERATIVO] | mike42/escpos-php DummyPrintConnector→Base64, QZ Tray SDK WebSocket, firma RSA SHA512, certificado digital, qz.security hooks automáticos [🟢 COMPLETADO Y OPERATIVO] |
+| Motor Impresión QZ Tray + Firma Digital | [🟢 COMPLETADO Y OPERATIVO] | [🟢 COMPLETADO Y OPERATIVO] | SafeDummyPrintConnector (PHP 8 compatible), auto-impresión post-venta, QZ Tray SDK WebSocket, firma RSA SHA512, certificado digital, qz.security hooks automáticos [🟢 COMPLETADO Y OPERATIVO] |
 | Descuentos y Cupones en Checkout | [🟢 Completado] | [🟢 Completado] | Descuento directo (fijo/porcentual) + cupón por autocomplete, audit trail en orders, propagación completa (ticket, historial, finanzas, Excel, ESC/POS) |
 | Estatus Inline (Toggle Switch) | [🟢 COMPLETADO Y OPERATIVO] | [🟢 COMPLETADO Y OPERATIVO] | InputSwitch en DataTables (Productos, Categorías, Promociones, Usuarios), PATCH endpoints, actualización optimista con rollback, Emerald/Slate CSS, etiquetas dinámicas (Activo/Inactivo) bajo cada switch, Toast éxito/error en cada mutación |
 | Selector de Impresoras Locales (QZ Tray) | [🟢 COMPLETADO Y OPERATIVO] | [🟢 COMPLETADO Y OPERATIVO] | PrinterSetupPanel en Configuración del Sistema, escaneo QZ Tray (qz.printers.find), Dropdown PrimeReact, persistencia localStorage (cronos_active_printer), integración checkout via useQzPrinter hook [🟢 COMPLETADO Y OPERATIVO] |
@@ -2484,3 +2484,66 @@ En Alpine Linux, las subcarpetas de `storage/` (app/public, framework/cache, fra
 **Frontend (modificados):**
 - `index.html` — Titulo estatico "Amaranto POS"
 - `src/App.jsx` — Import usePageTitle, componente PageTitleManager dentro de BrowserRouter
+
+## Sprint de Correccion: Conector PHP 8, Auto-Impresion, Deploy y Titulos
+
+### Tarea 1: Conector de Memoria Seguro para PHP 8 [🟢 COMPLETADO Y OPERATIVO]
+
+#### Problema
+La libreria `mike42/escpos-php` lanzaba `TypeError: implode()` en `DummyPrintConnector.php` (linea 65) debido a incompatibilidad con el tipado estricto de PHP 8.x. Esto causaba que `printer_data` siempre fuera `null` en la respuesta de `POST /orders`, impidiendo la impresion automatica.
+
+#### Solucion
+- Creado `app/PrintConnectors/SafeDummyPrintConnector.php` implementando `Mike42\Escpos\PrintConnectors\PrintConnector` con tipado estricto de arrays compatible con PHP 8.x
+- Buffer interno `private array $buffer = []` con metodos `write()`, `getData()` (usa `implode('', $this->buffer)`), `clear()`, `finalize()`, `read()`
+- Refactorizado `app/Services/PrinterService.php` para instanciar `SafeDummyPrintConnector` en lugar del `DummyPrintConnector` del vendor
+
+### Tarea 2: Automatizacion de Impresion Post-Venta [🟢 COMPLETADO Y OPERATIVO]
+
+#### Problema
+Al registrar una venta con exito en el POS, el sistema guardaba la compra pero no disparaba la impresion del ticket de forma automatica debido a que `printer_data` era siempre `null` (causado por el TypeError de la Tarea 1).
+
+#### Solucion
+- Con el `SafeDummyPrintConnector` operativo, el `OrderController::store()` ahora genera correctamente el Base64 del ticket ESC/POS via `PrinterService::generateBase64()`
+- El flujo automatico en `CheckoutModal.jsx` ya existia (lineas 193-205): al recibir `printer_data` del backend, invoca `qzPrinter.printRaw(printerData)` enviando el Base64 a QZ Tray
+- Mejorada la condicion de impresion: ahora intenta imprimir si `qzPrinter` existe (no solo si esta conectado), ya que `printRaw()` auto-conecta via `useQzPrinter`
+- Mensajes de feedback mejorados: distingue entre falta de `printer_data` y falta de QZ Tray
+
+#### Flujo Completo Operativo
+1. Usuario confirma cobro en `CheckoutModal`
+2. `POST /orders` → `OrderController::store()` procesa venta en transaccion atomica
+3. Backend genera `printer_data` (Base64 ESC/POS) via `SafeDummyPrintConnector` + `PrinterService`
+4. Frontend recibe `res.data.printer_data`, invoca `qzPrinter.printRaw(printerData)`
+5. `useQzPrinter.printRaw()` auto-conecta QZ Tray si necesario, envia datos a impresora seleccionada
+6. Toast de exito confirma impresion o muestra fallback con opcion de reimprimir desde historial
+
+### Tarea 3: Titulos Dinamicos de Ventana [🟢 PREVIAMENTE COMPLETADO — VERIFICADO OPERATIVO]
+
+- Hook `usePageTitle` ya implementado con formato `"Amaranto POS - {Nombre del Modulo}"`
+- 21 rutas mapeadas + deteccion dinamica de edicion de productos
+- Fallback a `"Amaranto POS"` para rutas no mapeadas
+- Integrado via `PageTitleManager` en `App.jsx`
+
+### Tarea 4: Optimizacion de deploy.sh [🟢 COMPLETADO Y OPERATIVO]
+
+#### Problemas Resueltos
+1. **TIMESTAMP estatico**: La variable `TIMESTAMP` se evaluaba una sola vez al inicio del script, repitiendo el mismo valor en todos los logs
+2. **BuildKit no habilitado**: Sin `DOCKER_BUILDKIT=1` el build de Docker no aprovechaba cache de capas optimizado
+
+#### Cambios
+- Exportadas variables `DOCKER_BUILDKIT=1` y `COMPOSE_DOCKER_CLI_BUILD=1` al inicio del script
+- Refactorizada funcion `log()`: reemplazada variable estatica `$TIMESTAMP` por evaluacion en tiempo real `$(date '+%Y-%m-%d %H:%M:%S')` dentro de la funcion
+- Entrypoint de produccion (`docker-entrypoint.prod.sh`) ya contenia `rm -rf public/storage && php artisan storage:link --force || true` — verificado operativo
+
+### Archivos Creados
+**Backend (nuevos):**
+- `app/PrintConnectors/SafeDummyPrintConnector.php` — Conector de memoria PHP 8 compatible
+
+### Archivos Modificados
+**Backend (modificados):**
+- `app/Services/PrinterService.php` — Usa SafeDummyPrintConnector en lugar de DummyPrintConnector
+
+**Frontend (modificados):**
+- `src/components/pos/CheckoutModal.jsx` — Condicion de impresion mejorada, mensajes de feedback refinados
+
+**Infraestructura (modificados):**
+- `deploy.sh` — DOCKER_BUILDKIT=1, COMPOSE_DOCKER_CLI_BUILD=1, funcion log() con timestamp en tiempo real
