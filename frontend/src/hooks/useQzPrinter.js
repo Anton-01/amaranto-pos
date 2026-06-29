@@ -13,8 +13,8 @@ export default function useQzPrinter() {
     const isLocalDev = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
 
     qz.security.setCertificatePromise((resolve, reject) => {
-      api.get('/printer/certificate')
-        .then(res => resolve(res.data))
+      api.get('/printer/certificate', { responseType: 'text' })
+        .then(res => resolve(res.data.trim()))
         .catch(err => {
           if (isLocalDev) {
             resolve(null);
@@ -26,8 +26,8 @@ export default function useQzPrinter() {
 
     qz.security.setSignaturePromise((toSign) => {
       return (resolve, reject) => {
-        api.post('/printer/sign', { requestString: toSign })
-          .then(res => resolve(res.data))
+        api.post('/printer/sign', { requestString: toSign }, { responseType: 'text' })
+          .then(res => resolve(res.data.trim()))
           .catch(err => {
             if (isLocalDev) {
               resolve(null);

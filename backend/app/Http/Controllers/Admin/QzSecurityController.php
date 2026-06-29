@@ -3,12 +3,12 @@
 namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
-use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Http\Response;
 
 class QzSecurityController extends Controller
 {
-    public function sign(Request $request): JsonResponse
+    public function sign(Request $request): Response
     {
         $request->validate([
             'requestString' => 'required|string',
@@ -17,41 +17,34 @@ class QzSecurityController extends Controller
         $keyPath = storage_path('app/certs/private-key.pem');
 
         if (! file_exists($keyPath)) {
-            return response()->json([
-                'status' => 'error',
-                'code' => 'ERR_QZ_NO_PRIVATE_KEY',
-                'message' => 'La llave privada de QZ Tray no está configurada.',
-            ], 500);
+            return response('ERR_QZ_NO_PRIVATE_KEY', 500)
+                ->header('Content-Type', 'text/plain');
         }
 
         $privateKey = file_get_contents($keyPath);
         $pkeyResource = openssl_pkey_get_private($privateKey);
 
         if (! $pkeyResource) {
-            return response()->json([
-                'status' => 'error',
-                'code' => 'ERR_QZ_INVALID_KEY',
-                'message' => 'La llave privada de QZ Tray es inválida.',
-            ], 500);
+            return response('ERR_QZ_INVALID_KEY', 500)
+                ->header('Content-Type', 'text/plain');
         }
 
         openssl_sign($request->input('requestString'), $signature, $pkeyResource, OPENSSL_ALGO_SHA512);
 
-        return response()->json(base64_encode($signature));
+        return response(base64_encode($signature), 200)
+            ->header('Content-Type', 'text/plain');
     }
 
-    public function certificate(): JsonResponse
+    public function certificate(): Response
     {
         $certPath = storage_path('app/certs/digital-certificate.txt');
 
         if (! file_exists($certPath)) {
-            return response()->json([
-                'status' => 'error',
-                'code' => 'ERR_QZ_NO_CERTIFICATE',
-                'message' => 'El certificado digital de QZ Tray no está configurado.',
-            ], 500);
+            return response('ERR_QZ_NO_CERTIFICATE', 500)
+                ->header('Content-Type', 'text/plain');
         }
 
-        return response()->json(file_get_contents($certPath));
+        return response(file_get_contents($certPath), 200)
+            ->header('Content-Type', 'text/plain');
     }
 }
