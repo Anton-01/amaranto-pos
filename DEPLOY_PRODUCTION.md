@@ -219,22 +219,110 @@ Para el primer certificado SSL, es necesario que Nginx pueda responder en puerto
 
 ---
 
-## Paso 6: Primer Despliegue
+## Paso 6: Generar Certificados QZ Tray y Primer Despliegue
+
+La impresion en Cronos POS opera bajo el esquema **QZ Tray (client-side)**. El servidor genera comandos ESC/POS en memoria via `DummyPrintConnector` y los retorna como Base64 al frontend, que los despacha al hardware local a traves de QZ Tray via WebSocket. No se requieren paquetes SMB, Samba, CUPS ni configuraciones de firewall para el puerto 445.
+
+El backend firma cada solicitud de QZ Tray con RSA-SHA512 usando una llave privada almacenada en el Droplet. El certificado publico correspondiente se instala en cada maquina cliente.
+
+### 6.1 Generar llaves RSA para firma digital de QZ Tray
+
+Ejecutar los siguientes comandos directamente en el Droplet para crear las llaves dentro del almacenamiento persistente del backend:
 
 ```bash
 cd /opt/cronos-pos
 
-# Compilar y levantar todos los servicios
-docker compose -f docker-compose.prod.yml up --build -d
+# Crear el directorio seguro de certificados dentro del almacenamiento persistente del backend
+mkdir -p backend/storage/app/certs
 
-# Verificar que todos los contenedores estan corriendo
-docker compose -f docker-compose.prod.yml ps
+# Generar la llave privada RSA de 2048 bits
+openssl genrsa -out backend/storage/app/certs/private-key.pem 2048
+
+# Generar el certificado publico digital firmado por 10 años (3650 dias) sin interactividad
+openssl req -x509 -new -nodes \
+    -key backend/storage/app/certs/private-key.pem \
+    -days 3650 \
+    -out backend/storage/app/certs/digital-certificate.txt \
+    -subj "/C=MX/ST=Michoacan/L=Morelia/O=AntonLogic/CN=CronosPOS"
+
+# Asegurar los permisos correctos para que el contenedor de PHP (www-data) pueda leer la llave
+chmod 600 backend/storage/app/certs/private-key.pem
+chmod 644 backend/storage/app/certs/digital-certificate.txt
+```
+
+Verificar que los archivos se crearon correctamente:
+
+```bash
+ls -la backend/storage/app/certs/
+# Esperado:
+# -rw-------  private-key.pem    (solo lectura por el propietario)
+# -rw-r--r--  digital-certificate.txt  (lectura publica)
+```
+
+### 6.2 Descargar el certificado publico a las sucursales
+
+El archivo `digital-certificate.txt` debe copiarse a cada computadora fisica que ejecute QZ Tray. Desde tu **maquina local**, ejecutar:
+
+```bash
+# Descargar el certificado publico desde el Droplet via SCP
+scp root@IP_DEL_DROPLET:/opt/cronos-pos/backend/storage/app/certs/digital-certificate.txt ./
+
+# Alternativa con usuario deploy:
+scp deploy@IP_DEL_DROPLET:/opt/cronos-pos/backend/storage/app/certs/digital-certificate.txt ./
+```
+
+Una vez descargado, copiar el archivo `digital-certificate.txt` en la carpeta `auth/` de la instalacion de QZ Tray en cada maquina de sucursal:
+
+- **Windows**: `C:\Program Files\QZ Tray\auth\digital-certificate.txt`
+- **macOS**: `/Applications/QZ Tray.app/Contents/Resources/auth/digital-certificate.txt`
+- **Linux**: `/opt/qz-tray/auth/digital-certificate.txt`
+
+### 6.3 Primer despliegue de contenedores
+
+```bash
+cd /opt/cronos-pos
+
+# Detener cualquier servicio previo
+docker compose -f docker-compose.prod.yml down
+
+# Compilar y levantar todos los servicios desde cero
+docker compose -f docker-compose.prod.yml up -d --build
 
 # Ejecutar migraciones iniciales con seed
 docker compose -f docker-compose.prod.yml exec backend php artisan migrate --seed --force
 
-# Verificar logs
+# Limpiar y optimizar caches de Laravel
+docker compose -f docker-compose.prod.yml exec backend php artisan config:clear
+docker compose -f docker-compose.prod.yml exec backend php artisan optimize
+
+# Verificar que todos los contenedores estan corriendo
+docker compose -f docker-compose.prod.yml ps
+
+# Verificar logs (Ctrl+C para salir)
 docker compose -f docker-compose.prod.yml logs -f backend
+```
+
+### 6.4 Re-intento de despliegue limpio
+
+Si el despliegue falla o necesitas reconstruir desde cero (por ejemplo, tras corregir variables de entorno o actualizar Dockerfiles), ejecutar la siguiente secuencia completa:
+
+```bash
+cd /opt/cronos-pos
+
+# Detener y eliminar contenedores, redes y volumenes anonimos
+docker compose -f docker-compose.prod.yml down
+
+# Reconstruir imagenes y levantar servicios
+docker compose -f docker-compose.prod.yml up -d --build
+
+# Ejecutar migraciones pendientes
+docker compose -f docker-compose.prod.yml exec backend php artisan migrate --force
+
+# Limpiar caches obsoletas
+docker compose -f docker-compose.prod.yml exec backend php artisan config:clear
+
+# Optimizar rutas, config y vistas para produccion
+docker compose -f docker-compose.prod.yml exec backend php artisan optimize
 ```
 
 ---
