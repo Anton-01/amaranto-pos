@@ -1,6 +1,6 @@
 # ==============================================================
 # Cronos POS — Backend Production Dockerfile
-# Multi-stage build: PHP 8.3-FPM Alpine + Composer optimized
+# Multi-stage build: PHP 8.4-FPM Alpine + Composer optimized
 # Build context: monorepo root (.)
 # ==============================================================
 
@@ -20,7 +20,7 @@ RUN composer install \
     --ignore-platform-reqs
 
 # ---- Stage 2: Production runtime ----
-FROM php:8.3-fpm-alpine
+FROM php:8.4-fpm-alpine
 
 RUN apk add --no-cache \
     postgresql-dev \

@@ -160,7 +160,7 @@ nano .env.production
 
 ```bash
 # Generar APP_KEY (copiar el output al .env.production)
-docker run --rm php:8.3-cli php -r "echo 'base64:'.base64_encode(random_bytes(32)).PHP_EOL;"
+docker run --rm php:8.4-cli php -r "echo 'base64:'.base64_encode(random_bytes(32)).PHP_EOL;"
 
 # Generar claves de Reverb
 openssl rand -hex 16  # Para REVERB_APP_KEY
