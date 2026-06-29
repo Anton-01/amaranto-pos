@@ -17,14 +17,21 @@ class SafeDummyPrintConnector implements PrintConnector
     {
         return "";
     }
+
     public function finalize()
     {
         // No-op
     }
+    public function __destruct()
+    {
+        // No-op
+    }
+
     public function getData(): string
     {
         return implode('', $this->buffer);
     }
+
     public function clear(): void
     {
         $this->buffer = [];
