@@ -41,7 +41,7 @@
 | Resiliencia Local-First (Offline) | [🟢 Completado] | [🟢 Completado] | Hook useOnlineStatus, buffer LocalStorage, background sync, indicador amber en TopBar |
 | Correos Corporativos Centralizados | [🟢 Completado] | N/A | Master layout Blade, 4 Mailables ShouldQueue (Redis), preview routes local-only |
 | Visualizador In-App Plantillas Email | [🟢 Completado] | [🟢 Completado] | MailPreviewController render HTML, iframe srcDoc aislado, viewport Desktop/Mobile |
-| Motor Impresión Directa ESC/POS | [🟢 Completado y Operativo] | [🟢 Completado y Operativo] | mike42/escpos-php, DTO/Builder/Service SOLID, 58mm/32chars, QR nativo, multi-conector (network/file/SambaAuthPrintConnector con auth SMB) [🟢 COMPLETADO Y OPERATIVO] |
+| Motor Impresión QZ Tray + Firma Digital | [🟢 COMPLETADO Y OPERATIVO] | [🟢 COMPLETADO Y OPERATIVO] | mike42/escpos-php DummyPrintConnector→Base64, QZ Tray SDK WebSocket, firma RSA SHA512, certificado digital, qz.security hooks automáticos [🟢 COMPLETADO Y OPERATIVO] |
 | Descuentos y Cupones en Checkout | [🟢 Completado] | [🟢 Completado] | Descuento directo (fijo/porcentual) + cupón por autocomplete, audit trail en orders, propagación completa (ticket, historial, finanzas, Excel, ESC/POS) |
 
 ## 3. Detalle del Modulo Completado: Migraciones & Modelos Base
@@ -2139,3 +2139,131 @@ En la modal de reimpresion de SalesHistoryPage, los botones "Ticketera" y "Naveg
 - `src/components/pos/CheckoutModal.jsx` — Eliminado useCallback, toasts mejorados, onSuccess simplificado
 - `src/pages/pos/POSPage.jsx` — Eliminado window.print(), estados de impresion, div print:block, import TicketPreview
 - `src/pages/sales/SalesHistoryPage.jsx` — Modal reimpresion reestructurada con flex-col gap-4, titulo y botones en bloques separados
+
+---
+
+## 31. Migracion Definitiva a QZ Tray con Firma Digital RSA [🟢 COMPLETADO Y OPERATIVO]
+
+### Contexto de la Migracion
+Se migro el sistema de impresion de Cronos POS del esquema server-side (SambaAuthPrintConnector via smbclient) al esquema client-side con QZ Tray via WebSockets. La impresion ahora se procesa integramente del lado del cliente, eliminando la necesidad de que el servidor en la nube se comunique con el hardware local.
+
+### Tarea 1: Saneamiento de Infraestructura Docker (Dev y Prod) [🟢 Completado]
+
+#### Dockerfiles
+- **Dockerfile.dev**: Removido `samba-client` del bloque `apk add --no-cache`
+- **Dockerfile.prod**: Removido `samba-client` del bloque `apk add --no-cache` (Stage 2 runtime)
+- Las imagenes de contenedor quedan mas ligeras sin dependencias de Samba
+
+#### Variables de Entorno Obsoletas Purgadas
+- Eliminadas de `.env.example`: `PRINTER_CONNECTION_TYPE`, `PRINTER_SMB_HOST`, `PRINTER_SMB_SHARE`, `PRINTER_SMB_USER`, `PRINTER_SMB_PASS`, `PRINTER_IP_ADDRESS`, `PRINTER_PORT`, `PRINTER_FILE_PATH`
+- Eliminadas de `.env.production.example`: Mismas variables de impresora legacy
+- Eliminadas de `docker-compose.yml`: 8 variables `PRINTER_*` del servicio backend
+- Nuevas variables: `QZ_PRIVATE_KEY_PATH`, `QZ_CERTIFICATE_PATH`
+
+#### Archivos Eliminados
+- `app/Services/PrintConnectors/SambaAuthPrintConnector.php` — Conector SMB custom obsoleto
+
+### Tarea 2: Refactorizacion del Backend en Memoria (PrinterService) [🟢 Completado]
+
+#### PrinterService.php — DummyPrintConnector + Base64
+- Metodo `print()` reemplazado por `generateBase64(TicketDTO $dto): string`
+- Usa `DummyPrintConnector` de mike42/escpos-php para generar comandos ESC/POS en memoria
+- Retorna `base64_encode($connector->getData())` con todos los bytes ESC/POS
+- Preserva intacto: bypass UTF-8 (`writeRaw`), code page CP858, alineacion 32 chars, QR nativo, corte de papel
+- Eliminadas todas las dependencias de conectores fisicos (Network, File, Samba)
+
+#### PrintTicketController — Retorna printer_data
+- Ya no intenta imprimir fisicamente desde el servidor
+- Genera Base64 ESC/POS via PrinterService y lo retorna en `response.printer_data`
+
+#### OrderController::store — Incluye printer_data en respuesta de venta
+- Al crear una orden exitosa, genera automaticamente los datos ESC/POS en Base64
+- Los retorna en el campo `printer_data` de la respuesta JSON
+- El frontend intercepta este campo y lo despacha a QZ Tray
+
+### Tarea 3: Endpoint de Firma Criptografica (QzSecurityController) [🟢 Completado]
+
+#### Controlador: QzSecurityController
+- **Ubicacion**: `App\Http\Controllers\Admin\QzSecurityController`
+- **Endpoint sign**: `POST /api/printer/sign` — Recibe `requestString` (challenge QZ Tray), firma con SHA512+RSA via `openssl_sign()`, retorna Base64
+- **Endpoint certificate**: `GET /api/printer/certificate` — Retorna texto plano del certificado digital
+- Ambos protegidos por middleware `auth:sanctum` + `user.active`
+
+#### Llave Privada y Certificado
+- Directorio: `storage/app/certs/` con `.gitkeep`
+- Archivos esperados: `private-key.pem` (RSA), `digital-certificate.txt` (certificado publico QZ)
+- Las llaves NO se commitean al repositorio — se configuran manualmente en cada entorno
+
+#### Config actualizado
+- `config/printer.php` simplificado: solo `qz_private_key_path` y `qz_certificate_path`
+
+### Tarea 4: Frontend — QZ Tray SDK + Hook useQzPrinter [🟢 Completado]
+
+#### Dependencia: qz-tray ^2.2.6
+- Instalado via npm en `frontend/package.json`
+
+#### Hook: useQzPrinter.js
+- **Seguridad automatica**: Configura `qz.security.setCertificatePromise` (fetches certificado via API) y `qz.security.setSignaturePromise` (firma via API POST)
+- **Conexion WebSocket**: Auto-conecta al montar, auto-desconecta al desmontar
+- **Estado reactivo**: `connected` (boolean), `printerName` (persistido en localStorage bajo `qz_printer_name`)
+- **Metodos expuestos**: `connect()`, `disconnect()`, `listPrinters()`, `printRaw(base64Data)`, `savePrinterName(name)`
+- `printRaw()` usa la impresora guardada o la default del sistema
+
+#### Integracion en POSPage
+- Hook `useQzPrinter` inicializado en POSPage
+- Objeto `qzPrinter` pasado como prop a CheckoutModal
+- Conexion WebSocket se establece silenciosamente en segundo plano al cargar el POS
+
+### Tarea 5: Refactorizacion de Checkout y Modal de Reimpresion [🟢 Completado]
+
+#### CheckoutModal.jsx
+- Recibe prop `qzPrinter` desde POSPage
+- Tras cobro exitoso: intercepta `printer_data` de la respuesta API
+- Si QZ Tray esta conectado: despacha datos ESC/POS directamente via `qzPrinter.printRaw(printerData)`
+- Si no esta conectado: toast informativo "QZ Tray no conectado"
+- Eliminada dependencia de `api.post(/orders/${id}/print)` fire-and-forget del flujo anterior
+
+#### SalesHistoryPage.jsx — Modal Reimpresion
+- Hook `useQzPrinter` inicializado en SalesHistoryPage
+- Boton "Ticketera" ahora obtiene `printer_data` del endpoint `/orders/{id}/print` y lo despacha via QZ Tray
+- Layout del modal corregido con `flex flex-col gap-4 p-6`:
+  - Titulo en bloque independiente
+  - Fila de botones (Ticketera + Navegador) en bloque horizontal separado
+  - TicketPreview envuelto en tarjeta con `border-2 border-dashed border-slate-300` para previsualización limpia
+
+### Paridad de Entornos Verificada
+| Entorno | samba-client | QZ Tray | Firma Digital | Estado |
+| :--- | :--- | :--- | :--- | :--- |
+| Desarrollo Local (Docker) | [❌ Eliminado] | [🟢 Frontend] | [🟢 Backend RSA] | Operativo |
+| Produccion DigitalOcean | [❌ Eliminado] | [🟢 Frontend] | [🟢 Backend RSA] | Operativo |
+
+### Archivos Creados en esta Fase
+**Backend (nuevos):**
+- `app/Http/Controllers/Admin/QzSecurityController.php` — Endpoint firma RSA SHA512 + certificado
+- `storage/app/certs/.gitkeep` — Directorio para llaves de QZ Tray
+
+**Frontend (nuevos):**
+- `src/hooks/useQzPrinter.js` — Hook de conexion y despacho QZ Tray con firma automatica
+
+### Archivos Modificados en esta Fase
+**Backend (modificados):**
+- `app/Services/PrinterService.php` — Reescrito: DummyPrintConnector→Base64, eliminados conectores fisicos
+- `app/Http/Controllers/Admin/PrintTicketController.php` — Retorna printer_data Base64 en lugar de imprimir
+- `app/Http/Controllers/Sales/OrderController.php` — store() incluye printer_data en respuesta
+- `config/printer.php` — Simplificado a paths de QZ Tray
+- `routes/api.php` — 2 rutas nuevas: POST /api/printer/sign, GET /api/printer/certificate
+
+**Frontend (modificados):**
+- `src/components/pos/CheckoutModal.jsx` — Prop qzPrinter, despacho ESC/POS via QZ Tray post-cobro
+- `src/pages/pos/POSPage.jsx` — useQzPrinter hook, prop qzPrinter a CheckoutModal
+- `src/pages/sales/SalesHistoryPage.jsx` — useQzPrinter hook, reimpresion via QZ Tray, modal con borde discontinuo
+
+**Infraestructura (modificados):**
+- `backend/Dockerfile.dev` — Removido samba-client
+- `backend/Dockerfile.prod` — Removido samba-client
+- `backend/.env.example` — Purgadas variables PRINTER_*, agregadas QZ_*
+- `.env.production.example` — Purgadas variables PRINTER_*, agregadas QZ_*
+- `docker-compose.yml` — Eliminadas 8 variables PRINTER_* del servicio backend
+
+**Archivos Eliminados:**
+- `app/Services/PrintConnectors/SambaAuthPrintConnector.php` — Conector SMB obsoleto

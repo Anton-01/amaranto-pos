@@ -29,21 +29,13 @@ class PrintTicketController extends Controller
             ], 422);
         }
 
-        try {
-            $dto = $this->builder->build($order, $ticketConfig);
-            $this->printerService->print($dto);
+        $dto = $this->builder->build($order, $ticketConfig);
+        $printerData = $this->printerService->generateBase64($dto);
 
-            return response()->json([
-                'status' => 'success',
-                'message' => 'Ticket enviado a la impresora correctamente.',
-            ]);
-        } catch (\Throwable $e) {
-            return response()->json([
-                'status' => 'error',
-                'code' => 'ERR_PRINT_HARDWARE_FAILURE',
-                'message' => 'No se pudo imprimir el ticket. Verifique que la impresora esté conectada y encendida.',
-                'detail' => config('app.debug') ? $e->getMessage() : null,
-            ], 503);
-        }
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Datos de impresión generados correctamente.',
+            'printer_data' => $printerData,
+        ]);
     }
 }

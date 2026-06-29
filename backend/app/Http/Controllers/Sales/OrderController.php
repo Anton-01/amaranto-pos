@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Sales;
 
+use App\Builders\TicketBuilder;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Order\StoreOrderRequest;
 use App\Models\AuditLog;
@@ -15,11 +16,16 @@ use App\Models\TicketConfig;
 use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use App\Services\PrinterService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 
 class OrderController extends Controller
 {
+    public function __construct(
+        private readonly TicketBuilder $ticketBuilder,
+        private readonly PrinterService $printerService,
+    ) {}
     public function index(Request $request): JsonResponse
     {
         $query = Order::with(['items.product', 'items.promotion', 'ticketConfig', 'paymentMethod', 'cashRegister.user', 'promotion'])
@@ -208,11 +214,21 @@ class OrderController extends Controller
             return $order;
         });
 
-        $order->load(['items.product', 'items.promotion', 'ticketConfig', 'paymentMethod', 'promotion']);
+        $order->load(['items.product', 'items.promotion', 'ticketConfig', 'paymentMethod', 'cashRegister.user', 'promotion']);
+
+        $printerData = null;
+        if ($order->ticketConfig) {
+            try {
+                $dto = $this->ticketBuilder->build($order, $order->ticketConfig);
+                $printerData = $this->printerService->generateBase64($dto);
+            } catch (\Throwable) {
+            }
+        }
 
         return response()->json([
             'status' => 'success',
             'data' => $order,
+            'printer_data' => $printerData,
             'metadata' => ['message' => 'Orden procesada exitosamente.'],
         ], 201);
     }
