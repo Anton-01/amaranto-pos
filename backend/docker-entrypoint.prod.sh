@@ -3,11 +3,10 @@ set -e
 
 echo "=== Cronos POS Backend — Production Entrypoint ==="
 
-# Storage symlink
-if [ ! -L "public/storage" ]; then
-    echo "→ Creating storage symlink..."
-    php artisan storage:link
-fi
+# Storage symlink (resilient: clean stale links/dirs before re-creating)
+echo "→ Ensuring storage symlink..."
+rm -rf public/storage
+php artisan storage:link --force || true
 
 # Production cache optimization
 echo "→ Building production caches..."

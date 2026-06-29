@@ -56,7 +56,8 @@ COPY backend/ .
 
 COPY --from=vendor /app/vendor ./vendor
 
-RUN chown -R www-data:www-data storage bootstrap/cache \
+RUN mkdir -p storage/app/public storage/framework/cache storage/framework/sessions storage/framework/views storage/logs bootstrap/cache \
+    && chown -R www-data:www-data /var/www/html/storage /var/www/html/bootstrap/cache \
     && chmod -R 775 storage bootstrap/cache
 
 COPY backend/docker-entrypoint.prod.sh /usr/local/bin/docker-entrypoint.sh
