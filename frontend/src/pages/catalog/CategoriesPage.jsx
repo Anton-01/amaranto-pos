@@ -98,15 +98,19 @@ export default function CategoriesPage() {
     setCategories(cs => cs.map(c => c.id === row.id ? { ...c, is_active: !prev } : c));
     try {
       await api.patch(`/categories/${row.id}/toggle-status`);
-      toast.success('¡Estatus actualizado correctamente!');
+      if (!prev) {
+        toast.success('¡Registro activado con éxito!');
+      } else {
+        toast.info('¡Registro desactivado con éxito!');
+      }
     } catch {
-      toast.error('Error: No se pudo actualizar el estatus.');
+      toast.error('Error: No se pudo cambiar el estado del registro.');
       setCategories(cs => cs.map(c => c.id === row.id ? { ...c, is_active: prev } : c));
     }
   };
 
   const statusTemplate = (row) => (
-    <div className="flex flex-col items-center gap-1">
+    <div className="flex flex-col items-center justify-center text-center w-full mx-auto p-1">
       <InputSwitch
         checked={row.is_active}
         onChange={() => handleToggleStatus(row)}
@@ -184,7 +188,7 @@ export default function CategoriesPage() {
         >
           <Column field="name" header="Nombre" sortable className="font-medium" />
           <Column field="products_count" header="Productos" sortable className="text-center" />
-          <Column field="is_active" header="Estatus" body={statusTemplate} sortable />
+          <Column field="is_active" header="Estatus" body={statusTemplate} sortable bodyClassName="text-center" />
           <Column header="Acciones" body={actionsTemplate} className="w-32" />
         </DataTable>
       </div>

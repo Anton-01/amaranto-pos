@@ -91,15 +91,19 @@ export default function ProductsPage() {
     setProducts(ps => ps.map(p => p.id === row.id ? { ...p, is_active: !prev } : p));
     try {
       await api.patch(`/products/${row.id}/toggle-status`);
-      toast.success('¡Estatus actualizado correctamente!');
+      if (!prev) {
+        toast.success('¡Registro activado con éxito!');
+      } else {
+        toast.info('¡Registro desactivado con éxito!');
+      }
     } catch {
-      toast.error('Error: No se pudo actualizar el estatus.');
+      toast.error('Error: No se pudo cambiar el estado del registro.');
       setProducts(ps => ps.map(p => p.id === row.id ? { ...p, is_active: prev } : p));
     }
   };
 
   const statusTemplate = (row) => (
-    <div className="flex flex-col items-center gap-1">
+    <div className="flex flex-col items-center justify-center text-center w-full mx-auto p-1">
       <InputSwitch
         checked={row.is_active}
         onChange={() => handleToggleStatus(row)}
@@ -310,6 +314,7 @@ export default function ProductsPage() {
             filter
             filterElement={statusFilterTemplate}
             showFilterMenu={false}
+            bodyClassName="text-center"
             style={{ width: '8%' }}
           />
           <Column

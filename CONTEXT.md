@@ -2373,14 +2373,16 @@ Reemplazar los Badges/Tags de texto estatico en las columnas "Estatus" de los Da
 ### Tarea 1: Etiquetas Dinamicas y Toast en ToggleSwitch Inline [🟢 Completado]
 
 #### Cambios en Todas las DataTables
-- **ProductsPage, CategoriesPage, PromotionsPage, UsersPage**: El `bodyTemplate` de la columna "Estatus" fue reestructurado a un layout vertical centrado (`flex flex-col items-center gap-1`)
+- **ProductsPage, CategoriesPage, PromotionsPage, UsersPage**: El `bodyTemplate` de la columna "Estatus" fue reestructurado a un layout vertical centrado (`flex flex-col items-center justify-center text-center w-full mx-auto p-1`)
+- Columna `<Column>` con `bodyClassName="text-center"` para forzar centrado absoluto de la celda
 - Debajo de cada `<InputSwitch>`, se agrego una etiqueta `<span>` con texto dinamico:
   - Activo: `text-emerald-600` con texto "Activo"
   - Inactivo: `text-slate-500` con texto "Inactivo"
   - Promociones: Labels contextuales "Vigente" (emerald), "Programada" (blue), "Inactiva" (slate)
 - Animacion suave via `transition-colors duration-200` en la etiqueta
-- **Toast de exito**: Al completarse `axios.patch`, se dispara `toast.success('¡Estatus actualizado correctamente!')`
-- **Toast de error**: En el bloque `catch`, se dispara `toast.error('Error: No se pudo actualizar el estatus.')` ANTES del rollback visual
+- **Toast contextual de activacion**: `toast.success('¡Registro activado con éxito!')` cuando el registro se enciende
+- **Toast contextual de desactivacion**: `toast.info('¡Registro desactivado con éxito!')` cuando el registro se apaga (estilo informativo neutral)
+- **Toast de error**: `toast.error('Error: No se pudo cambiar el estado del registro.')` en el bloque `catch` ANTES del rollback visual
 
 ### Tarea 2: Panel de Configuracion de Impresora Local (PrinterSetupPanel) [🟢 Completado]
 
@@ -2396,7 +2398,7 @@ Reemplazar los Badges/Tags de texto estatico en las columnas "Estatus" de los Da
 - **Toast de confirmacion**: "Impresora [Nombre] configurada como predeterminada"
 - **Banner de advertencia**: Si QZ Tray no esta conectado, muestra banner amber informativo
 
-### Tarea 3: Sincronizacion del Checkout con LocalStorage [🟢 Completado]
+### Tarea 3: Sincronizacion del Checkout con LocalStorage + Seguridad QZ Tray [🟢 Completado]
 
 #### Migracion de Clave localStorage
 - Clave migrada de `qz_printer_name` a `cronos_active_printer` en `useQzPrinter.js`
@@ -2405,15 +2407,21 @@ Reemplazar los Badges/Tags de texto estatico en las columnas "Estatus" de los Da
 - **CheckoutModal**: Tras cobro exitoso, `qzPrinter.printRaw(printerData)` despacha al hardware correcto seleccionado por el usuario
 - **SalesHistoryPage**: Reimpresion via QZ Tray tambien usa la misma impresora guardada
 
+#### Promesas de Seguridad QZ Tray (Certificado + Firma RSA-SHA512)
+- `qz.security.setCertificatePromise()` consume `GET /api/printer/certificate` para obtener el certificado publico
+- `qz.security.setSignaturePromise()` consume `POST /api/printer/sign` para firmar cada request con RSA-SHA512
+- **Fallback desarrollo**: En localhost/127.0.0.1, si los endpoints fallan (archivos .pem no configurados), resuelve con `null` permitiendo modo unsigned sin alertas bloqueantes
+- **Produccion**: Si los endpoints fallan fuera de localhost, rechaza la promesa con mensaje descriptivo para deteccion de errores
+
 ### Archivos Creados en esta Fase
 **Frontend (nuevos):**
 - `src/components/settings/PrinterSetupPanel.jsx` — Panel de configuracion de impresora local con QZ Tray SDK
 
 ### Archivos Modificados en esta Fase
 **Frontend (modificados):**
-- `src/pages/catalog/ProductsPage.jsx` — Label dinamica bajo InputSwitch + toast exito/error
-- `src/pages/catalog/CategoriesPage.jsx` — Label dinamica bajo InputSwitch + toast exito/error
-- `src/pages/promotions/PromotionsPage.jsx` — Label contextual bajo InputSwitch + toast exito/error
-- `src/pages/admin/UsersPage.jsx` — Label dinamica bajo InputSwitch (Activo/Inactivo)
+- `src/pages/catalog/ProductsPage.jsx` — Centrado absoluto de celda + toast contextual activado/desactivado
+- `src/pages/catalog/CategoriesPage.jsx` — Centrado absoluto de celda + toast contextual activado/desactivado
+- `src/pages/promotions/PromotionsPage.jsx` — Centrado absoluto de celda + toast contextual activado/desactivado
+- `src/pages/admin/UsersPage.jsx` — Centrado absoluto de celda con bodyClassName
 - `src/pages/admin/SystemSettingsPage.jsx` — Importa PrinterSetupPanel + useQzPrinter, renderiza panel de impresora debajo de TabView
-- `src/hooks/useQzPrinter.js` — Clave localStorage migrada de `qz_printer_name` a `cronos_active_printer`
+- `src/hooks/useQzPrinter.js` — Promesas de seguridad con fallback graceful para localhost, clave localStorage cronos_active_printer
