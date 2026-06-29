@@ -10,17 +10,31 @@ export default function useQzPrinter() {
   const connectingRef = useRef(false);
 
   useEffect(() => {
+    const isLocalDev = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+
     qz.security.setCertificatePromise((resolve, reject) => {
       api.get('/printer/certificate')
         .then(res => resolve(res.data))
-        .catch(reject);
+        .catch(err => {
+          if (isLocalDev) {
+            resolve(null);
+          } else {
+            reject('No se pudo recuperar el certificado de impresión: ' + err);
+          }
+        });
     });
 
     qz.security.setSignaturePromise((toSign) => {
       return (resolve, reject) => {
         api.post('/printer/sign', { requestString: toSign })
           .then(res => resolve(res.data))
-          .catch(reject);
+          .catch(err => {
+            if (isLocalDev) {
+              resolve(null);
+            } else {
+              reject('Error en el handshake de firma digital: ' + err);
+            }
+          });
       };
     });
   }, []);

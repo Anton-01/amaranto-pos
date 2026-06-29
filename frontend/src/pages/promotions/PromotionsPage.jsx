@@ -156,9 +156,13 @@ export default function PromotionsPage() {
     setPromotions(ps => ps.map(p => p.id === row.id ? { ...p, is_active: !prev } : p));
     try {
       await api.patch(`/promotions/${row.id}/toggle-status`);
-      toast.success('¡Estatus actualizado correctamente!');
+      if (!prev) {
+        toast.success('¡Registro activado con éxito!');
+      } else {
+        toast.info('¡Registro desactivado con éxito!');
+      }
     } catch {
-      toast.error('Error: No se pudo actualizar el estatus.');
+      toast.error('Error: No se pudo cambiar el estado del registro.');
       setPromotions(ps => ps.map(p => p.id === row.id ? { ...p, is_active: prev } : p));
     }
   };
@@ -168,7 +172,7 @@ export default function PromotionsPage() {
     const isCurrentlyActive = row.is_active && new Date(row.start_date) <= now && new Date(row.end_date) >= now;
     const label = isCurrentlyActive ? 'Vigente' : row.is_active ? 'Programada' : 'Inactiva';
     return (
-      <div className="flex flex-col items-center gap-1">
+      <div className="flex flex-col items-center justify-center text-center w-full mx-auto p-1">
         <InputSwitch
           checked={row.is_active}
           onChange={() => handleToggleStatus(row)}
@@ -270,7 +274,7 @@ export default function PromotionsPage() {
           <Column header="Productos" body={productsTemplate} style={{ width: '10%' }} />
           <Column field="start_date" header="Inicio" body={(r) => dateTemplate(r, 'start_date')} sortable style={{ width: '12%' }} />
           <Column field="end_date" header="Fin" body={(r) => dateTemplate(r, 'end_date')} sortable style={{ width: '12%' }} />
-          <Column field="is_active" header="Estatus" body={statusTemplate} sortable style={{ width: '10%' }} />
+          <Column field="is_active" header="Estatus" body={statusTemplate} sortable bodyClassName="text-center" style={{ width: '10%' }} />
           {canManage && <Column header="Acciones" body={actionsTemplate} style={{ width: '12%' }} />}
         </DataTable>
       </div>
