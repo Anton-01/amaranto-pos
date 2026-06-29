@@ -2425,3 +2425,62 @@ Reemplazar los Badges/Tags de texto estatico en las columnas "Estatus" de los Da
 - `src/pages/admin/UsersPage.jsx` — Centrado absoluto de celda con bodyClassName
 - `src/pages/admin/SystemSettingsPage.jsx` — Importa PrinterSetupPanel + useQzPrinter, renderiza panel de impresora debajo de TabView
 - `src/hooks/useQzPrinter.js` — Promesas de seguridad con fallback graceful para localhost, clave localStorage cronos_active_printer
+
+---
+
+## 28. Resiliencia Entrypoint Produccion & Titulos Dinamicos de Ventana [🟢 COMPLETADO Y OPERATIVO]
+
+### Tarea 1: Entrypoint de Produccion Resiliente [🟢 COMPLETADO Y OPERATIVO]
+
+#### Problema
+El script `docker-entrypoint.prod.sh` ejecutaba `php artisan storage:link` condicionalmente (`if [ ! -L "public/storage" ]`), pero si existia un enlace corrupto, un directorio residual, o un problema de permisos en la carpeta `public/`, el contenedor entraba en Crash Loop eterno por el `set -e` del shell.
+
+#### Solucion
+- **Limpieza proactiva**: `rm -rf public/storage` antes de crear el symlink, eliminando enlaces viejos, corruptos o directorios residuales
+- **Salida segura**: `php artisan storage:link --force || true` asegura que si el comando falla por cualquier razon, el script continua con el arranque de los servicios (cache, queue worker, Reverb, artisan serve)
+- El flag `--force` de artisan recrea el enlace aunque ya exista
+
+### Tarea 2: Optimizacion de Permisos en Dockerfile.prod [🟢 COMPLETADO Y OPERATIVO]
+
+#### Problema
+En Alpine Linux, las subcarpetas de `storage/` (app/public, framework/cache, framework/sessions, framework/views, logs) podian no existir si el `COPY backend/ .` no las incluia (por .dockerignore o por estar vacias en el repo), causando errores de permisos en runtime.
+
+#### Solucion
+- `mkdir -p` crea explicitamente todas las subcarpetas necesarias de storage y bootstrap/cache antes del `chown`
+- `chown -R www-data:www-data` usa rutas absolutas `/var/www/html/storage /var/www/html/bootstrap/cache` para evitar ambiguedades en Alpine
+- `chmod -R 775` mantiene permisos de grupo para compatibilidad con PHP-FPM
+
+### Tarea 3: Titulos Dinamicos de Ventana (React) [🟢 COMPLETADO Y OPERATIVO]
+
+#### Hook: usePageTitle (`src/hooks/usePageTitle.js`)
+- Hook personalizado que escucha `location.pathname` via `useLocation()` de React Router
+- Mapeo exhaustivo de rutas a nombres de modulo (21 rutas mapeadas + deteccion dinamica de `/products/:id/edit`)
+- Formato estricto: `"Amaranto POS - {Nombre del Modulo}"`
+- Fallback por defecto: `"Amaranto POS"` cuando la ruta no coincide con ningun modulo
+- Integrado en `App.jsx` via componente `PageTitleManager` renderizado dentro del `BrowserRouter`
+
+#### Ejemplos de Titulos
+| Ruta | Titulo de Pestana |
+| :--- | :--- |
+| `/dashboard` | Amaranto POS - Dashboard |
+| `/pos` | Amaranto POS - Punto de Venta |
+| `/admin/ventas` | Amaranto POS - Historial de Tickets |
+| `/admin/usuarios` | Amaranto POS - Gestion de Usuarios |
+| `/products/abc-123/edit` | Amaranto POS - Editar Producto |
+| `/ruta-desconocida` | Amaranto POS |
+
+#### index.html
+- Titulo estatico cambiado de `"frontend"` a `"Amaranto POS"` (visible antes de que React hidrate)
+
+### Archivos Creados en esta Fase
+**Frontend (nuevos):**
+- `src/hooks/usePageTitle.js` — Hook de titulo dinamico con mapeo de rutas y fallback
+
+### Archivos Modificados en esta Fase
+**Backend (modificados):**
+- `docker-entrypoint.prod.sh` — Limpieza proactiva + salida segura en storage:link
+- `Dockerfile.prod` — mkdir -p subcarpetas storage + chown con rutas absolutas
+
+**Frontend (modificados):**
+- `index.html` — Titulo estatico "Amaranto POS"
+- `src/App.jsx` — Import usePageTitle, componente PageTitleManager dentro de BrowserRouter

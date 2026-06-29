@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Toaster } from 'sonner';
 import { AuthProvider, useAuth } from './context/AuthContext';
+import usePageTitle from './hooks/usePageTitle';
 import LoginPage from './pages/auth/LoginPage';
 import DashboardPage from './pages/DashboardPage';
 import CategoriesPage from './pages/catalog/CategoriesPage';
@@ -59,9 +60,15 @@ function GuestRoute({ children }) {
   return children;
 }
 
+function PageTitleManager() {
+  usePageTitle();
+  return null;
+}
+
 export default function App() {
   return (
     <BrowserRouter>
+      <PageTitleManager />
       <AuthProvider>
         <Toaster
           position="top-right"
