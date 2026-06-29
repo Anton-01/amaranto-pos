@@ -4,7 +4,7 @@ namespace App\Services;
 
 use App\Builders\TicketBuilder;
 use App\DTOs\TicketDTO;
-use Mike42\Escpos\PrintConnectors\DummyPrintConnector;
+use App\PrintConnectors\SafeDummyPrintConnector;
 use Mike42\Escpos\Printer;
 
 class PrinterService
@@ -15,7 +15,7 @@ class PrinterService
 
     public function generateBase64(TicketDTO $dto): string
     {
-        $connector = new DummyPrintConnector();
+        $connector = new SafeDummyPrintConnector();
         $printer = new Printer($connector);
 
         try {
