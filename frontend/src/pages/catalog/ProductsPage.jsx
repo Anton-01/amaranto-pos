@@ -7,6 +7,7 @@ import { InputNumber } from 'primereact/inputnumber';
 import { MultiSelect } from 'primereact/multiselect';
 import { Dropdown } from 'primereact/dropdown';
 import { Tag } from 'primereact/tag';
+import { InputSwitch } from 'primereact/inputswitch';
 import { Button } from 'primereact/button';
 import { FilterMatchMode } from 'primereact/api';
 import { toast } from 'sonner';
@@ -85,11 +86,22 @@ export default function ProductsPage() {
     );
   };
 
+  const handleToggleStatus = async (row) => {
+    const prev = row.is_active;
+    setProducts(ps => ps.map(p => p.id === row.id ? { ...p, is_active: !prev } : p));
+    try {
+      await api.patch(`/products/${row.id}/toggle-status`);
+    } catch {
+      setProducts(ps => ps.map(p => p.id === row.id ? { ...p, is_active: prev } : p));
+      toast.error('Error: No se pudo actualizar el estatus del registro.');
+    }
+  };
+
   const statusTemplate = (row) => (
-    <Tag
-      value={row.is_active ? 'Activo' : 'Inactivo'}
-      severity={row.is_active ? 'success' : 'danger'}
-      className="text-xs"
+    <InputSwitch
+      checked={row.is_active}
+      onChange={() => handleToggleStatus(row)}
+      style={{ cursor: 'pointer' }}
     />
   );
 

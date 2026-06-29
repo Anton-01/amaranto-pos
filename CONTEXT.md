@@ -43,6 +43,7 @@
 | Visualizador In-App Plantillas Email | [🟢 Completado] | [🟢 Completado] | MailPreviewController render HTML, iframe srcDoc aislado, viewport Desktop/Mobile |
 | Motor Impresión QZ Tray + Firma Digital | [🟢 COMPLETADO Y OPERATIVO] | [🟢 COMPLETADO Y OPERATIVO] | mike42/escpos-php DummyPrintConnector→Base64, QZ Tray SDK WebSocket, firma RSA SHA512, certificado digital, qz.security hooks automáticos [🟢 COMPLETADO Y OPERATIVO] |
 | Descuentos y Cupones en Checkout | [🟢 Completado] | [🟢 Completado] | Descuento directo (fijo/porcentual) + cupón por autocomplete, audit trail en orders, propagación completa (ticket, historial, finanzas, Excel, ESC/POS) |
+| Estatus Inline (Toggle Switch) | [🟢 COMPLETADO Y OPERATIVO] | [🟢 COMPLETADO Y OPERATIVO] | InputSwitch en DataTables (Productos, Categorías, Promociones, Usuarios), PATCH endpoints, actualización optimista con rollback, Emerald/Slate CSS |
 
 ## 3. Detalle del Modulo Completado: Migraciones & Modelos Base
 
@@ -2267,3 +2268,99 @@ Se migro el sistema de impresion de Cronos POS del esquema server-side (SambaAut
 
 **Archivos Eliminados:**
 - `app/Services/PrintConnectors/SambaAuthPrintConnector.php` — Conector SMB obsoleto
+
+---
+
+## 32. Optimizacion de Estatus Inline (Toggle Switch en DataTables) [🟢 COMPLETADO Y OPERATIVO]
+
+### Objetivo
+Reemplazar los Badges/Tags de texto estatico en las columnas "Estatus" de los DataTables por componentes InputSwitch interactivos con actualizacion optimista, eliminando la necesidad de abrir modales completas para activar/desactivar registros.
+
+### Backend — Metodo toggleStatus por Controlador (Independiente)
+
+#### ProductController::toggleStatus()
+- **Endpoint**: `PATCH /api/products/{product}/toggle-status`
+- Invierte `$product->is_active` y guarda en PostgreSQL
+- Retorna JSON homogeneo: `{ status, message, is_active }`
+
+#### CategoryController::toggleStatus()
+- **Endpoint**: `PATCH /api/categories/{category}/toggle-status`
+- Invierte `$category->is_active` y guarda en PostgreSQL
+- Retorna JSON homogeneo: `{ status, message, is_active }`
+
+#### PromotionController::toggleStatus()
+- **Endpoint**: `PATCH /api/promotions/{promotion}/toggle-status`
+- Middleware `role:admin,manager` protege la ruta
+- Invierte `$promotion->is_active` y guarda en PostgreSQL
+- Retorna JSON homogeneo: `{ status, message, is_active }`
+
+#### UserController::toggleStatus() (Existente — Extendido)
+- **Endpoint**: `PATCH /api/admin/users/{user}/toggle-status` (nuevo) + `POST` (backward compat)
+- Middleware `role:admin,manager` protege la ruta
+- Conmuta entre `active` y `suspended` (ENUM nativo PostgreSQL)
+- Kill-Switch: revoca todos los tokens si se suspende
+- Guardia de auto-accion: bloquea operacion sobre el usuario autenticado
+- Respuesta extendida incluye `is_active` boolean para consistencia con el frontend
+
+### Rutas API Registradas
+| Metodo | Ruta | Middleware | Controlador |
+| :--- | :--- | :--- | :--- |
+| PATCH | /api/products/{product}/toggle-status | auth, user.active | ProductController@toggleStatus |
+| PATCH | /api/categories/{category}/toggle-status | auth, user.active | CategoryController@toggleStatus |
+| PATCH | /api/promotions/{promotion}/toggle-status | auth, user.active, role:admin,manager | PromotionController@toggleStatus |
+| PATCH | /api/admin/users/{user}/toggle-status | auth, user.active, role:admin,manager | UserController@toggleStatus |
+
+### Frontend — InputSwitch con Actualizacion Optimista
+
+#### Componente Utilizado
+- `InputSwitch` de PrimeReact (`primereact/inputswitch`) — compatible con PrimeReact v10.9.x
+- Estilizado via CSS global en `index.css`: Verde Esmeralda (#059669) para activo, Gris Pizarra (#94a3b8) para inactivo
+- Animacion fluida de deslizamiento via `transition: background-color 0.2s ease`
+
+#### Paginas Modificadas
+
+##### ProductsPage (`/products`)
+- Columna "Estatus": Tag estatico reemplazado por InputSwitch
+- `handleToggleStatus()`: Actualiza visualmente de inmediato (optimista), dispara `axios.patch` en background
+- Rollback automatico con `toast.error("Error: No se pudo actualizar el estatus del registro.")` si la API falla
+
+##### CategoriesPage (`/categories`)
+- Columna "Estatus": Tag estatico reemplazado por InputSwitch
+- Misma logica optimista con rollback
+
+##### PromotionsPage (`/promotions`)
+- Columna "Estatus": Tag estatico reemplazado por InputSwitch + label contextual (Vigente/Programada/Inactiva)
+- Switch deshabilitado para usuarios sin rol admin/manager (vendor solo lectura)
+- Misma logica optimista con rollback
+
+##### UsersPage (`/admin/usuarios`)
+- Columna "Estatus": Tag estatico reemplazado por InputSwitch
+- Switch deshabilitado para el usuario autenticado (self-guard)
+- Al interactuar, abre dialogo de confirmacion de impacto (suspender/reactivar) antes de ejecutar
+- El dialogo existente de doble confirmacion se preserva intacto
+
+#### Mecanismo de Resiliencia (UX Avanzado)
+1. Click en InputSwitch → Estado visual cambia inmediatamente (Optimista)
+2. `axios.patch` al endpoint especifico del recurso se dispara en background
+3. Si la API responde con exito: estado confirmado, sin accion adicional
+4. Si la API falla (error de red, validacion, permisos): Rollback automatico del switch a su posicion original + Toast rojo con leyenda de error
+
+### CSS Global (index.css)
+- `.p-inputswitch.p-inputswitch-checked .p-inputswitch-slider`: Verde Esmeralda `#059669`
+- `.p-inputswitch:not(.p-inputswitch-checked) .p-inputswitch-slider`: Gris Pizarra `#94a3b8`
+- Transiciones suaves con `transition: background-color 0.2s ease, box-shadow 0.2s ease`
+
+### Archivos Modificados en esta Fase
+**Backend (modificados):**
+- `app/Http/Controllers/Catalog/ProductController.php` — Metodo toggleStatus()
+- `app/Http/Controllers/Catalog/CategoryController.php` — Metodo toggleStatus()
+- `app/Http/Controllers/Promotion/PromotionController.php` — Metodo toggleStatus()
+- `app/Http/Controllers/Admin/UserController.php` — Respuesta extendida con is_active boolean
+- `routes/api.php` — 4 rutas PATCH toggle-status + 1 PATCH backward compat para users
+
+**Frontend (modificados):**
+- `src/pages/catalog/ProductsPage.jsx` — InputSwitch con optimistic update + rollback
+- `src/pages/catalog/CategoriesPage.jsx` — InputSwitch con optimistic update + rollback
+- `src/pages/promotions/PromotionsPage.jsx` — InputSwitch con optimistic update + rollback + label contextual
+- `src/pages/admin/UsersPage.jsx` — InputSwitch con dialogo de confirmacion + self-guard
+- `src/index.css` — Estilos globales InputSwitch (Emerald/Slate)

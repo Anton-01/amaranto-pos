@@ -7,6 +7,20 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* InputSwitch — Emerald activo / Slate inactivo */
+.p-inputswitch .p-inputswitch-slider {
+  transition: background-color 0.2s ease, box-shadow 0.2s ease;
+}
+.p-inputswitch.p-inputswitch-checked .p-inputswitch-slider {
+  background: #059669 !important;
+}
+.p-inputswitch:not(.p-inputswitch-checked) .p-inputswitch-slider {
+  background: #94a3b8 !important;
+}
+.p-inputswitch .p-inputswitch-slider::before {
+  transition: transform 0.2s ease;
+}
+
 @media print {
   @page {
     size: 58mm auto;

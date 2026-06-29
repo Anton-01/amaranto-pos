@@ -4,7 +4,7 @@ import { Column } from 'primereact/column';
 import { InputText } from 'primereact/inputtext';
 import { Button } from 'primereact/button';
 import { Dialog } from 'primereact/dialog';
-import { Tag } from 'primereact/tag';
+import { InputSwitch } from 'primereact/inputswitch';
 import { toast } from 'sonner';
 import api from '../../api/axios';
 import AppLayout from '../../components/layout/AppLayout';
@@ -93,11 +93,22 @@ export default function CategoriesPage() {
     }
   };
 
+  const handleToggleStatus = async (row) => {
+    const prev = row.is_active;
+    setCategories(cs => cs.map(c => c.id === row.id ? { ...c, is_active: !prev } : c));
+    try {
+      await api.patch(`/categories/${row.id}/toggle-status`);
+    } catch {
+      setCategories(cs => cs.map(c => c.id === row.id ? { ...c, is_active: prev } : c));
+      toast.error('Error: No se pudo actualizar el estatus del registro.');
+    }
+  };
+
   const statusTemplate = (row) => (
-    <Tag
-      value={row.is_active ? 'Activa' : 'Inactiva'}
-      severity={row.is_active ? 'success' : 'danger'}
-      className="text-xs"
+    <InputSwitch
+      checked={row.is_active}
+      onChange={() => handleToggleStatus(row)}
+      style={{ cursor: 'pointer' }}
     />
   );
 

@@ -130,6 +130,18 @@ class ProductController extends Controller
         ]);
     }
 
+    public function toggleStatus(Product $product): JsonResponse
+    {
+        $product->is_active = !$product->is_active;
+        $product->save();
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Estatus actualizado correctamente.',
+            'is_active' => $product->is_active,
+        ]);
+    }
+
     public function grouped(): JsonResponse
     {
         $products = Product::with('category:id,name')

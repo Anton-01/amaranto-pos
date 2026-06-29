@@ -8,6 +8,7 @@ import { MultiSelect } from 'primereact/multiselect';
 import { Calendar } from 'primereact/calendar';
 import { Dialog } from 'primereact/dialog';
 import { Tag } from 'primereact/tag';
+import { InputSwitch } from 'primereact/inputswitch';
 import { Button } from 'primereact/button';
 import { toast } from 'sonner';
 import api from '../../api/axios';
@@ -149,15 +150,34 @@ export default function PromotionsPage() {
     return `$${parseFloat(row.value).toLocaleString('es-MX', { minimumFractionDigits: 2 })}`;
   };
 
+  const handleToggleStatus = async (row) => {
+    if (!canManage) return;
+    const prev = row.is_active;
+    setPromotions(ps => ps.map(p => p.id === row.id ? { ...p, is_active: !prev } : p));
+    try {
+      await api.patch(`/promotions/${row.id}/toggle-status`);
+    } catch {
+      setPromotions(ps => ps.map(p => p.id === row.id ? { ...p, is_active: prev } : p));
+      toast.error('Error: No se pudo actualizar el estatus del registro.');
+    }
+  };
+
   const statusTemplate = (row) => {
     const now = new Date();
     const isCurrentlyActive = row.is_active && new Date(row.start_date) <= now && new Date(row.end_date) >= now;
+    const label = isCurrentlyActive ? 'Vigente' : row.is_active ? 'Programada' : 'Inactiva';
     return (
-      <Tag
-        value={isCurrentlyActive ? 'Vigente' : row.is_active ? 'Programada' : 'Inactiva'}
-        severity={isCurrentlyActive ? 'success' : row.is_active ? 'info' : 'danger'}
-        className="text-xs"
-      />
+      <div className="flex items-center gap-2">
+        <InputSwitch
+          checked={row.is_active}
+          onChange={() => handleToggleStatus(row)}
+          disabled={!canManage}
+          style={{ cursor: canManage ? 'pointer' : 'not-allowed' }}
+        />
+        <span className={`text-xs font-medium ${isCurrentlyActive ? 'text-emerald-600' : row.is_active ? 'text-blue-600' : 'text-slate-400'}`}>
+          {label}
+        </span>
+      </div>
     );
   };
 
