@@ -7,6 +7,8 @@ import { Button } from 'primereact/button';
 import { toast } from 'sonner';
 import api from '../../api/axios';
 import AppLayout from '../../components/layout/AppLayout';
+import PrinterSetupPanel from '../../components/settings/PrinterSetupPanel';
+import useQzPrinter from '../../hooks/useQzPrinter';
 
 const timezoneOptions = [
   { label: 'Ciudad de México (UTC-6)', value: 'America/Mexico_City' },
@@ -25,6 +27,7 @@ const currencyOptions = [
 ];
 
 export default function SystemSettingsPage() {
+  const qzPrinter = useQzPrinter();
   const [settings, setSettings] = useState({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -225,6 +228,10 @@ export default function SystemSettingsPage() {
             </div>
           </TabPanel>
         </TabView>
+      </div>
+
+      <div className="mt-6">
+        <PrinterSetupPanel qzPrinter={qzPrinter} />
       </div>
     </AppLayout>
   );

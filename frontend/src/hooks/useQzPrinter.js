@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import qz from 'qz-tray';
 import api from '../api/axios';
 
-const PRINTER_KEY = 'qz_printer_name';
+const PRINTER_KEY = 'cronos_active_printer';
 
 export default function useQzPrinter() {
   const [connected, setConnected] = useState(false);

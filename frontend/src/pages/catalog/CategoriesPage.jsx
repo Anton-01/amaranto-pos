@@ -98,18 +98,24 @@ export default function CategoriesPage() {
     setCategories(cs => cs.map(c => c.id === row.id ? { ...c, is_active: !prev } : c));
     try {
       await api.patch(`/categories/${row.id}/toggle-status`);
+      toast.success('¡Estatus actualizado correctamente!');
     } catch {
+      toast.error('Error: No se pudo actualizar el estatus.');
       setCategories(cs => cs.map(c => c.id === row.id ? { ...c, is_active: prev } : c));
-      toast.error('Error: No se pudo actualizar el estatus del registro.');
     }
   };
 
   const statusTemplate = (row) => (
-    <InputSwitch
-      checked={row.is_active}
-      onChange={() => handleToggleStatus(row)}
-      style={{ cursor: 'pointer' }}
-    />
+    <div className="flex flex-col items-center gap-1">
+      <InputSwitch
+        checked={row.is_active}
+        onChange={() => handleToggleStatus(row)}
+        style={{ cursor: 'pointer' }}
+      />
+      <span className={`text-xs font-medium transition-colors duration-200 ${row.is_active ? 'text-emerald-600' : 'text-slate-500'}`}>
+        {row.is_active ? 'Activo' : 'Inactivo'}
+      </span>
+    </div>
   );
 
   const actionsTemplate = (row) => (
