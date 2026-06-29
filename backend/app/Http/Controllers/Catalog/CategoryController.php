@@ -70,6 +70,18 @@ class CategoryController extends Controller
         ]);
     }
 
+    public function toggleStatus(Category $category): JsonResponse
+    {
+        $category->is_active = !$category->is_active;
+        $category->save();
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Estatus actualizado correctamente.',
+            'is_active' => $category->is_active,
+        ]);
+    }
+
     public function destroy(DeleteCategoryRequest $request, Category $category): JsonResponse
     {
         $activeProducts = $category->products()->whereNull('deleted_at')->count();

@@ -50,9 +50,11 @@ Route::prefix('auth')->group(function () {
 
 Route::middleware(['auth:sanctum', 'user.active'])->group(function () {
     Route::apiResource('categories', CategoryController::class);
+    Route::patch('categories/{category}/toggle-status', [CategoryController::class, 'toggleStatus']);
 
     Route::get('products/grouped', [ProductController::class, 'grouped']);
     Route::apiResource('products', ProductController::class);
+    Route::patch('products/{product}/toggle-status', [ProductController::class, 'toggleStatus']);
     Route::post('products/{product}/image', [ProductImageController::class, 'upload']);
     Route::delete('products/{product}/image', [ProductImageController::class, 'destroy']);
 
@@ -64,7 +66,7 @@ Route::middleware(['auth:sanctum', 'user.active'])->group(function () {
     Route::middleware('role:admin,manager')->group(function () {
         Route::post('promotions', [PromotionController::class, 'store']);
         Route::put('promotions/{promotion}', [PromotionController::class, 'update']);
-        Route::patch('promotions/{promotion}', [PromotionController::class, 'update']);
+        Route::patch('promotions/{promotion}/toggle-status', [PromotionController::class, 'toggleStatus']);
         Route::delete('promotions/{promotion}', [PromotionController::class, 'destroy']);
     });
 
@@ -123,6 +125,7 @@ Route::middleware(['auth:sanctum', 'user.active'])->group(function () {
         Route::get('/roles', [UserController::class, 'roles']);
         Route::get('/{user}', [UserController::class, 'show']);
         Route::post('/{user}/toggle-status', [UserController::class, 'toggleStatus']);
+        Route::patch('/{user}/toggle-status', [UserController::class, 'toggleStatus']);
         Route::delete('/{user}', [UserController::class, 'destroy']);
         Route::post('/{user}/send-password-reset', [UserController::class, 'sendPasswordReset']);
         Route::post('/{user}/sessions/{sessionId}/revoke', [UserController::class, 'revokeSession']);

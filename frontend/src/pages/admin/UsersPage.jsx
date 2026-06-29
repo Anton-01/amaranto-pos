@@ -4,6 +4,7 @@ import { Column } from 'primereact/column';
 import { InputText } from 'primereact/inputtext';
 import { Dropdown } from 'primereact/dropdown';
 import { Tag } from 'primereact/tag';
+import { InputSwitch } from 'primereact/inputswitch';
 import { Button } from 'primereact/button';
 import { Dialog } from 'primereact/dialog';
 import { TabView, TabPanel } from 'primereact/tabview';
@@ -210,13 +211,22 @@ export default function UsersPage() {
     return roleName ? <Tag value={roleName} severity={colors[roleName] || 'info'} className="text-xs capitalize" /> : '—';
   };
 
-  const statusTemplate = (row) => (
-    <Tag
-      value={row.status === 'active' ? 'Activo' : 'Suspendido'}
-      severity={row.status === 'active' ? 'success' : 'danger'}
-      className="text-xs"
-    />
-  );
+  const statusTemplate = (row) => {
+    const isActive = row.status === 'active';
+    const self = isSelf(row);
+    return (
+      <InputSwitch
+        checked={isActive}
+        onChange={() => {
+          if (self) return;
+          setSuspendTarget(row);
+          setShowSuspend(true);
+        }}
+        disabled={self}
+        style={{ cursor: self ? 'not-allowed' : 'pointer' }}
+      />
+    );
+  };
 
   const sessionTemplate = (row) => {
     const count = row.active_tokens_count || 0;

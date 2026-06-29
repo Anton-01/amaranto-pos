@@ -109,6 +109,18 @@ class PromotionController extends Controller
         ]);
     }
 
+    public function toggleStatus(Promotion $promotion): JsonResponse
+    {
+        $promotion->is_active = !$promotion->is_active;
+        $promotion->save();
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Estatus actualizado correctamente.',
+            'is_active' => $promotion->is_active,
+        ]);
+    }
+
     public function destroy(DeletePromotionRequest $request, Promotion $promotion): JsonResponse
     {
         $promotion->advancedDelete(

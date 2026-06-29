@@ -146,6 +146,8 @@ class UserController extends Controller
 
         return response()->json([
             'status' => 'success',
+            'message' => 'Estatus actualizado correctamente.',
+            'is_active' => $newStatus === 'active',
             'data' => $user,
             'metadata' => [
                 'message' => $newStatus === 'suspended'
