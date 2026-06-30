@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Dashboard;
 
 use App\Http\Controllers\Controller;
+use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -11,9 +12,9 @@ class DashboardController extends Controller
 {
     public function stats(): JsonResponse
     {
-        $startOfMonth = now()->startOfMonth();
-        $today = now()->startOfDay();
-        $endOfDay = now()->endOfDay();
+        $startOfMonth = Carbon::now('America/Mexico_City')->startOfMonth();
+        $today = Carbon::now('America/Mexico_City')->startOfDay();
+        $endOfDay = Carbon::now('America/Mexico_City')->endOfDay();
 
         $monthlySales = DB::table('orders')
             ->where('status', 'completed')
@@ -52,18 +53,18 @@ class DashboardController extends Controller
 
     public function hourlyTrend(): JsonResponse
     {
-        $today = now()->startOfDay();
-        $endOfDay = now()->endOfDay();
+        $today = Carbon::now('America/Mexico_City')->startOfDay();
+        $endOfDay = Carbon::now('America/Mexico_City')->endOfDay();
 
         $hourly = DB::table('orders')
             ->select(
-                DB::raw("EXTRACT(HOUR FROM created_at)::int as hour"),
+                DB::raw("EXTRACT(HOUR FROM created_at AT TIME ZONE 'America/Mexico_City')::int as hour"),
                 DB::raw('COALESCE(SUM(total), 0) as total'),
                 DB::raw('COUNT(*) as orders')
             )
             ->where('status', 'completed')
             ->whereBetween('created_at', [$today, $endOfDay])
-            ->groupBy(DB::raw("EXTRACT(HOUR FROM created_at)::int"))
+            ->groupBy(DB::raw("EXTRACT(HOUR FROM created_at AT TIME ZONE 'America/Mexico_City')::int"))
             ->orderBy('hour')
             ->get();
 
@@ -85,8 +86,8 @@ class DashboardController extends Controller
 
     public function topProducts(): JsonResponse
     {
-        $startOfMonth = now()->startOfMonth();
-        $endOfDay = now()->endOfDay();
+        $startOfMonth = Carbon::now('America/Mexico_City')->startOfMonth();
+        $endOfDay = Carbon::now('America/Mexico_City')->endOfDay();
 
         $top = DB::table('order_items')
             ->join('orders', 'orders.id', '=', 'order_items.order_id')

@@ -6,6 +6,7 @@ use App\Events\PettyCashTransactionRegistered;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\PettyCash\StorePettyCashRequest;
 use App\Models\PettyCashTransaction;
+use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -130,8 +131,10 @@ class PettyCashController extends Controller
     public function summary(): JsonResponse
     {
         $totalWithdrawals = PettyCashTransaction::sum('amount');
-        $countToday = PettyCashTransaction::whereDate('created_at', today())->count();
-        $totalToday = PettyCashTransaction::whereDate('created_at', today())->sum('amount');
+        $todayStart = Carbon::now('America/Mexico_City')->startOfDay();
+        $todayEnd = Carbon::now('America/Mexico_City')->endOfDay();
+        $countToday = PettyCashTransaction::whereBetween('created_at', [$todayStart, $todayEnd])->count();
+        $totalToday = PettyCashTransaction::whereBetween('created_at', [$todayStart, $todayEnd])->sum('amount');
 
         $byReason = PettyCashTransaction::select('reason')
             ->selectRaw('COUNT(*) as count')

@@ -12,6 +12,7 @@ use App\Models\Order;
 use App\Models\PaymentMethod;
 use App\Models\PettyCashTransaction;
 use Barryvdh\DomPDF\Facade\Pdf;
+use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -60,10 +61,12 @@ class CashRegisterClosingController extends Controller
             ->orderByDesc('created_at');
 
         if ($request->filled('date_from')) {
-            $query->where('created_at', '>=', $request->date_from . ' 00:00:00');
+            $from = Carbon::parse($request->date_from, 'America/Mexico_City')->startOfDay();
+            $query->where('created_at', '>=', $from);
         }
         if ($request->filled('date_to')) {
-            $query->where('created_at', '<=', $request->date_to . ' 23:59:59');
+            $to = Carbon::parse($request->date_to, 'America/Mexico_City')->endOfDay();
+            $query->where('created_at', '<=', $to);
         }
 
         $closings = $query->paginate($request->input('per_page', 20));
@@ -176,10 +179,12 @@ class CashRegisterClosingController extends Controller
             ->orderByDesc('created_at');
 
         if ($request->filled('date_from')) {
-            $query->where('created_at', '>=', $request->date_from . ' 00:00:00');
+            $from = Carbon::parse($request->date_from, 'America/Mexico_City')->startOfDay();
+            $query->where('created_at', '>=', $from);
         }
         if ($request->filled('date_to')) {
-            $query->where('created_at', '<=', $request->date_to . ' 23:59:59');
+            $to = Carbon::parse($request->date_to, 'America/Mexico_City')->endOfDay();
+            $query->where('created_at', '<=', $to);
         }
 
         $closings = $query->get();
@@ -306,10 +311,12 @@ class CashRegisterClosingController extends Controller
             ->orderByDesc('created_at');
 
         if ($request->filled('date_from')) {
-            $query->where('created_at', '>=', $request->date_from . ' 00:00:00');
+            $from = Carbon::parse($request->date_from, 'America/Mexico_City')->startOfDay();
+            $query->where('created_at', '>=', $from);
         }
         if ($request->filled('date_to')) {
-            $query->where('created_at', '<=', $request->date_to . ' 23:59:59');
+            $to = Carbon::parse($request->date_to, 'America/Mexico_City')->endOfDay();
+            $query->where('created_at', '<=', $to);
         }
 
         $closings = $query->get();

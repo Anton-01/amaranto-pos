@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Sales;
 use App\Http\Controllers\Controller;
 use App\Models\GlobalSetting;
 use App\Models\Order;
+use Carbon\Carbon;
 use Illuminate\Http\Request;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Style\Alignment;
@@ -21,10 +22,12 @@ class SalesExportController extends Controller
             ->orderByDesc('created_at');
 
         if ($request->filled('date_from')) {
-            $query->where('created_at', '>=', $request->date_from);
+            $from = Carbon::parse($request->date_from, 'America/Mexico_City')->startOfDay();
+            $query->where('created_at', '>=', $from);
         }
         if ($request->filled('date_to')) {
-            $query->where('created_at', '<=', $request->date_to . ' 23:59:59');
+            $to = Carbon::parse($request->date_to, 'America/Mexico_City')->endOfDay();
+            $query->where('created_at', '<=', $to);
         }
         if ($request->filled('payment_method_id')) {
             $query->where('payment_method_id', $request->payment_method_id);

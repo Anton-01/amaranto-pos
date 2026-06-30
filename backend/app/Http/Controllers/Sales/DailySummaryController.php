@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Sales;
 
 use App\Http\Controllers\Controller;
+use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\DB;
 
@@ -10,8 +11,8 @@ class DailySummaryController extends Controller
 {
     public function __invoke(): JsonResponse
     {
-        $today = now()->startOfDay();
-        $endOfDay = now()->endOfDay();
+        $today = Carbon::now('America/Mexico_City')->startOfDay();
+        $endOfDay = Carbon::now('America/Mexico_City')->endOfDay();
 
         $sales = DB::table('orders')
             ->select(
