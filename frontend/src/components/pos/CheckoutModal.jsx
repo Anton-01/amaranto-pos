@@ -190,20 +190,19 @@ export default function CheckoutModal({ visible, onHide, cart, taxRate = 0.16, o
       const order = res.data.data;
       const printerData = res.data.printer_data;
 
+      toast.success('Venta procesada con exito!');
+
       if (printerData && qzPrinter) {
         qzPrinter.printRaw(printerData).then(() => {
-          toast.success('Venta procesada e impresa con exito!');
-        }).catch(() => {
-          toast.success('Venta procesada con exito!');
-          toast.warning('No se pudo enviar a la ticketera. Puedes reimprimir desde el historial.');
+          toast.success('Ticket enviado a la impresora.');
+        }).catch((err) => {
+          console.error("Error en el flujo de impresion de Amaranto POS:", err);
+          toast.warning("No se pudo enviar a la ticketera: " + (err.message || err));
         });
-      } else {
-        toast.success('Venta procesada con exito!');
-        if (!printerData) {
-          toast.info('No se genero ticket de impresion. Puedes reimprimir desde el historial.');
-        } else if (!qzPrinter) {
-          toast.info('QZ Tray no disponible. Puedes reimprimir desde el historial.');
-        }
+      } else if (!printerData) {
+        toast.info('No se genero ticket de impresion. Puedes reimprimir desde el historial.');
+      } else if (!qzPrinter) {
+        toast.info('QZ Tray no disponible. Puedes reimprimir desde el historial.');
       }
 
       onSuccess?.(order);

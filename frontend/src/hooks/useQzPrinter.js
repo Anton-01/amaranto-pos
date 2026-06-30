@@ -14,12 +14,16 @@ export default function useQzPrinter() {
 
     qz.security.setCertificatePromise((resolve, reject) => {
       api.get('/printer/certificate', { responseType: 'text' })
-        .then(res => resolve(res.data.trim()))
+        .then(res => {
+          const raw = typeof res.data === 'string' ? res.data : JSON.stringify(res.data);
+          resolve(raw.trim());
+        })
         .catch(err => {
+          console.error('Error al recuperar certificado QZ Tray:', err);
           if (isLocalDev) {
             resolve(null);
           } else {
-            reject('No se pudo recuperar el certificado de impresión: ' + err);
+            reject('No se pudo recuperar el certificado de impresión: ' + (err.message || err));
           }
         });
     });
@@ -27,12 +31,16 @@ export default function useQzPrinter() {
     qz.security.setSignaturePromise((toSign) => {
       return (resolve, reject) => {
         api.post('/printer/sign', { requestString: toSign }, { responseType: 'text' })
-          .then(res => resolve(res.data.trim()))
+          .then(res => {
+            const raw = typeof res.data === 'string' ? res.data : res.data?.signature ?? JSON.stringify(res.data);
+            resolve(raw.trim());
+          })
           .catch(err => {
+            console.error('Error en firma QZ Tray:', err);
             if (isLocalDev) {
               resolve(null);
             } else {
-              reject('Error en el handshake de firma digital: ' + err);
+              reject('Error en el handshake de firma digital: ' + (err.message || err));
             }
           });
       };
