@@ -11,7 +11,7 @@ import api from '../../api/axios';
 import TicketPreview from './TicketPreview';
 import { addToOfflineQueue } from '../../hooks/useOnlineStatus';
 
-export default function CheckoutModal({ visible, onHide, cart, taxRate = 0.16, onSuccess, isOnline = true, qzPrinter }) {
+export default function CheckoutModal({ visible, onHide, cart, taxRate = 0.16, onSuccess, isOnline = true, cronosAgent }) {
   const [paymentMethodId, setPaymentMethodId] = useState(null);
   const [paymentMethods, setPaymentMethods] = useState([]);
   const [customLegend, setCustomLegend] = useState('');
@@ -192,17 +192,17 @@ export default function CheckoutModal({ visible, onHide, cart, taxRate = 0.16, o
 
       toast.success('Venta procesada con exito!');
 
-      if (printerData && qzPrinter) {
-        qzPrinter.printRaw(printerData).then(() => {
+      if (printerData && cronosAgent) {
+        cronosAgent.printRaw(printerData).then(() => {
           toast.success('Ticket enviado a la impresora.');
         }).catch((err) => {
-          console.error("Error en el flujo de impresion de Amaranto POS:", err);
+          console.error("Error en el flujo de impresion de Cronos POS Agent:", err);
           toast.warning("No se pudo enviar a la ticketera: " + (err.message || err));
         });
       } else if (!printerData) {
         toast.info('No se genero ticket de impresion. Puedes reimprimir desde el historial.');
-      } else if (!qzPrinter) {
-        toast.info('QZ Tray no disponible. Puedes reimprimir desde el historial.');
+      } else if (!cronosAgent) {
+        toast.info('Cronos Agent no disponible. Puedes reimprimir desde el historial.');
       }
 
       onSuccess?.(order);

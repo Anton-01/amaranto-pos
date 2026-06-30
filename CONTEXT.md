@@ -2547,3 +2547,115 @@ Al registrar una venta con exito en el POS, el sistema guardaba la compra pero n
 
 **Infraestructura (modificados):**
 - `deploy.sh` — DOCKER_BUILDKIT=1, COMPOSE_DOCKER_CLI_BUILD=1, funcion log() con timestamp en tiempo real
+
+---
+
+## 34. Migracion Definitiva de QZ Tray a Cronos POS Agent (Frontend) [🟢 COMPLETADO Y OPERATIVO]
+
+### Contexto de la Migracion
+Se elimino por completo la dependencia de QZ Tray (SDK WebSocket client-side + firma RSA SHA512) y se adopto el agente nativo "Cronos POS Agent" que opera como servicio local HTTP en `http://127.0.0.1:9100`. La impresion ahora se comunica via fetch HTTP directo en lugar de WebSockets QZ Tray, simplificando la arquitectura y eliminando la dependencia de un software de terceros.
+
+### Tarea 1: Depuracion y Eliminacion de QZ Tray [🟢 Completado]
+
+#### Dependencia npm eliminada
+- `qz-tray` ^2.2.6 removido de `frontend/package.json`
+- `package-lock.json` regenerado sin la dependencia
+
+#### Archivo eliminado
+- `src/hooks/useQzPrinter.js` — Hook QZ Tray con firma RSA, WebSocket, certificado digital
+
+#### Referencias purgadas
+- Todos los imports `useQzPrinter` reemplazados por `useCronosAgent`
+- Todas las props `qzPrinter` renombradas a `cronosAgent`
+- Todos los logs, tooltips y mensajes de error actualizados de "QZ Tray" a "Cronos Agent"
+- Archivos afectados: POSPage, CheckoutModal, SalesHistoryPage, SystemSettingsPage, PrinterSetupPanel
+
+### Tarea 2: Hook useCronosAgent (Nuevo) [🟢 Completado]
+
+#### Ubicacion: `src/hooks/useCronosAgent.js`
+- **Base URL**: `http://127.0.0.1:9100` (API local del agente nativo)
+- **Autenticacion**: Lee `api_token` de `localStorage('cronos_agent_token')` e inyecta en header `X-Cronos-Agent-Token` en cada peticion
+- **Persistencia de impresora**: Clave `cronos_active_printer` en localStorage
+
+#### Metodos expuestos
+| Metodo | Endpoint | Descripcion |
+| :--- | :--- | :--- |
+| `getAvailablePrinters()` | `GET /api/printers` | Retorna lista de impresoras detectadas por el agente |
+| `printTicket(printerName, base64Data)` | `POST /api/print` | Envia datos ESC/POS Base64 a la impresora especificada |
+| `printRaw(base64Data)` | `POST /api/print` | Wrapper que usa la impresora guardada en localStorage |
+| `getPrinterQueue(printerName)` | `GET /api/printers/queue?printer_name=...` | Consulta estado de la cola de impresion |
+| `checkConnection()` | `GET /api/printers` | Verifica conectividad con el agente |
+
+#### Estado reactivo
+- `connected` (boolean) — true si el agente responde en 127.0.0.1:9100
+- `printerName` (string) — Nombre de la impresora activa (persistido en localStorage)
+- `savePrinterName(name)` — Guarda/limpia la impresora seleccionada
+
+### Tarea 3: Componente PrinterQueueMonitor (Nuevo) [🟢 Completado]
+
+#### Ubicacion: `src/components/pos/PrinterQueueMonitor.jsx`
+- **Polling**: Consulta `GET /api/printers/queue` cada 9 segundos cuando el agente esta conectado y hay impresora configurada
+- **Estados visuales**:
+  - **Desconectado**: Indicador gris con texto "Cronos Agent desconectado"
+  - **Sin impresora**: Banner amber "Sin impresora configurada"
+  - **Cola OK (0 trabajos)**: Badge emerald "Cola OK" con indicador verde solido
+  - **Trabajos retenidos (>0)**: Badge amber con conteo exacto de jobs, indicador amber pulsante, boton de refresco
+- **Integracion**: Renderizado dentro de PrinterSetupPanel cuando hay impresora configurada y agente conectado
+- **Props**: Recibe `cronosAgent` (instancia del hook useCronosAgent)
+
+### Tarea 4: Actualizacion de PrinterSetupPanel [🟢 Completado]
+
+#### Cambios en `src/components/settings/PrinterSetupPanel.jsx`
+- Prop renombrada de `qzPrinter` a `cronosAgent`
+- Escaneo de impresoras via `cronosAgent.getAvailablePrinters()` (HTTP GET) en lugar de `qz.printers.find()` (WebSocket)
+- Indicador de estado: "Cronos Agent Conectado/Desconectado" (era "QZ Tray")
+- Banner de desconexion actualizado con URL del agente: `http://127.0.0.1:9100`
+- Requisitos actualizados: "Cronos POS Agent debe estar instalado y ejecutandose en esta computadora (puerto 9100)"
+- Integra `PrinterQueueMonitor` como seccion de monitoreo cuando hay impresora activa
+
+### Tarea 5: Actualizacion de Flujos de Impresion [🟢 Completado]
+
+#### CheckoutModal.jsx
+- Prop `qzPrinter` renombrada a `cronosAgent`
+- Post-cobro: `cronosAgent.printRaw(printerData)` en lugar de `qzPrinter.printRaw(printerData)`
+- Mensajes de error actualizados: "Cronos POS Agent" en lugar de "QZ Tray"
+
+#### POSPage.jsx
+- Hook `useQzPrinter()` reemplazado por `useCronosAgent()`
+- Variable `qzPrinter` renombrada a `cronosAgent`
+- Prop a CheckoutModal: `cronosAgent={cronosAgent}`
+
+#### SalesHistoryPage.jsx
+- Hook `useQzPrinter()` reemplazado por `useCronosAgent()`
+- Variable `qzPrinter` renombrada a `cronosAgent`
+- Tooltip de reimpresion: "Imprimir via Cronos Agent (ESC/POS directo)"
+- Logs de error actualizados
+
+#### SystemSettingsPage.jsx
+- Hook `useQzPrinter()` reemplazado por `useCronosAgent()`
+- Variable `qzPrinter` renombrada a `cronosAgent`
+- Prop a PrinterSetupPanel: `cronosAgent={cronosAgent}`
+
+### Matriz de Modulos (Actualizacion Fila 44 y 47)
+| Modulo | Estado Backend | Estado Frontend | Observaciones |
+| :--- | :--- | :--- | :--- |
+| Motor Impresion Cronos POS Agent | [🟢 COMPLETADO Y OPERATIVO] | [🟢 COMPLETADO Y OPERATIVO] | SafeDummyPrintConnector (PHP 8 compatible), auto-impresion post-venta, Cronos POS Agent HTTP local (127.0.0.1:9100), hook useCronosAgent, eliminada dependencia QZ Tray |
+| Selector de Impresoras Locales (Cronos Agent) | [🟢 COMPLETADO Y OPERATIVO] | [🟢 COMPLETADO Y OPERATIVO] | PrinterSetupPanel en Configuracion del Sistema, escaneo via GET /api/printers, Dropdown PrimeReact, persistencia localStorage (cronos_active_printer), PrinterQueueMonitor con polling 9s |
+
+### Archivos Creados en esta Fase
+**Frontend (nuevos):**
+- `src/hooks/useCronosAgent.js` — Hook de comunicacion con Cronos POS Agent via HTTP (127.0.0.1:9100)
+- `src/components/pos/PrinterQueueMonitor.jsx` — Widget de monitoreo de cola de impresion con polling 9s
+
+### Archivos Eliminados en esta Fase
+**Frontend (eliminados):**
+- `src/hooks/useQzPrinter.js` — Hook QZ Tray obsoleto (WebSocket + firma RSA SHA512)
+
+### Archivos Modificados en esta Fase
+**Frontend (modificados):**
+- `package.json` — Eliminada dependencia `qz-tray` ^2.2.6
+- `src/components/pos/CheckoutModal.jsx` — Prop qzPrinter → cronosAgent, mensajes actualizados
+- `src/components/settings/PrinterSetupPanel.jsx` — Reescrito: Cronos Agent HTTP en lugar de QZ Tray WebSocket, integra PrinterQueueMonitor
+- `src/pages/pos/POSPage.jsx` — Hook useCronosAgent, prop cronosAgent
+- `src/pages/sales/SalesHistoryPage.jsx` — Hook useCronosAgent, tooltips actualizados
+- `src/pages/admin/SystemSettingsPage.jsx` — Hook useCronosAgent, prop cronosAgent

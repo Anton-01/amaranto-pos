@@ -3,34 +3,30 @@ import { Dropdown } from 'primereact/dropdown';
 import { Button } from 'primereact/button';
 import { Tag } from 'primereact/tag';
 import { toast } from 'sonner';
+import PrinterQueueMonitor from '../pos/PrinterQueueMonitor';
 
 const PRINTER_KEY = 'cronos_active_printer';
 
-export default function PrinterSetupPanel({ qzPrinter }) {
+export default function PrinterSetupPanel({ cronosAgent }) {
   const [printers, setPrinters] = useState([]);
   const [selectedPrinter, setSelectedPrinter] = useState(() => localStorage.getItem(PRINTER_KEY) || '');
   const [scanning, setScanning] = useState(false);
-  const [connecting, setConnecting] = useState(false);
 
-  const isConnected = qzPrinter?.connected ?? false;
+  const isConnected = cronosAgent?.connected ?? false;
 
   useEffect(() => {
-    if (!isConnected && qzPrinter?.connect) {
-      setConnecting(true);
-      qzPrinter.connect().finally(() => setConnecting(false));
+    if (!isConnected && cronosAgent?.checkConnection) {
+      cronosAgent.checkConnection();
     }
   }, []);
 
   const handleScan = async () => {
     setScanning(true);
     try {
-      if (!isConnected && qzPrinter?.connect) {
-        await qzPrinter.connect();
-      }
-      const list = await qzPrinter.listPrinters();
+      const list = await cronosAgent.getAvailablePrinters();
       const printerOptions = (Array.isArray(list) ? list : []).map(name => ({
-        label: name,
-        value: name,
+        label: typeof name === 'string' ? name : name.name || String(name),
+        value: typeof name === 'string' ? name : name.name || String(name),
       }));
       setPrinters(printerOptions);
       if (printerOptions.length === 0) {
@@ -39,7 +35,7 @@ export default function PrinterSetupPanel({ qzPrinter }) {
         toast.success(`${printerOptions.length} impresora(s) detectada(s).`);
       }
     } catch {
-      toast.error('Error al escanear impresoras. Verifica que QZ Tray este ejecutandose.');
+      toast.error('Error al escanear impresoras. Verifica que Cronos Agent este ejecutandose en http://127.0.0.1:9100.');
     } finally {
       setScanning(false);
     }
@@ -51,14 +47,14 @@ export default function PrinterSetupPanel({ qzPrinter }) {
       return;
     }
     localStorage.setItem(PRINTER_KEY, selectedPrinter);
-    qzPrinter?.savePrinterName?.(selectedPrinter);
+    cronosAgent?.savePrinterName?.(selectedPrinter);
     toast.success(`Impresora "${selectedPrinter}" configurada como predeterminada.`);
   };
 
   const handleClear = () => {
     setSelectedPrinter('');
     localStorage.removeItem(PRINTER_KEY);
-    qzPrinter?.savePrinterName?.('');
+    cronosAgent?.savePrinterName?.('');
     toast.info('Configuracion de impresora eliminada. Se usara la impresora predeterminada del sistema.');
   };
 
@@ -71,25 +67,23 @@ export default function PrinterSetupPanel({ qzPrinter }) {
           </div>
           <div>
             <h2 className="text-lg font-semibold text-slate-900">Configuracion de Impresora Local</h2>
-            <p className="text-xs text-slate-500">Selecciona la impresora termica conectada a esta terminal via QZ Tray.</p>
+            <p className="text-xs text-slate-500">Selecciona la impresora termica conectada a esta terminal via Cronos POS Agent.</p>
           </div>
           <div className="ml-auto">
             {isConnected ? (
-              <Tag value="QZ Tray Conectado" severity="success" className="text-xs" />
-            ) : connecting ? (
-              <Tag value="Conectando..." severity="warning" className="text-xs" />
+              <Tag value="Cronos Agent Conectado" severity="success" className="text-xs" />
             ) : (
-              <Tag value="QZ Tray Desconectado" severity="danger" className="text-xs" />
+              <Tag value="Cronos Agent Desconectado" severity="danger" className="text-xs" />
             )}
           </div>
         </div>
       </div>
 
       <div className="p-6 space-y-5">
-        {!isConnected && !connecting && (
+        {!isConnected && (
           <div className="rounded-lg bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-800">
             <i className="pi pi-exclamation-triangle mr-2" />
-            QZ Tray no esta conectado. Asegurate de que la aplicacion QZ Tray este ejecutandose en esta computadora.
+            Cronos POS Agent no esta conectado. Asegurate de que el agente este ejecutandose en <strong>http://127.0.0.1:9100</strong>.
           </div>
         )}
 
@@ -113,7 +107,7 @@ export default function PrinterSetupPanel({ qzPrinter }) {
             icon="pi pi-refresh"
             onClick={handleScan}
             loading={scanning}
-            disabled={scanning || (!isConnected && !qzPrinter?.connect)}
+            disabled={scanning || !isConnected}
             className="cursor-pointer shrink-0 rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-indigo-500 disabled:opacity-50"
             pt={{ root: { className: 'border-0' } }}
           />
@@ -156,10 +150,17 @@ export default function PrinterSetupPanel({ qzPrinter }) {
           </div>
         )}
 
+        {isConnected && cronosAgent?.printerName && (
+          <div>
+            <label className="mb-1.5 block text-sm font-medium text-slate-700">Monitor de Cola de Impresion</label>
+            <PrinterQueueMonitor cronosAgent={cronosAgent} />
+          </div>
+        )}
+
         <div className="rounded-lg bg-slate-50 px-4 py-3 text-xs text-slate-500 space-y-1">
           <p><strong>Requisitos:</strong></p>
           <ul className="list-disc pl-4 space-y-0.5">
-            <li>QZ Tray debe estar instalado y ejecutandose en esta computadora.</li>
+            <li>Cronos POS Agent debe estar instalado y ejecutandose en esta computadora (puerto 9100).</li>
             <li>La impresora termica debe estar conectada via USB o configurada en el sistema operativo.</li>
             <li>La configuracion se almacena localmente en este navegador.</li>
           </ul>

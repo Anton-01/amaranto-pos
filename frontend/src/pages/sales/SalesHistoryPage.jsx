@@ -15,7 +15,7 @@ import api from '../../api/axios';
 import AppLayout from '../../components/layout/AppLayout';
 import TicketPreview from '../../components/pos/TicketPreview';
 import { useAuth } from '../../context/AuthContext';
-import useQzPrinter from '../../hooks/useQzPrinter';
+import useCronosAgent from '../../hooks/useCronosAgent';
 
 const quickFilters = [
   { label: 'Hoy', value: 'today' },
@@ -35,7 +35,7 @@ export default function SalesHistoryPage() {
   const { user } = useAuth();
   const userRoles = user?.roles || [];
   const isAdminOrManager = userRoles.includes('admin') || userRoles.includes('manager');
-  const qzPrinter = useQzPrinter();
+  const cronosAgent = useCronosAgent();
 
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -180,10 +180,10 @@ export default function SalesHistoryPage() {
         toast.error('No se generaron datos de impresion.');
         return;
       }
-      await qzPrinter.printRaw(printerData);
+      await cronosAgent.printRaw(printerData);
       toast.success('Ticket enviado a la impresora.');
     } catch (err) {
-      console.error("Error en el flujo de impresion de Amaranto POS:", err);
+      console.error("Error en el flujo de impresion via Cronos Agent:", err);
       toast.error("Error al imprimir: " + (err.message || err));
     } finally {
       setDirectPrinting(false);
@@ -652,7 +652,7 @@ export default function SalesHistoryPage() {
               disabled={directPrinting}
               className="cursor-pointer rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-500"
               pt={{ root: { className: 'border-0' } }}
-              tooltip="Imprimir via QZ Tray (ESC/POS directo)"
+              tooltip="Imprimir via Cronos Agent (ESC/POS directo)"
               tooltipOptions={{ position: 'top' }}
             />
             <Button
