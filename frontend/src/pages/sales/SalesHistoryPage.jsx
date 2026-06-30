@@ -176,16 +176,15 @@ export default function SalesHistoryPage() {
     try {
       const res = await api.post(`/orders/${orderId}/print`);
       const printerData = res.data.printer_data;
-      if (printerData && qzPrinter.connected) {
-        await qzPrinter.printRaw(printerData);
-        toast.success('Ticket enviado a la impresora.');
-      } else if (printerData) {
-        toast.warning('QZ Tray no conectado. Usa la impresion del navegador.');
-      } else {
+      if (!printerData) {
         toast.error('No se generaron datos de impresion.');
+        return;
       }
-    } catch {
-      toast.error('No se pudo imprimir. Verifique la conexion de la impresora.');
+      await qzPrinter.printRaw(printerData);
+      toast.success('Ticket enviado a la impresora.');
+    } catch (err) {
+      console.error("Error en el flujo de impresion de Amaranto POS:", err);
+      toast.error("Error al imprimir: " + (err.message || err));
     } finally {
       setDirectPrinting(false);
     }
