@@ -9,12 +9,12 @@ import api from '../../api/axios';
 import AppLayout from '../../components/layout/AppLayout';
 import CheckoutModal from '../../components/pos/CheckoutModal';
 import useOnlineStatus, { getOfflineQueue, clearOfflineQueue } from '../../hooks/useOnlineStatus';
-import useQzPrinter from '../../hooks/useQzPrinter';
+import useCronosAgent from '../../hooks/useCronosAgent';
 
 export default function POSPage() {
   const navigate = useNavigate();
   const isOnline = useOnlineStatus();
-  const qzPrinter = useQzPrinter();
+  const cronosAgent = useCronosAgent();
   const syncingRef = useRef(false);
 
   const [productGroups, setProductGroups] = useState([]);
@@ -559,7 +559,7 @@ export default function POSPage() {
         taxRate={taxRate}
         onSuccess={handleCheckoutSuccess}
         isOnline={isOnline}
-        qzPrinter={qzPrinter}
+        cronosAgent={cronosAgent}
       />
 
     </AppLayout>
