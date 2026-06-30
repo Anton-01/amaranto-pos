@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Finance;
 
 use App\Http\Controllers\Controller;
 use App\Models\GlobalSetting;
+use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -12,13 +13,13 @@ class AnalyticsController extends Controller
 {
     public function salesByPaymentMethod(Request $request): JsonResponse
     {
-        $dateFrom = $request->input('date_from', now()->subDays(6)->startOfDay()->toDateTimeString());
-        $dateTo = $request->input('date_to', now()->endOfDay()->toDateTimeString());
+        $dateFrom = $request->input('date_from', Carbon::now('America/Mexico_City')->subDays(6)->startOfDay()->toDateTimeString());
+        $dateTo = $request->input('date_to', Carbon::now('America/Mexico_City')->endOfDay()->toDateTimeString());
 
         $daily = DB::table('orders')
             ->join('payment_methods', 'orders.payment_method_id', '=', 'payment_methods.id')
             ->select(
-                DB::raw("DATE(orders.created_at) as date"),
+                DB::raw("DATE(orders.created_at AT TIME ZONE 'America/Mexico_City') as date"),
                 'payment_methods.slug as payment_slug',
                 'payment_methods.name as payment_name',
                 DB::raw('SUM(orders.subtotal) as total_net'),
@@ -27,7 +28,7 @@ class AnalyticsController extends Controller
             )
             ->where('orders.status', 'completed')
             ->whereBetween('orders.created_at', [$dateFrom, $dateTo])
-            ->groupBy(DB::raw('DATE(orders.created_at)'), 'payment_methods.slug', 'payment_methods.name')
+            ->groupBy(DB::raw("DATE(orders.created_at AT TIME ZONE 'America/Mexico_City')"), 'payment_methods.slug', 'payment_methods.name')
             ->orderBy('date')
             ->get();
 
@@ -59,8 +60,8 @@ class AnalyticsController extends Controller
 
     public function financialSummary(Request $request): JsonResponse
     {
-        $dateFrom = $request->input('date_from', now()->startOfMonth()->toDateString());
-        $dateTo = $request->input('date_to', now()->endOfDay()->toDateTimeString());
+        $dateFrom = $request->input('date_from', Carbon::now('America/Mexico_City')->startOfMonth()->toDateString());
+        $dateTo = $request->input('date_to', Carbon::now('America/Mexico_City')->endOfDay()->toDateTimeString());
 
         $taxSetting = GlobalSetting::where('key', 'tax_rate')->first();
         $taxRate = $taxSetting ? ($taxSetting->value['rate'] ?? 0.16) : 0.16;
@@ -134,19 +135,19 @@ class AnalyticsController extends Controller
 
     public function dailyTrend(Request $request): JsonResponse
     {
-        $dateFrom = $request->input('date_from', now()->subDays(29)->startOfDay()->toDateTimeString());
-        $dateTo = $request->input('date_to', now()->endOfDay()->toDateTimeString());
+        $dateFrom = $request->input('date_from', Carbon::now('America/Mexico_City')->subDays(29)->startOfDay()->toDateTimeString());
+        $dateTo = $request->input('date_to', Carbon::now('America/Mexico_City')->endOfDay()->toDateTimeString());
 
         $daily = DB::table('orders')
             ->select(
-                DB::raw("DATE(created_at) as date"),
+                DB::raw("DATE(created_at AT TIME ZONE 'America/Mexico_City') as date"),
                 DB::raw('SUM(subtotal) as net_income'),
                 DB::raw('SUM(total) as gross_income'),
                 DB::raw('COUNT(*) as order_count')
             )
             ->where('status', 'completed')
             ->whereBetween('created_at', [$dateFrom, $dateTo])
-            ->groupBy(DB::raw('DATE(created_at)'))
+            ->groupBy(DB::raw("DATE(created_at AT TIME ZONE 'America/Mexico_City')"))
             ->orderBy('date')
             ->get();
 

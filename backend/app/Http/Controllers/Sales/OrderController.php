@@ -14,6 +14,7 @@ use App\Models\Promotion;
 use App\Models\StockMovement;
 use App\Models\TicketConfig;
 use App\Models\User;
+use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use App\Services\PrinterService;
@@ -32,10 +33,12 @@ class OrderController extends Controller
             ->orderByDesc('created_at');
 
         if ($request->filled('date_from')) {
-            $query->where('created_at', '>=', $request->date_from);
+            $from = Carbon::parse($request->date_from, 'America/Mexico_City')->startOfDay();
+            $query->where('created_at', '>=', $from);
         }
         if ($request->filled('date_to')) {
-            $query->where('created_at', '<=', $request->date_to . ' 23:59:59');
+            $to = Carbon::parse($request->date_to, 'America/Mexico_City')->endOfDay();
+            $query->where('created_at', '<=', $to);
         }
         if ($request->filled('payment_method_id')) {
             $query->where('payment_method_id', $request->payment_method_id);
