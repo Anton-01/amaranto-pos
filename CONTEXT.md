@@ -2583,6 +2583,7 @@ Se elimino por completo la dependencia de QZ Tray (SDK WebSocket client-side + f
 | `getAvailablePrinters()` | `GET /api/printers` | Retorna lista de impresoras detectadas por el agente |
 | `printTicket(printerName, base64Data)` | `POST /api/print` | Envia datos ESC/POS Base64 a la impresora especificada |
 | `printRaw(base64Data)` | `POST /api/print` | Wrapper que usa la impresora guardada en localStorage |
+| `printPDFDocument(printerName, base64Pdf)` | `POST /api/print/pdf` | Envia documento PDF en Base64 a la impresora convencional especificada. Usado para reportes de cierre de caja, inventario y formatos de cocina. Inyecta `X-Cronos-Agent-Token` en headers. Si el agente responde con error, propaga el mensaje JSON del agente (`message` o `error`) |
 | `getPrinterQueue(printerName)` | `GET /api/printers/queue?printer_name=...` | Consulta estado de la cola de impresion |
 | `checkConnection()` | `GET /api/printers` | Verifica conectividad con el agente |
 
@@ -2659,3 +2660,75 @@ Se elimino por completo la dependencia de QZ Tray (SDK WebSocket client-side + f
 - `src/pages/pos/POSPage.jsx` — Hook useCronosAgent, prop cronosAgent
 - `src/pages/sales/SalesHistoryPage.jsx` — Hook useCronosAgent, tooltips actualizados
 - `src/pages/admin/SystemSettingsPage.jsx` — Hook useCronosAgent, prop cronosAgent
+
+---
+
+## 35. Impresion Directa de PDFs via Cronos POS Agent [🟢 COMPLETADO Y OPERATIVO]
+
+### Contexto
+Se extendio el hook `useCronosAgent` con soporte para impresion de documentos PDF en impresoras convencionales (no termicas) a traves del endpoint `POST /api/print/pdf` del agente local. Esto permite enviar reportes de cierre de caja, listados de inventario y formatos de cocina directamente a la impresora sin abrir ventanas del navegador.
+
+### Tarea 1: Nueva Funcion printPDFDocument en useCronosAgent [🟢 Completado]
+
+#### Ubicacion: `src/hooks/useCronosAgent.js`
+- **Firma**: `printPDFDocument(printerName, base64Pdf)` — Funcion asincrona exportable
+- **Endpoint**: `POST http://127.0.0.1:9100/api/print/pdf`
+- **Payload JSON**: `{ printer_name: string, data: string (Base64 del PDF) }`
+- **Cabeceras**: `Content-Type: application/json` + `X-Cronos-Agent-Token` (leido de `localStorage('cronos_agent_token')`)
+- **Manejo de errores**: Si el agente responde con HTTP no-200, parsea el JSON de error y propaga `message` o `error` del body para mostrar al usuario exactamente que fallo (ej: impresora desconectada, nombre invalido, cola llena)
+- **Fallback de impresora**: Si `printerName` es falsy, usa la impresora activa guardada en localStorage (`cronos_active_printer`)
+
+### Tarea 2: Integracion en CashRegisterClosingsPage (Cierres de Caja) [🟢 Completado]
+
+#### Cambios en `src/pages/admin/CashRegisterClosingsPage.jsx`
+- **Hook**: Importa y usa `useCronosAgent()` para acceso al agente local
+- **Estado**: `printingPdfId` (UUID) para tracking de impresion en progreso por cierre individual
+- **Funcion `handlePrintPdf(closing)`**:
+  1. Valida conexion del agente y existencia de impresora configurada con mensajes descriptivos
+  2. Muestra toast de carga "Cocinando impresion..." (via `toast.loading`)
+  3. Descarga el PDF del backend Laravel como `arraybuffer` (`GET /cash-registers/closings/{id}/pdf`)
+  4. Convierte el ArrayBuffer a Base64 string via `btoa` + `Uint8Array.reduce`
+  5. Envia a `cronosAgent.printPDFDocument(printerName, base64Pdf)`
+  6. En exito: toast success "Reporte de cierre enviado a la impresora"
+  7. En error: toast error con mensaje exacto del agente local (no generico)
+- **Boton en DataTable**: Icono `pi pi-print` (severity success) en la columna de acciones, junto al boton existente de descarga PDF. Deshabilitado si el agente no esta conectado o si hay impresion en progreso para ese cierre. Tooltip contextual indica estado del agente.
+- **Boton en Modal Detalle**: Boton "Imprimir PDF" junto a "Descargar PDF" en el modal de detalle del arqueo, con label dinamico "Cocinando impresion..." durante el envio.
+
+### Tarea 3: Politicas de Manejo de Respuestas del Agente Local [🟢 Documentado]
+
+#### Respuestas del Agente (POST /api/print/pdf)
+| HTTP Status | Significado | Accion Frontend |
+| :--- | :--- | :--- |
+| 200 | PDF enviado a la cola de impresion | `toast.success` con confirmacion |
+| 400 | Payload invalido (falta printer_name o data) | `toast.error` con `body.message` |
+| 401 | Token de agente invalido o ausente | `toast.error` con `body.message` |
+| 404 | Impresora no encontrada en el sistema | `toast.error` con `body.message` |
+| 500 | Error interno del agente (impresora desconectada, driver, etc.) | `toast.error` con `body.message` o `body.error` |
+| Network Error | Agente no ejecutandose o puerto 9100 inaccesible | `toast.error` con mensaje de verificacion de servicio |
+
+#### Flujo de Impresion PDF (Diagrama Secuencial)
+1. Usuario hace clic en boton "Imprimir PDF" en Cierres de Caja
+2. Frontend valida: agente conectado? impresora configurada?
+3. Frontend descarga PDF del backend Laravel (`GET /api/cash-registers/closings/{id}/pdf` → arraybuffer)
+4. Frontend convierte arraybuffer a Base64 string
+5. Frontend envia `POST http://127.0.0.1:9100/api/print/pdf` con `{ printer_name, data }` + header `X-Cronos-Agent-Token`
+6. Agente local recibe, decodifica Base64, envia al spooler de impresion del SO
+7. Agente responde JSON con resultado
+8. Frontend muestra toast segun resultado
+
+#### UX durante la Impresion
+- **Esperando respuesta**: Toast loading "Cocinando impresion..." (reemplaza spinner generico)
+- **Exito**: Toast success con confirmacion limpia
+- **Error de agente**: Toast error con mensaje exacto del JSON de error del agente (no generico)
+- **Agente desconectado**: Boton deshabilitado con tooltip "Cronos Agent desconectado"
+- **Sin impresora**: Toast error con instruccion de ir a Configuracion del Sistema
+
+### Componentes React que Consumen printPDFDocument
+| Componente | Ruta | Uso |
+| :--- | :--- | :--- |
+| `CashRegisterClosingsPage` | `/admin/cierres` | Impresion directa de reportes PDF de arqueo de caja (DataTable + Modal Detalle) |
+
+### Archivos Modificados en esta Fase
+**Frontend (modificados):**
+- `src/hooks/useCronosAgent.js` — Nueva funcion `printPDFDocument(printerName, base64Pdf)` con POST a `/api/print/pdf`, manejo de errores JSON del agente, exportada en el return del hook
+- `src/pages/admin/CashRegisterClosingsPage.jsx` — Import useCronosAgent, estado printingPdfId, funcion handlePrintPdf con toast loading/success/error, boton pi-print en DataTable acciones y en modal detalle
