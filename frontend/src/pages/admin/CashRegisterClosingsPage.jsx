@@ -13,6 +13,7 @@ import { ProgressSpinner } from 'primereact/progressspinner';
 import { toast } from 'sonner';
 import api from '../../api/axios';
 import AppLayout from '../../components/layout/AppLayout';
+import useCronosAgent from '../../hooks/useCronosAgent';
 
 const fmtMXN = (v) =>
   new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(v ?? 0);
@@ -27,11 +28,13 @@ const quickOptions = [
 ];
 
 export default function CashRegisterClosingsPage() {
+  const cronosAgent = useCronosAgent();
   const [closings, setClosings] = useState([]);
   const [loading, setLoading] = useState(false);
   const [page, setPage] = useState(0);
   const [totalRecords, setTotalRecords] = useState(0);
   const perPage = 20;
+  const [printingPdfId, setPrintingPdfId] = useState(null);
 
   const [quickFilter, setQuickFilter] = useState(null);
   const [dateRange, setDateRange] = useState(null);
@@ -205,6 +208,36 @@ export default function CashRegisterClosingsPage() {
     }
   };
 
+  const handlePrintPdf = async (closing) => {
+    if (!cronosAgent.connected) {
+      toast.error('Cronos Agent no está conectado. Verifica que el servicio esté activo en http://127.0.0.1:9100.');
+      return;
+    }
+    if (!cronosAgent.printerName) {
+      toast.error('No hay impresora configurada. Ve a Configuración del Sistema para seleccionar una.');
+      return;
+    }
+    setPrintingPdfId(closing.id);
+    const toastId = toast.loading('Cocinando impresión...');
+    try {
+      const res = await api.get(`/cash-registers/closings/${closing.id}/pdf`, {
+        responseType: 'arraybuffer',
+      });
+      const base64Pdf = btoa(
+        new Uint8Array(res.data).reduce((data, byte) => data + String.fromCharCode(byte), '')
+      );
+      await cronosAgent.printPDFDocument(cronosAgent.printerName, base64Pdf);
+      toast.dismiss(toastId);
+      toast.success('Reporte de cierre enviado a la impresora.');
+    } catch (err) {
+      toast.dismiss(toastId);
+      const msg = err.message || 'Error desconocido al imprimir el PDF.';
+      toast.error(`Error de impresión: ${msg}`);
+    } finally {
+      setPrintingPdfId(null);
+    }
+  };
+
   const handleSendEmail = async () => {
     if (emails.length === 0) {
       toast.error('Agrega al menos un correo destinatario.');
@@ -267,6 +300,18 @@ export default function CashRegisterClosingsPage() {
         tooltipOptions={{ position: 'top' }}
         className="cursor-pointer"
         onClick={() => handleExportPdf(row)}
+      />
+      <Button
+        icon="pi pi-print"
+        rounded
+        text
+        severity="success"
+        tooltip={cronosAgent.connected ? 'Imprimir PDF via Cronos Agent' : 'Cronos Agent desconectado'}
+        tooltipOptions={{ position: 'top' }}
+        className="cursor-pointer"
+        disabled={!cronosAgent.connected || printingPdfId === row.id}
+        loading={printingPdfId === row.id}
+        onClick={() => handlePrintPdf(row)}
       />
       <Button
         icon="pi pi-envelope"
@@ -584,15 +629,28 @@ export default function CashRegisterClosingsPage() {
             </table>
 
             <div className="mt-4 flex items-center justify-between">
-              <Button
-                label="Descargar PDF"
-                icon="pi pi-file-pdf"
-                severity="danger"
-                outlined
-                size="small"
-                className="cursor-pointer"
-                onClick={() => handleExportPdf(selectedClosing)}
-              />
+              <div className="flex items-center gap-2">
+                <Button
+                  label="Descargar PDF"
+                  icon="pi pi-file-pdf"
+                  severity="danger"
+                  outlined
+                  size="small"
+                  className="cursor-pointer"
+                  onClick={() => handleExportPdf(selectedClosing)}
+                />
+                <Button
+                  label={printingPdfId === selectedClosing?.id ? 'Cocinando impresión...' : 'Imprimir PDF'}
+                  icon="pi pi-print"
+                  severity="success"
+                  outlined
+                  size="small"
+                  className="cursor-pointer"
+                  disabled={!cronosAgent.connected || printingPdfId === selectedClosing?.id}
+                  loading={printingPdfId === selectedClosing?.id}
+                  onClick={() => handlePrintPdf(selectedClosing)}
+                />
+              </div>
               {(() => {
                 const d = parseFloat(selectedClosing.difference_amount ?? 0);
                 const sev = d < 0 ? 'danger' : d > 0 ? 'success' : 'info';

@@ -98,6 +98,26 @@ export default function useCronosAgent() {
     await printTicket(printerName, base64Data);
   }, [printTicket, printerName]);
 
+  const printPDFDocument = useCallback(async (targetPrinter, base64Pdf) => {
+    const printer = targetPrinter || printerName;
+    if (!printer) throw new Error('No hay impresora configurada para impresión PDF.');
+
+    const res = await agentFetch('/api/print/pdf', {
+      method: 'POST',
+      body: JSON.stringify({
+        printer_name: printer,
+        data: base64Pdf,
+      }),
+    });
+
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.message || body.error || `Error de impresión PDF: HTTP ${res.status}`);
+    }
+
+    return res.json();
+  }, [printerName]);
+
   return {
     connected,
     printerName,
@@ -105,6 +125,7 @@ export default function useCronosAgent() {
     getAvailablePrinters,
     printTicket,
     printRaw,
+    printPDFDocument,
     getPrinterQueue,
     checkConnection,
   };
