@@ -6,14 +6,14 @@
 - Base de Datos: Managed PostgreSQL (DigitalOcean)
 - Cache / Colas: Redis 7 Alpine (cache global + queue worker)
 - WebSockets: Laravel Reverb (puerto 8080, tiempo real)
-- Estado de Infraestructura: Docker Compose multi-contenedor operativo (4 servicios: backend, frontend, postgres, redis).
-- Despliegue Produccion: [🟢 COMPLETADA Y LISTA PARA PRODUCCION] — DigitalOcean Droplet + Managed PostgreSQL, Docker multi-stage, Nginx proxy inverso HTTPS/WSS, Certbot SSL, deploy.sh automatizado.
+- Estado de Infraestructura: [🟢 FASE 7: DEPLOY ÁGIL Y DOCKER OPTIMIZADO] — Docker Compose multi-contenedor operativo (4 servicios: backend, frontend, postgres, redis).
+- Despliegue Produccion: [🟢 FASE 7: DEPLOY ÁGIL Y DOCKER OPTIMIZADO] — DigitalOcean Droplet + Managed PostgreSQL, imagenes base pre-compiladas (serversideup/php:8.4-fpm-alpine + nginx:alpine), frontend Vite pre-construido en local (frontend/dist versionado), Nginx proxy inverso HTTPS/WSS, Certbot SSL, deploy.sh automatizado. Tiempo estimado de build en el Droplet: < 2 minutos (antes: ~82 min).
 
 ## 2. Matriz de Modulos y Progreso
 | Modulo | Estado Backend | Estado Frontend | Observaciones |
 | :--- | :--- | :--- | :--- |
 | Infraestructura & Docker | [🟢 Completado y Operativo] | [🟢 Completado y Operativo] | Docker Compose multi-contenedor, Alpine, Hot-Reload, Reverb WS :8080 |
-| Despliegue Produccion (DigitalOcean) | [🟢 COMPLETADA Y LISTA PARA PRODUCCION] | [🟢 COMPLETADA Y LISTA PARA PRODUCCION] | Multi-stage Docker, Nginx HTTPS/WSS proxy, Managed PostgreSQL SSL, Certbot, deploy.sh, cron scheduler |
+| Despliegue Produccion (DigitalOcean) | [🟢 FASE 7: DEPLOY ÁGIL Y DOCKER OPTIMIZADO] | [🟢 FASE 7: DEPLOY ÁGIL Y DOCKER OPTIMIZADO] | Imagenes pre-compiladas (serversideup/php + nginx:alpine), frontend pre-construido en local, build en Droplet < 2 min, Nginx HTTPS/WSS proxy, Managed PostgreSQL SSL, Certbot, deploy.sh, cron scheduler |
 | Migraciones & Modelos Base (BD) | [🟢 Completado] | N/A | 23 migraciones, 16 modelos, Trait AdvancedSoftDeletes, Seeder base |
 | Autenticacion & 2FA (Sanctum) | [🟢 Completado] | [🟢 Completado] | Login, Logout, 2FA TOTP, Kill-Switch, Session Log |
 | Catalogo, Categorias y Variaciones| [🟢 Completado] | [🟢 Completado] | CRUD completo, DataTable filtros avanzados, variaciones en serie |
@@ -2732,3 +2732,59 @@ Se extendio el hook `useCronosAgent` con soporte para impresion de documentos PD
 **Frontend (modificados):**
 - `src/hooks/useCronosAgent.js` — Nueva funcion `printPDFDocument(printerName, base64Pdf)` con POST a `/api/print/pdf`, manejo de errores JSON del agente, exportada en el return del hook
 - `src/pages/admin/CashRegisterClosingsPage.jsx` — Import useCronosAgent, estado printingPdfId, funcion handlePrintPdf con toast loading/success/error, boton pi-print en DataTable acciones y en modal detalle
+
+## 36. FASE 7: DEPLOY ÁGIL Y DOCKER OPTIMIZADO [🟢 COMPLETADO Y OPERATIVO]
+
+### Contexto del Problema
+El despliegue en produccion tardaba mas de 50 minutos en el Droplet de DigitalOcean por dos cuellos de botella en el hardware limitado del servidor:
+1. **Backend**: `backend/Dockerfile.prod` compilaba las extensiones de PHP desde cero (`apk add` + `docker-php-ext-install` + `pecl install redis`) sobre `php:8.4-fpm-alpine` limpia — **~50 minutos**.
+2. **Frontend**: `npm run build` de Vite dentro del Dockerfile transformaba 771 modulos en el Droplet — **~32 minutos**.
+
+### Solucion Implementada: Cero Compilacion en el Servidor
+
+#### Tarea 1: Backend con Imagen Pre-Compilada [🟢 Completado]
+`backend/Dockerfile.prod` reescrito sobre **`serversideup/php:8.4-fpm-alpine`** (imagen de produccion de la comunidad optimizada para Laravel):
+- Extensiones ya incluidas de forma nativa: `pdo_pgsql`, `pgsql`, `zip`, `gd`, `intl`, `bcmath`, `opcache`, `mbstring`, `pcntl`, `redis` — se eliminaron por completo `apk add`, `docker-php-ext-install` y `pecl install`.
+- **Cache de Docker eficiente en Composer**: la etapa `vendor` copia UNICAMENTE `composer.json` + `composer.lock` antes de `composer install --no-dev --optimize-autoloader`; la capa solo se invalida cuando cambian dependencias, no el codigo fuente. Al correr sobre la misma imagen serversideup, se elimino `--ignore-platform-reqs` (validacion real de plataforma PHP + extensiones).
+- **Nota de version**: se eligio el tag `8.4-fpm-alpine` (no `8.3`) porque `composer.lock` resuelve componentes Symfony que requieren `php >= 8.4.1` — el runtime anterior ya era `php:8.4-fpm-alpine`, por lo que se mantiene paridad exacta de version.
+- Se conservan: `opcache.ini` custom (JIT 1255, validate_timestamps=0), `docker-entrypoint.prod.sh` (storage:link, caches, queue worker, Reverb, artisan serve), `USER www-data`, `EXPOSE 8000 8080`.
+
+#### Tarea 2: Frontend Nginx Etapa Unica (Build Local Pre-Construido) [🟢 Completado]
+`frontend/Dockerfile.prod` rediseñado como **etapa unica de `nginx:alpine`** — ya NO contiene Node.js, `npm install` ni `npm run build`:
+- `COPY frontend/nginx.conf` (SPA try_files + cache estaticos 1y + gzip) + `COPY frontend/dist/ /usr/share/nginx/html`.
+- El bundle de Vite se compila en la **maquina del desarrollador** via `build-frontend.sh` (nuevo script raiz: `npm ci` + `npm run build` + instrucciones de commit).
+- `frontend/dist/` ahora **SE VERSIONA en git** (removido de `.gitignore` raiz y de `frontend/.gitignore`) para viajar al Droplet con `git pull`.
+
+#### Tarea 3: deploy.sh con Verificacion de Build Pre-Compilado [🟢 Completado]
+- Nuevo **Paso 2/7**: verifica que `frontend/dist/index.html` exista tras el `git pull`; si falta, aborta con instrucciones exactas (`bash build-frontend.sh` + commit + push en local).
+- Header del script documenta el flujo completo: (Local) build → commit dist → push; (Droplet) `deploy.sh` solo empaqueta estaticos y levanta imagenes pre-compiladas.
+- El resto del pipeline se conserva: healthcheck backend, `migrate --force`, caches (config/route/event/view), `queue:restart`, `docker image prune`.
+
+### Flujo de Despliegue Resultante
+1. **(Local)** `bash build-frontend.sh` → genera `frontend/dist/`
+2. **(Local)** `git add frontend/dist && git commit && git push origin main`
+3. **(Droplet)** `bash deploy.sh` → `git pull` + `docker compose -f docker-compose.prod.yml up --build -d` (solo descarga imagenes base y copia archivos)
+
+### Imagenes Base Utilizadas
+| Servicio | Imagen Anterior | Imagen Nueva | Compilacion en Droplet |
+| :--- | :--- | :--- | :--- |
+| backend | `php:8.4-fpm-alpine` + build nativo de 10 extensiones | `serversideup/php:8.4-fpm-alpine` (pre-compilada) | Ninguna (solo composer install cacheado + COPY) |
+| frontend | `node:22-alpine` (build Vite) → `nginx:alpine` | `nginx:alpine` etapa unica | Ninguna (COPY de dist/ pre-construido) |
+| redis | `redis:7-alpine` | `redis:7-alpine` (sin cambios) | Ninguna |
+
+### Tiempos de Build Estimados
+| Fase | Antes | Despues |
+| :--- | :--- | :--- |
+| Backend (extensiones PHP) | ~50 min | ~30-60 seg (pull de imagen + composer cacheado) |
+| Frontend (Vite 771 modulos) | ~32 min | ~5-10 seg (COPY de estaticos) — el build Vite corre en local |
+| **Total en Droplet** | **~82 min** | **< 2 min** |
+
+### Archivos Creados en esta Fase
+- `build-frontend.sh` — Script local de compilacion Vite con validacion de dist/index.html e instrucciones de publicacion
+
+### Archivos Modificados en esta Fase
+- `backend/Dockerfile.prod` — Base serversideup/php:8.4-fpm-alpine sin compilacion nativa, etapa vendor cacheada solo con composer.json/lock
+- `frontend/Dockerfile.prod` — Etapa unica nginx:alpine con COPY directo de frontend/dist/
+- `deploy.sh` — Paso 2/7 de verificacion de build pre-compilado, header con flujo local→droplet, renumeracion 7 pasos
+- `.gitignore` — Removido frontend/dist/ (ahora versionado)
+- `frontend/.gitignore` — Removido dist (ahora versionado)
