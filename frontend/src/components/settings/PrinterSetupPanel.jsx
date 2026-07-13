@@ -1,15 +1,19 @@
 import { useState, useEffect } from 'react';
 import { Dropdown } from 'primereact/dropdown';
+import { InputText } from 'primereact/inputtext';
 import { Button } from 'primereact/button';
 import { Tag } from 'primereact/tag';
 import { toast } from 'sonner';
 import PrinterQueueMonitor from '../pos/PrinterQueueMonitor';
 
 const PRINTER_KEY = 'cronos_active_printer';
+const AGENT_TOKEN_KEY = 'cronos_agent_token';
 
 export default function PrinterSetupPanel({ cronosAgent }) {
   const [printers, setPrinters] = useState([]);
   const [selectedPrinter, setSelectedPrinter] = useState(() => localStorage.getItem(PRINTER_KEY) || '');
+  const [agentToken, setAgentToken] = useState(() => localStorage.getItem(AGENT_TOKEN_KEY) || '');
+  const [showToken, setShowToken] = useState(false);
   const [scanning, setScanning] = useState(false);
 
   const isConnected = cronosAgent?.connected ?? false;
@@ -35,20 +39,46 @@ export default function PrinterSetupPanel({ cronosAgent }) {
         toast.success(`${printerOptions.length} impresora(s) detectada(s).`);
       }
     } catch {
-      toast.error('Error al escanear impresoras. Verifica que Cronos Agent este ejecutandose en http://127.0.0.1:9100.');
+      toast.error('Error al escanear impresoras. Verifica que Cronos Agent este ejecutandose en http://127.0.0.1:9100 y que el Token del Agente sea correcto.');
     } finally {
       setScanning(false);
     }
   };
 
   const handleSave = () => {
-    if (!selectedPrinter) {
-      toast.warning('Selecciona una impresora antes de guardar.');
+    const token = agentToken.trim();
+
+    if (!token && !selectedPrinter && !localStorage.getItem(AGENT_TOKEN_KEY)) {
+      toast.warning('Ingresa el token del agente o selecciona una impresora antes de guardar.');
       return;
     }
-    localStorage.setItem(PRINTER_KEY, selectedPrinter);
-    cronosAgent?.savePrinterName?.(selectedPrinter);
-    toast.success(`Impresora "${selectedPrinter}" configurada como predeterminada.`);
+
+    // Persistir token (o limpiarlo si el campo quedo vacio)
+    if (token) {
+      localStorage.setItem(AGENT_TOKEN_KEY, token);
+    } else {
+      localStorage.removeItem(AGENT_TOKEN_KEY);
+    }
+    setAgentToken(token);
+
+    // Persistir impresora seleccionada (si hay una)
+    if (selectedPrinter) {
+      localStorage.setItem(PRINTER_KEY, selectedPrinter);
+      cronosAgent?.savePrinterName?.(selectedPrinter);
+    }
+
+    // Re-verificar conexion con el agente usando el token recien guardado
+    cronosAgent?.checkConnection?.();
+
+    if (token && selectedPrinter) {
+      toast.success(`Configuracion guardada: token del agente e impresora "${selectedPrinter}".`);
+    } else if (token) {
+      toast.success('Token del agente guardado. Ya puedes escanear impresoras.');
+    } else if (selectedPrinter) {
+      toast.success(`Impresora "${selectedPrinter}" configurada como predeterminada.`);
+    } else {
+      toast.info('Token del agente eliminado.');
+    }
   };
 
   const handleClear = () => {
@@ -83,9 +113,38 @@ export default function PrinterSetupPanel({ cronosAgent }) {
         {!isConnected && (
           <div className="rounded-lg bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-800">
             <i className="pi pi-exclamation-triangle mr-2" />
-            Cronos POS Agent no esta conectado. Asegurate de que el agente este ejecutandose en <strong>http://127.0.0.1:9100</strong>.
+            Cronos POS Agent no esta conectado. Asegurate de que el agente este ejecutandose en <strong>http://127.0.0.1:9100</strong> y de que el Token del Agente este configurado y sea valido.
           </div>
         )}
+
+        <div>
+          <label htmlFor="cronos-agent-token" className="mb-1.5 block text-sm font-medium text-slate-700">Token del Agente Cronos</label>
+          <div className="flex items-center gap-2">
+            <InputText
+              id="cronos-agent-token"
+              type={showToken ? 'text' : 'password'}
+              value={agentToken}
+              onChange={(e) => setAgentToken(e.target.value)}
+              placeholder="Pega aqui el token de autenticacion del agente..."
+              autoComplete="off"
+              className="w-full text-sm font-mono"
+            />
+            <Button
+              type="button"
+              icon={showToken ? 'pi pi-eye-slash' : 'pi pi-eye'}
+              onClick={() => setShowToken((v) => !v)}
+              severity="secondary"
+              text
+              rounded
+              className="cursor-pointer shrink-0 !h-9 !w-9"
+              tooltip={showToken ? 'Ocultar token' : 'Mostrar token'}
+              tooltipOptions={{ position: 'top' }}
+            />
+          </div>
+          <p className="mt-1.5 text-xs text-slate-500">
+            Puedes encontrar este token dentro del archivo <strong className="font-mono">config.json</strong> en la carpeta de instalacion del agente.
+          </p>
+        </div>
 
         <div className="flex items-end gap-3">
           <div className="flex-1">
@@ -120,28 +179,29 @@ export default function PrinterSetupPanel({ cronosAgent }) {
                 <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">Impresora Seleccionada</span>
                 <p className="mt-0.5 text-sm font-semibold text-slate-900 font-mono">{selectedPrinter}</p>
               </div>
-              <div className="flex gap-2">
-                <Button
-                  label="Guardar Configuracion"
-                  icon="pi pi-check"
-                  onClick={handleSave}
-                  className="cursor-pointer rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-500"
-                  pt={{ root: { className: 'border-0' } }}
-                />
-                <Button
-                  icon="pi pi-times"
-                  onClick={handleClear}
-                  severity="secondary"
-                  text
-                  rounded
-                  className="cursor-pointer !h-9 !w-9"
-                  tooltip="Limpiar seleccion"
-                  tooltipOptions={{ position: 'top' }}
-                />
-              </div>
+              <Button
+                icon="pi pi-times"
+                onClick={handleClear}
+                severity="secondary"
+                text
+                rounded
+                className="cursor-pointer !h-9 !w-9"
+                tooltip="Limpiar seleccion"
+                tooltipOptions={{ position: 'top' }}
+              />
             </div>
           </div>
         )}
+
+        <div className="flex justify-end">
+          <Button
+            label="Guardar Configuracion"
+            icon="pi pi-check"
+            onClick={handleSave}
+            className="cursor-pointer rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-500"
+            pt={{ root: { className: 'border-0' } }}
+          />
+        </div>
 
         {localStorage.getItem(PRINTER_KEY) && !selectedPrinter && (
           <div className="rounded-lg bg-emerald-50 border border-emerald-200 px-4 py-3 text-sm text-emerald-800">
@@ -161,6 +221,7 @@ export default function PrinterSetupPanel({ cronosAgent }) {
           <p><strong>Requisitos:</strong></p>
           <ul className="list-disc pl-4 space-y-0.5">
             <li>Cronos POS Agent debe estar instalado y ejecutandose en esta computadora (puerto 9100).</li>
+            <li>El Token del Agente debe coincidir con el valor de <strong className="font-mono">config.json</strong> del agente instalado.</li>
             <li>La impresora termica debe estar conectada via USB o configurada en el sistema operativo.</li>
             <li>La configuracion se almacena localmente en este navegador.</li>
           </ul>
