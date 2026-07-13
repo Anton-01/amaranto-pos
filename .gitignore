@@ -29,8 +29,9 @@ backend/vendor/
 backend/.phpunit.result.cache
 
 ### --- FRONTEND (REACT / NODE) ---
+# NOTA: frontend/dist/ SE VERSIONA intencionalmente — es el build de
+# produccion pre-compilado en local que el Droplet solo empaqueta en Nginx
 frontend/node_modules/
-frontend/dist/
 frontend/build/
 frontend/.env
 frontend/.env.local
