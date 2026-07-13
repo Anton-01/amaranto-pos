@@ -2,11 +2,14 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import api from '../api/axios';
 
 const PRINTER_KEY = 'cronos_active_printer';
+const AGENT_TOKEN_KEY = 'cronos_agent_token';
 const AGENT_BASE_URL = 'http://127.0.0.1:9100';
 
+// Lectura dinamica en CADA peticion: el header X-Cronos-Agent-Token
+// siempre viaja con el valor vigente de localStorage, sin recargar la app
 function getApiToken() {
   try {
-    const raw = localStorage.getItem('cronos_agent_token');
+    const raw = localStorage.getItem(AGENT_TOKEN_KEY);
     return raw || '';
   } catch {
     return '';
@@ -57,6 +60,18 @@ export default function useCronosAgent() {
       localStorage.removeItem(PRINTER_KEY);
     }
   }, []);
+
+  const saveAgentToken = useCallback((token) => {
+    const value = (token || '').trim();
+    if (value) {
+      localStorage.setItem(AGENT_TOKEN_KEY, value);
+    } else {
+      localStorage.removeItem(AGENT_TOKEN_KEY);
+    }
+    checkConnection();
+  }, [checkConnection]);
+
+  const getAgentToken = useCallback(() => getApiToken(), []);
 
   const getAvailablePrinters = useCallback(async () => {
     const res = await agentFetch('/api/printers');
@@ -122,6 +137,8 @@ export default function useCronosAgent() {
     connected,
     printerName,
     savePrinterName,
+    saveAgentToken,
+    getAgentToken,
     getAvailablePrinters,
     printTicket,
     printRaw,
