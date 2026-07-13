@@ -88,7 +88,7 @@ export default function useCronosAgent() {
       method: 'POST',
       body: JSON.stringify({
         printer_name: printer,
-        data: base64Data,
+        printer_data: base64Data,
       }),
     });
 
