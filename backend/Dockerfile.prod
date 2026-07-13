@@ -23,6 +23,7 @@ RUN composer install \
     --no-scripts \
     --optimize-autoloader \
     --prefer-dist
+    --ignore-platform-reqs
 
 # ---- Stage 2: Production runtime ----
 FROM serversideup/php:8.4-fpm-alpine
