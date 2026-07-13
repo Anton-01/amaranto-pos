@@ -43,7 +43,7 @@ backend/tests/
 
 # Frontend exclusions
 frontend/node_modules/
-frontend/dist/
+#frontend/dist/
 frontend/.env
 frontend/.env.local
 

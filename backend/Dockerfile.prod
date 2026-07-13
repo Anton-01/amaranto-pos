@@ -1,12 +1,3 @@
-# ==============================================================
-# Cronos POS — Backend Production Dockerfile
-# Base pre-compilada: serversideup/php:8.4-fpm-alpine
-# (pdo_pgsql, pgsql, zip, gd, intl, bcmath, opcache, redis
-#  ya vienen instalados de forma nativa — cero compilacion)
-# Build context: monorepo root (.)
-# ==============================================================
-
-# ---- Stage 1: Composer dependencies (capa cacheable) ----
 FROM serversideup/php:8.4-fpm-alpine AS vendor
 
 USER root
@@ -29,6 +20,9 @@ RUN composer install \
 FROM serversideup/php:8.4-fpm-alpine
 
 USER root
+
+# Nivel Enterprise: Inyectar extensiones nativas para localización/ticketera (intl) y reportes (gd)
+RUN install-php-extensions intl gd
 
 COPY backend/opcache.ini /usr/local/etc/php/conf.d/opcache.ini
 
