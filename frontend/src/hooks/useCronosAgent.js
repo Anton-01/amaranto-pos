@@ -1,9 +1,16 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
-import api from '../api/axios';
+import { useState, useCallback } from 'react';
 
 const PRINTER_KEY = 'cronos_active_printer';
 const AGENT_TOKEN_KEY = 'cronos_agent_token';
 const AGENT_BASE_URL = 'http://127.0.0.1:9100';
+
+// Estados posibles del agente local. 'unknown' es el estado inicial en un
+// navegador limpio: NO significa "desconectado", significa "aun sin verificar".
+export const AGENT_STATUS = {
+  UNKNOWN: 'unknown',
+  ONLINE: 'online',
+  OFFLINE: 'offline',
+};
 
 // Lectura dinamica en CADA peticion: el header X-Cronos-Agent-Token
 // siempre viaja con el valor vigente de localStorage, sin recargar la app
@@ -30,46 +37,77 @@ function agentFetch(path, options = {}) {
   });
 }
 
+/**
+ * Hook de integracion con Cronos POS Agent (http://127.0.0.1:9100).
+ *
+ * IMPORTANTE: este hook NO dispara ninguna peticion automatica al montarse.
+ * Toda comunicacion con el agente es explicita (deteccion manual, impresion
+ * bajo demanda o consulta manual de la cola). Esto elimina el parpadeo y las
+ * llamadas en bucle que se producian al entrar al Historico de Ventas o a la
+ * pantalla de Configuracion.
+ */
 export default function useCronosAgent() {
-  const [connected, setConnected] = useState(false);
-  const [printerName, setPrinterName] = useState(() => localStorage.getItem(PRINTER_KEY) || '');
-  const checkingRef = useRef(false);
-
-  const checkConnection = useCallback(async () => {
-    if (checkingRef.current) return;
-    checkingRef.current = true;
+  const [status, setStatus] = useState(AGENT_STATUS.UNKNOWN);
+  const [agentVersion, setAgentVersion] = useState('');
+  const [detecting, setDetecting] = useState(false);
+  const [printerName, setPrinterName] = useState(() => {
     try {
-      const res = await agentFetch('/api/printers');
-      setConnected(res.ok);
+      return localStorage.getItem(PRINTER_KEY) || '';
     } catch {
-      setConnected(false);
+      return '';
+    }
+  });
+
+  /**
+   * Deteccion MANUAL del agente local: GET /api/health.
+   * Retorna { ok, version, error } sin lanzar excepciones.
+   */
+  const detectAgent = useCallback(async () => {
+    setDetecting(true);
+    try {
+      const res = await agentFetch('/api/health');
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+      const body = await res.json().catch(() => ({}));
+      const version = body.version || body.agent_version || body.data?.version || '';
+
+      setAgentVersion(version);
+      setStatus(AGENT_STATUS.ONLINE);
+      return { ok: true, version, data: body };
+    } catch (err) {
+      setAgentVersion('');
+      setStatus(AGENT_STATUS.OFFLINE);
+      return { ok: false, error: err.message || String(err) };
     } finally {
-      checkingRef.current = false;
+      setDetecting(false);
     }
   }, []);
 
-  useEffect(() => {
-    checkConnection();
-  }, [checkConnection]);
-
   const savePrinterName = useCallback((name) => {
     setPrinterName(name);
-    if (name) {
-      localStorage.setItem(PRINTER_KEY, name);
-    } else {
-      localStorage.removeItem(PRINTER_KEY);
+    try {
+      if (name) {
+        localStorage.setItem(PRINTER_KEY, name);
+      } else {
+        localStorage.removeItem(PRINTER_KEY);
+      }
+    } catch {
+      // localStorage no disponible (modo privado): la seleccion vive en memoria
     }
   }, []);
 
   const saveAgentToken = useCallback((token) => {
     const value = (token || '').trim();
-    if (value) {
-      localStorage.setItem(AGENT_TOKEN_KEY, value);
-    } else {
-      localStorage.removeItem(AGENT_TOKEN_KEY);
+    try {
+      if (value) {
+        localStorage.setItem(AGENT_TOKEN_KEY, value);
+      } else {
+        localStorage.removeItem(AGENT_TOKEN_KEY);
+      }
+    } catch {
+      // Sin persistencia: el token se pedira de nuevo en la proxima sesion
     }
-    checkConnection();
-  }, [checkConnection]);
+  }, []);
 
   const getAgentToken = useCallback(() => getApiToken(), []);
 
@@ -100,6 +138,7 @@ export default function useCronosAgent() {
     return res.json();
   }, [printerName]);
 
+  /** Consulta MANUAL de la cola de impresion (sin polling). */
   const getPrinterQueue = useCallback(async (targetPrinter) => {
     const printer = targetPrinter || printerName;
     if (!printer) return { jobs_count: 0, status: 'ok' };
@@ -134,8 +173,14 @@ export default function useCronosAgent() {
   }, [printerName]);
 
   return {
-    connected,
+    status,
+    agentVersion,
+    detecting,
+    detected: status === AGENT_STATUS.ONLINE,
+    connected: status === AGENT_STATUS.ONLINE,
+    isConfigured: Boolean(printerName),
     printerName,
+    detectAgent,
     savePrinterName,
     saveAgentToken,
     getAgentToken,
@@ -144,6 +189,5 @@ export default function useCronosAgent() {
     printRaw,
     printPDFDocument,
     getPrinterQueue,
-    checkConnection,
   };
 }

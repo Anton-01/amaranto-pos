@@ -41,10 +41,11 @@
 | Resiliencia Local-First (Offline) | [🟢 Completado] | [🟢 Completado] | Hook useOnlineStatus, buffer LocalStorage, background sync, indicador amber en TopBar |
 | Correos Corporativos Centralizados | [🟢 Completado] | N/A | Master layout Blade, 4 Mailables ShouldQueue (Redis), preview routes local-only |
 | Visualizador In-App Plantillas Email | [🟢 Completado] | [🟢 Completado] | MailPreviewController render HTML, iframe srcDoc aislado, viewport Desktop/Mobile |
-| Motor Impresión QZ Tray + Firma Digital | [🟢 COMPLETADO Y OPERATIVO] | [🟢 COMPLETADO Y OPERATIVO] | SafeDummyPrintConnector (PHP 8 compatible), auto-impresión post-venta, QZ Tray SDK WebSocket, firma RSA SHA512, certificado digital, qz.security hooks automáticos [🟢 COMPLETADO Y OPERATIVO] |
+| Motor Impresión QZ Tray + Firma Digital | [🟢 COMPLETADO Y OPERATIVO] | [🟢 COMPLETADO Y OPERATIVO] | Migrado a Cronos POS Agent (ver secciones 34, 35 y 37). SafeDummyPrintConnector (PHP 8 compatible), impresión post-venta CONFIRMADA POR EL USUARIO via PrintConfirmationModal (sin auto-impresión), agente HTTP local 127.0.0.1:9100 |
 | Descuentos y Cupones en Checkout | [🟢 Completado] | [🟢 Completado] | Descuento directo (fijo/porcentual) + cupón por autocomplete, audit trail en orders, propagación completa (ticket, historial, finanzas, Excel, ESC/POS) |
 | Estatus Inline (Toggle Switch) | [🟢 COMPLETADO Y OPERATIVO] | [🟢 COMPLETADO Y OPERATIVO] | InputSwitch en DataTables (Productos, Categorías, Promociones, Usuarios), PATCH endpoints, actualización optimista con rollback, Emerald/Slate CSS, etiquetas dinámicas (Activo/Inactivo) bajo cada switch, Toast éxito/error en cada mutación |
-| Selector de Impresoras Locales (QZ Tray) | [🟢 COMPLETADO Y OPERATIVO] | [🟢 COMPLETADO Y OPERATIVO] | PrinterSetupPanel en Configuración del Sistema, escaneo QZ Tray (qz.printers.find), Dropdown PrimeReact, persistencia localStorage (cronos_active_printer), integración checkout via useQzPrinter hook [🟢 COMPLETADO Y OPERATIVO] |
+| Selector de Impresoras Locales (QZ Tray) | [🟢 COMPLETADO Y OPERATIVO] | [🟢 COMPLETADO Y OPERATIVO] | Migrado a Cronos POS Agent (ver secciones 34 y 37). PrinterSetupPanel con botón "Detectar Agente Local" (GET /api/health), listado automático de impresoras tras detección, campo de Token de Seguridad, consulta MANUAL de cola (sin polling), persistencia localStorage (cronos_active_printer / cronos_agent_token) |
+| Confirmación de Impresión Post-Venta | N/A | [🟢 COMPLETADO Y OPERATIVO] | PrintConfirmationModal con resumen visual del ticket (folio, fecha, productos, totales, método de pago, agradecimiento), botones "Imprimir Ticket" / "Omitir — No imprimir" (cero peticiones HTTP al agente al omitir) |
 
 ## 3. Detalle del Modulo Completado: Migraciones & Modelos Base
 
@@ -2788,3 +2789,114 @@ El despliegue en produccion tardaba mas de 50 minutos en el Droplet de DigitalOc
 - `deploy.sh` — Paso 2/7 de verificacion de build pre-compilado, header con flujo local→droplet, renumeracion 7 pasos
 - `.gitignore` — Removido frontend/dist/ (ahora versionado)
 - `frontend/.gitignore` — Removido dist (ahora versionado)
+
+---
+
+## 37. Flujo Post-Venta Manual y Configuracion Inicial del Agente (Frontend) [🟢 COMPLETADO Y OPERATIVO]
+
+### Contexto del Problema
+El POS disparaba impresion automatica al confirmar el cobro y varias vistas consultaban al agente local en cuanto se montaban (el hook `useCronosAgent` ejecutaba un `useEffect` de verificacion y `PrinterQueueMonitor` sondeaba la cola cada 9 segundos). En terminales sin agente instalado esto generaba llamadas en bucle a `http://127.0.0.1:9100`, parpadeo de estado en el Historico de Ventas y en Configuracion, y un navegador nuevo mostraba el agente como "Desconectado" antes de que el usuario hubiera intentado configurarlo.
+
+**Principio adoptado:** ninguna vista habla con el agente local por su cuenta. Toda comunicacion con `127.0.0.1:9100` nace de una accion explicita del usuario (detectar, imprimir, consultar cola).
+
+### Tarea 1: PrintConfirmationModal (Nuevo) [🟢 Completado]
+
+#### Ubicacion: `src/components/pos/PrintConfirmationModal.jsx`
+Modal que sustituye a la impresion automatica post-venta. Se abre desde `POSPage` una vez que `POST /api/orders` respondio con exito.
+
+**Resumen visual del ticket (representacion en pantalla, no ESC/POS):**
+- Encabezado con razon social y RFC de la configuracion de ticket activa
+- **Folio** (8 primeros caracteres del UUID en mayusculas) y **Fecha** localizada (es-MX)
+- **Metodo de Pago** en mayusculas
+- **Lista de Productos** con cantidad, precio unitario, descuento por partida, promocion aplicada e importe de linea
+- **Totales**: descuento global, subtotal, IVA (tasa dinamica), TOTAL, y si el pago fue en efectivo: Recibido y Cambio
+- **Mensaje de Agradecimiento**: `footer_message` de la configuracion de ticket con fallback "¡Gracias por su compra!"
+- Badge con el nombre de la impresora activa, o Tag "Sin impresora" si la terminal no tiene configuracion
+
+**Acciones:**
+| Boton | Comportamiento |
+| :--- | :--- |
+| **Imprimir Ticket** (primario) | Invoca `cronosAgent.printTicket(printerName, printerData)` con el `printer_name` guardado en localStorage. Toast de exito y cierre; ante error muestra el mensaje real del agente y mantiene el modal abierto para reintentar |
+| **Omitir / No imprimir** (secundario) | Cierra el modal limpiamente. **Cero peticiones HTTP al agente.** El carrito ya quedo vacio, por lo que el POS queda listo para la siguiente venta |
+
+- El boton de impresion se deshabilita si el backend no devolvio `printer_data` (banner informativo que remite al Historial de Ventas para reimprimir)
+- El modal no es descartable por click en la mascara mientras hay una impresion en curso
+
+#### Integracion en el flujo de venta
+- `CheckoutModal.jsx`: eliminado el bloque de auto-impresion (`cronosAgent.printRaw(...)` tras el POST). Ahora entrega el control con `onSuccess(order, { printerData, ticketConfig })` y deja de recibir la prop `cronosAgent`
+- `POSPage.jsx`: `handleCheckoutSuccess(order, meta)` limpia el carrito, refresca el catalogo y guarda `pendingPrint = { order, printerData, ticketConfig }` para abrir el `PrintConfirmationModal`. Las ordenes offline (`order._offline`) no abren el modal, ya que no generan `printer_data`
+
+### Tarea 2: Eliminacion de Polling y Consultas Automaticas [🟢 Completado]
+
+#### Hook `useCronosAgent.js`
+- **Removido** el `useEffect` de montaje que llamaba a `checkConnection()` (`GET /api/printers`). Era la causa raiz de las llamadas en bucle: se ejecutaba en POSPage, SalesHistoryPage, SystemSettingsPage y CashRegisterClosingsPage con solo entrar a la vista
+- **Removido** el metodo `checkConnection()`; su reemplazo explicito es `detectAgent()`
+- Nuevo estado de tres valores exportado como `AGENT_STATUS`: `unknown` (sin verificar, estado inicial), `online`, `offline`. `unknown` **no** equivale a desconectado
+- `saveAgentToken()` ya no dispara ninguna verificacion en cadena; solo persiste el valor
+- Accesos a `localStorage` protegidos con try/catch (modo privado del navegador)
+
+#### `PrinterQueueMonitor.jsx` (reescrito)
+- **Eliminado** el `setInterval` de 9 segundos y el `useEffect` de arranque
+- La cola se consulta **unicamente** con el boton **"Consultar Estado de Cola"** (`GET /api/printers/queue`), disponible en la vista de Configuracion
+- Muestra la marca de tiempo de la ultima consulta, badge "Cola OK" o conteo de trabajos retenidos, y el error real del agente si la consulta falla
+
+#### Historico de Ventas (`SalesHistoryPage.jsx`)
+- Sin cambios de codigo necesarios: al desaparecer el efecto del hook, entrar al Historico ya no genera trafico hacia el agente. La reimpresion manual (`POST /api/orders/{id}/print` + `printRaw`) sigue siendo la unica ruta que contacta al agente desde esta vista
+
+#### Cierres de Caja (`CashRegisterClosingsPage.jsx`)
+- El boton "Imprimir PDF" ya no depende del flag `connected` (que sin sondeo automatico seria siempre falso). Ahora se habilita cuando existe impresora configurada (`cronosAgent.printerName`) y el error real del agente se reporta al intentar imprimir
+
+### Tarea 3: Deteccion Manual del Agente en Configuracion [🟢 Completado]
+
+#### `PrinterSetupPanel.jsx` (reescrito)
+Flujo pensado para **navegadores nuevos sin configuracion previa en localStorage**:
+
+1. **Estado inicial neutro** — La cabecera muestra `⚪ Agente sin verificar` (nunca "Desconectado") y un texto que aclara que esta terminal aun no tiene impresora guardada. No se ejecuta ninguna peticion al montar el panel
+2. **Boton destacado "Detectar Agente Local"** — Ejecuta `cronosAgent.detectAgent()` → `GET http://127.0.0.1:9100/api/health`
+3. **Si el agente responde:**
+   - Estado visual `🟢 Agente Detectado vX.X` (version leida de `version` / `agent_version` / `data.version` del JSON de salud)
+   - Se cargan y muestran **automaticamente** las impresoras de `GET /api/printers` en el Dropdown
+   - Se muestra el campo **"Token de Seguridad del Agente"** (input password con toggle de visibilidad y boton "Guardar Token") y el enlace **"¿Donde encuentro mi token?"**, que despliega la instruccion: *"Haz clic derecho en el icono de Cronos junto al reloj para copiar tu token"* (con `config.json` como alternativa)
+   - Si `/api/printers` responde con error de autenticacion, un banner ambar indica pegar el token y reintentar con "Actualizar Lista"
+4. **Si el agente no responde:** estado `🔴 Agente No Detectado` con checklist de diagnostico: revisar que **`cronos-pos-agent.exe`** este en ejecucion, buscar el icono de Cronos junto al reloj y verificar que el firewall no bloquee el puerto 9100
+5. **Terminal ya configurada** — Si localStorage tiene impresora o token, la seccion de impresoras/token se muestra directamente (sin obligar a re-detectar), junto al banner de impresora predeterminada guardada
+6. **Cola de impresion** — Seccion con el boton manual "Consultar Estado de Cola" (`PrinterQueueMonitor`)
+
+### API del Hook useCronosAgent (Actualizada)
+| Miembro | Tipo | Descripcion |
+| :--- | :--- | :--- |
+| `status` | string | `unknown` \| `online` \| `offline` (constantes en `AGENT_STATUS`) |
+| `agentVersion` | string | Version reportada por `/api/health` |
+| `detecting` | boolean | Deteccion en curso |
+| `detected` / `connected` | boolean | `status === 'online'` (`connected` se conserva por compatibilidad) |
+| `isConfigured` | boolean | Existe impresora persistida en localStorage |
+| `printerName` | string | Impresora activa (`cronos_active_printer`) |
+| `detectAgent()` | `GET /api/health` | Deteccion **manual**; retorna `{ ok, version, error }` sin lanzar excepciones |
+| `getAvailablePrinters()` | `GET /api/printers` | Lista de impresoras (invocado tras una deteccion exitosa o con "Actualizar Lista") |
+| `printTicket(printer, base64)` | `POST /api/print` | Impresion ESC/POS con impresora explicita |
+| `printRaw(base64)` | `POST /api/print` | Wrapper con la impresora guardada |
+| `printPDFDocument(printer, base64Pdf)` | `POST /api/print/pdf` | Impresion de PDF (cierres de caja) |
+| `getPrinterQueue(printer)` | `GET /api/printers/queue` | Consulta **manual** de la cola |
+| `savePrinterName(name)` / `saveAgentToken(token)` / `getAgentToken()` | localStorage | Persistencia local de la configuracion de la terminal |
+
+### Matriz de Peticiones al Agente Local (Post-Refactor)
+| Vista | Peticiones automaticas | Peticiones manuales |
+| :--- | :--- | :--- |
+| POS (venta) | Ninguna | `POST /api/print` al pulsar "Imprimir Ticket" en el PrintConfirmationModal |
+| Historico de Ventas | Ninguna | `POST /api/print` al reimprimir un ticket |
+| Configuracion del Sistema | Ninguna | `GET /api/health` (Detectar Agente Local), `GET /api/printers` (tras detectar o "Actualizar Lista"), `GET /api/printers/queue` (Consultar Estado de Cola) |
+| Cierres de Caja | Ninguna | `POST /api/print/pdf` al imprimir un arqueo |
+
+### Archivos Creados en esta Fase
+**Frontend (nuevos):**
+- `src/components/pos/PrintConfirmationModal.jsx` — Modal de confirmacion de impresion post-venta con resumen visual del ticket
+
+### Archivos Modificados en esta Fase
+**Frontend (modificados):**
+- `src/hooks/useCronosAgent.js` — Eliminado el useEffect de verificacion automatica y `checkConnection()`; agregados `detectAgent()` (`/api/health`), `AGENT_STATUS`, `agentVersion`, `detecting`, `isConfigured`
+- `src/components/pos/PrinterQueueMonitor.jsx` — Reescrito sin polling: consulta manual via boton "Consultar Estado de Cola"
+- `src/components/settings/PrinterSetupPanel.jsx` — Reescrito: boton "Detectar Agente Local", estados ⚪/🟢/🔴, listado automatico de impresoras tras deteccion, campo de Token de Seguridad con ayuda contextual, sin peticiones al montar
+- `src/components/pos/CheckoutModal.jsx` — Eliminada la impresion automatica post-venta; entrega `printerData` y `ticketConfig` via `onSuccess`; removida la prop `cronosAgent`
+- `src/pages/pos/POSPage.jsx` — Estado `pendingPrint` y render de `PrintConfirmationModal` tras cada venta exitosa
+- `src/pages/admin/CashRegisterClosingsPage.jsx` — Impresion de PDF condicionada a impresora configurada en lugar del flag de conexion sondeada
+- `frontend/dist/` — Build de produccion regenerado

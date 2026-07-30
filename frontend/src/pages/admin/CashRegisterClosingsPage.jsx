@@ -209,12 +209,10 @@ export default function CashRegisterClosingsPage() {
   };
 
   const handlePrintPdf = async (closing) => {
-    if (!cronosAgent.connected) {
-      toast.error('Cronos Agent no está conectado. Verifica que el servicio esté activo en http://127.0.0.1:9100.');
-      return;
-    }
+    // Sin sondeo previo al agente: se intenta imprimir y el error real
+    // (agente caido, token invalido) se reporta al usuario.
     if (!cronosAgent.printerName) {
-      toast.error('No hay impresora configurada. Ve a Configuración del Sistema para seleccionar una.');
+      toast.error('No hay impresora configurada. Ve a Configuración del Sistema, detecta el agente local y selecciona una impresora.');
       return;
     }
     setPrintingPdfId(closing.id);
@@ -306,10 +304,10 @@ export default function CashRegisterClosingsPage() {
         rounded
         text
         severity="success"
-        tooltip={cronosAgent.connected ? 'Imprimir PDF via Cronos Agent' : 'Cronos Agent desconectado'}
+        tooltip={cronosAgent.printerName ? 'Imprimir PDF via Cronos Agent' : 'Sin impresora configurada'}
         tooltipOptions={{ position: 'top' }}
         className="cursor-pointer"
-        disabled={!cronosAgent.connected || printingPdfId === row.id}
+        disabled={!cronosAgent.printerName || printingPdfId === row.id}
         loading={printingPdfId === row.id}
         onClick={() => handlePrintPdf(row)}
       />
@@ -646,7 +644,7 @@ export default function CashRegisterClosingsPage() {
                   outlined
                   size="small"
                   className="cursor-pointer"
-                  disabled={!cronosAgent.connected || printingPdfId === selectedClosing?.id}
+                  disabled={!cronosAgent.printerName || printingPdfId === selectedClosing?.id}
                   loading={printingPdfId === selectedClosing?.id}
                   onClick={() => handlePrintPdf(selectedClosing)}
                 />
