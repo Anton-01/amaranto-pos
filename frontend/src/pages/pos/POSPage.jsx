@@ -8,6 +8,7 @@ import { toast } from 'sonner';
 import api from '../../api/axios';
 import AppLayout from '../../components/layout/AppLayout';
 import CheckoutModal from '../../components/pos/CheckoutModal';
+import PrintConfirmationModal from '../../components/pos/PrintConfirmationModal';
 import useOnlineStatus, { getOfflineQueue, clearOfflineQueue } from '../../hooks/useOnlineStatus';
 import useCronosAgent from '../../hooks/useCronosAgent';
 
@@ -24,6 +25,7 @@ export default function POSPage() {
 
   const [cart, setCart] = useState([]);
   const [showCheckout, setShowCheckout] = useState(false);
+  const [pendingPrint, setPendingPrint] = useState(null);
 
   const [cashRegister, setCashRegister] = useState(undefined);
   const [openingBalance, setOpeningBalance] = useState(0);
@@ -235,10 +237,21 @@ export default function POSPage() {
   const ivaTotal = totalGross - subtotal;
   const total = totalGross;
 
-  const handleCheckoutSuccess = () => {
+  // Post-venta: el carrito se limpia de inmediato (queda listo para la
+  // siguiente venta) y la impresion queda en manos del usuario a traves del
+  // PrintConfirmationModal. Nunca se dispara impresion automatica.
+  const handleCheckoutSuccess = (order, meta = {}) => {
     setShowCheckout(false);
     setCart([]);
     fetchData();
+
+    if (order && !order._offline) {
+      setPendingPrint({
+        order,
+        printerData: meta.printerData || null,
+        ticketConfig: meta.ticketConfig || null,
+      });
+    }
   };
 
   if (cashRegister === undefined) {
@@ -559,7 +572,16 @@ export default function POSPage() {
         taxRate={taxRate}
         onSuccess={handleCheckoutSuccess}
         isOnline={isOnline}
+      />
+
+      <PrintConfirmationModal
+        visible={pendingPrint !== null}
+        order={pendingPrint?.order}
+        ticketConfig={pendingPrint?.ticketConfig}
+        printerData={pendingPrint?.printerData}
+        taxRate={taxRate}
         cronosAgent={cronosAgent}
+        onClose={() => setPendingPrint(null)}
       />
 
     </AppLayout>

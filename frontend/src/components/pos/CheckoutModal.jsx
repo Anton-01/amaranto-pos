@@ -11,7 +11,7 @@ import api from '../../api/axios';
 import TicketPreview from './TicketPreview';
 import { addToOfflineQueue } from '../../hooks/useOnlineStatus';
 
-export default function CheckoutModal({ visible, onHide, cart, taxRate = 0.16, onSuccess, isOnline = true, cronosAgent }) {
+export default function CheckoutModal({ visible, onHide, cart, taxRate = 0.16, onSuccess, isOnline = true }) {
   const [paymentMethodId, setPaymentMethodId] = useState(null);
   const [paymentMethods, setPaymentMethods] = useState([]);
   const [customLegend, setCustomLegend] = useState('');
@@ -179,7 +179,7 @@ export default function CheckoutModal({ visible, onHide, cart, taxRate = 0.16, o
         description: 'Se sincronizara automaticamente al recuperar conexion.',
       });
 
-      onSuccess?.(offlineOrder);
+      onSuccess?.(offlineOrder, { printerData: null, ticketConfig, offline: true });
       onHide();
       setSubmitting(false);
       return;
@@ -192,20 +192,9 @@ export default function CheckoutModal({ visible, onHide, cart, taxRate = 0.16, o
 
       toast.success('Venta procesada con exito!');
 
-      if (printerData && cronosAgent) {
-        cronosAgent.printRaw(printerData).then(() => {
-          toast.success('Ticket enviado a la impresora.');
-        }).catch((err) => {
-          console.error("Error en el flujo de impresion de Cronos POS Agent:", err);
-          toast.warning("No se pudo enviar a la ticketera: " + (err.message || err));
-        });
-      } else if (!printerData) {
-        toast.info('No se genero ticket de impresion. Puedes reimprimir desde el historial.');
-      } else if (!cronosAgent) {
-        toast.info('Cronos Agent no disponible. Puedes reimprimir desde el historial.');
-      }
-
-      onSuccess?.(order);
+      // Sin impresion automatica: la decision de imprimir se delega al
+      // PrintConfirmationModal que POSPage abre con estos datos.
+      onSuccess?.(order, { printerData, ticketConfig });
 
       onHide();
     } catch (err) {
@@ -224,7 +213,7 @@ export default function CheckoutModal({ visible, onHide, cart, taxRate = 0.16, o
           description: 'Se sincronizara automaticamente al recuperar conexion.',
         });
 
-        onSuccess?.(offlineOrder);
+        onSuccess?.(offlineOrder, { printerData: null, ticketConfig, offline: true });
         onHide();
       } else if (data?.code === 'ERR_POS_CASH_REGISTER_REQUIRED') {
         toast.error('Caja no abierta', { description: data.message });
