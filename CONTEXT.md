@@ -32,7 +32,7 @@
 | Ventas Diarias (Header Modal) | [🟢 Completado] | [🟢 Completado] | Resumen diario con desglose por metodo de pago |
 | Botones Icono DataTables | N/A | [🟢 Completado] | Iconos PrimeReact con tooltips en todas las tablas |
 | Historial de Ventas | [🟢 Completado] | [🟢 Completado] | DataTable con filtros (quick+avanzados), detalle modal, cancelacion con admin password, reimpresion, exportacion CSV |
-| Metodos de Pago Dinamicos | [🟢 Completado] | [🟢 Completado] | CRUD payment_methods, FK restrictOnDelete, seeder base (cash/card/transfer), despliegue dinamico en POS/checkout/historial |
+| Metodos de Pago Dinamicos | [🟢 Completado] | [🟢 Completado] | CRUD payment_methods, FK restrictOnDelete, seeder base (cash/card/transfer), despliegue dinamico en POS/checkout/historial, **catalogo cacheado en Redis (TTL 60 min + invalidacion automatica por eventos del modelo)** — ver seccion 38 |
 | Transformacion SKU Mayusculas | [🟢 Completado] | [🟢 Completado] | Mutadores en modelo Product + onChange uppercase en frontend |
 | Cierre de Caja (Blind Closing) | [🟢 Completado] | [🟢 Completado] | Inmutabilidad DB (booted events), arqueo ciego, desglose por metodo pago JSONB, export PDF/Excel/Email batch, historial forense /admin/cierres |
 | Track Stock (Paquetes/Combos) | [🟢 Completado] | [🟢 Completado] | Columna track_stock en products, InputSwitch en formulario, pipeline ventas omite decremento si false, cancel reversa condicionada |
@@ -46,6 +46,7 @@
 | Estatus Inline (Toggle Switch) | [🟢 COMPLETADO Y OPERATIVO] | [🟢 COMPLETADO Y OPERATIVO] | InputSwitch en DataTables (Productos, Categorías, Promociones, Usuarios), PATCH endpoints, actualización optimista con rollback, Emerald/Slate CSS, etiquetas dinámicas (Activo/Inactivo) bajo cada switch, Toast éxito/error en cada mutación |
 | Selector de Impresoras Locales (QZ Tray) | [🟢 COMPLETADO Y OPERATIVO] | [🟢 COMPLETADO Y OPERATIVO] | Migrado a Cronos POS Agent (ver secciones 34 y 37). PrinterSetupPanel con botón "Detectar Agente Local" (GET /api/health), listado automático de impresoras tras detección, campo de Token de Seguridad, consulta MANUAL de cola (sin polling), persistencia localStorage (cronos_active_printer / cronos_agent_token) |
 | Confirmación de Impresión Post-Venta | N/A | [🟢 COMPLETADO Y OPERATIVO] | PrintConfirmationModal con resumen visual del ticket (folio, fecha, productos, totales, método de pago, agradecimiento), botones "Imprimir Ticket" / "Omitir — No imprimir" (cero peticiones HTTP al agente al omitir) |
+| Optimizacion Modal de Cobro (Rendimiento) | [🟢 COMPLETADO Y OPERATIVO] | [🟢 COMPLETADO Y OPERATIVO] | Catálogo de métodos de pago servido desde Redis (`Cache::remember`, TTL 60 min, invalidación automática en alta/edición/baja); input de "Dinero Recibido" con sanitización estricta en `onChange` (sin `onBlur`), cálculo del cambio y habilitación de "Confirmar Cobro" en tiempo real desde la primera tecla |
 
 ## 3. Detalle del Modulo Completado: Migraciones & Modelos Base
 
@@ -2899,4 +2900,99 @@ Flujo pensado para **navegadores nuevos sin configuracion previa en localStorage
 - `src/components/pos/CheckoutModal.jsx` — Eliminada la impresion automatica post-venta; entrega `printerData` y `ticketConfig` via `onSuccess`; removida la prop `cronosAgent`
 - `src/pages/pos/POSPage.jsx` — Estado `pendingPrint` y render de `PrintConfirmationModal` tras cada venta exitosa
 - `src/pages/admin/CashRegisterClosingsPage.jsx` — Impresion de PDF condicionada a impresora configurada en lugar del flag de conexion sondeada
+- `frontend/dist/` — Build de produccion regenerado
+
+## 38. Optimizacion de Rendimiento de la Modal de Cobro (Cache Redis + Input de Efectivo en Tiempo Real) [🟢 COMPLETADO Y OPERATIVO]
+
+Correccion de dos cuellos de botella en el flujo de cobro del POS: la latencia al abrir el `CheckoutModal` (consulta a PostgreSQL por el catalogo de metodos de pago) y la friccion del input de "Dinero Recibido", que solo calculaba el cambio y habilitaba el boton al perder el foco (`onBlur`).
+
+### 38.1 Backend — Cache de Alto Rendimiento para Metodos de Pago
+
+El catalogo de metodos de pago es un dato de baja cardinalidad y muy baja tasa de cambio, pero se consultaba a PostgreSQL en **cada apertura** de la modal de cobro. Ahora se sirve desde Redis (`CACHE_STORE=redis`).
+
+#### Modelo: `PaymentMethod` (Cache de primer nivel)
+| Miembro | Tipo | Descripcion |
+| :--- | :--- | :--- |
+| `CACHE_TTL` | const `3600` | Vigencia de 60 minutos; actua solo como red de seguridad porque la invalidacion real es por evento |
+| `CACHE_PREFIX` | const `payment_methods:list:` | Prefijo de las llaves en Redis |
+| `CACHE_STATUSES` | const `['all','active','inactive']` | Unicas variantes de filtro que acepta el endpoint, y por tanto las unicas llaves cacheadas |
+| `cachedList(string $status)` | static | `Cache::remember()` sobre `payment_methods:list:{status}`. Normaliza cualquier status desconocido a `all` para impedir envenenamiento de llaves con input arbitrario del cliente |
+| `flushCache()` | static | `Cache::forget()` sobre las 3 variantes |
+| `booted()` | protected static | Registra `saved` y `deleted` -> `flushCache()` |
+
+- **Se cachea el arreglo ya serializado** (`->get()->toArray()`), no la coleccion Eloquent: la respuesta del POS no paga hidratacion de modelos ni deserializacion de objetos. El JSON emitido es identico al anterior (los casts se aplican al construir el arreglo), por lo que **no hay cambio de contrato para el frontend**.
+- **Invalidacion automatica por eventos del modelo**: cualquier alta, edicion (incluido el cambio de estatus) o baja hecha desde `PaymentMethodController` — o desde seeders, tinker o cualquier otro punto que use Eloquent — dispara `flushCache()`. No existe ventana de datos rancios tras una mutacion; el TTL de 60 minutos solo cubre escrituras que evadan Eloquent.
+
+#### Controlador: `PaymentMethodController@index`
+```php
+$status = $request->filled('status') ? (string) $request->status : 'all';
+
+return response()->json([
+    'status' => 'success',
+    'data'   => PaymentMethod::cachedList($status),
+]);
+```
+- Eliminada la construccion del query builder en el controlador; toda la logica de lectura vive en el modelo.
+- Los metodos `store()`, `update()` y `destroy()` quedan **sin cambios**: la invalidacion es transparente via los eventos del modelo.
+
+#### Impacto
+| Consumidor | Endpoint | Efecto |
+| :--- | :--- | :--- |
+| `CheckoutModal` (apertura de cobro) | `GET /api/payment-methods?status=active` | Hit de Redis; desaparece la latencia percibida al abrir la modal |
+| `SalesHistoryPage` (filtro) | `GET /api/payment-methods` | Hit de Redis |
+| `PaymentMethodsPage` (admin CRUD) | `GET /api/payment-methods?status=all` | Hit de Redis, invalidado en cada mutacion |
+
+### 38.2 Frontend — Sanitizacion en Tiempo Real y Calculo Sincrono del Cambio
+
+`src/components/pos/CheckoutModal.jsx` — Se **elimino el `InputNumber` de PrimeReact** (modo `currency`), cuyo `onValueChange` no confirmaba el valor hasta perder el foco o pulsar Enter, obligando al cajero a hacer un clic extra para que se calculara el cambio y se habilitara "Confirmar Cobro".
+
+#### Helpers puros (fuera del componente)
+| Funcion | Responsabilidad |
+| :--- | :--- |
+| `sanitizeAmount(raw)` | Filtro estricto ejecutado en cada tecla: normaliza coma a punto (teclados numericos latinos), descarta **todo** caracter que no sea digito o punto, conserva un unico separador decimal, recorta a 2 decimales y 9 enteros, y elimina ceros a la izquierda preservando el `0` de `0.50` |
+| `parseAmount(value)` | Convierte el texto sanitizado a numero; retorna `null` mientras no haya monto valido (`''`, `'.'`) |
+
+#### Nuevo modelo de estado
+- Estado unico: `amountReceivedInput` (string). El numero `amountReceived` es **derivado** en cada render (`parseAmount(amountReceivedInput)`), no un segundo estado — no existe posibilidad de desincronizacion entre lo que se ve y lo que se calcula.
+- El caracter invalido **nunca llega al estado**: la sanitizacion ocurre dentro del propio `onChange`, por lo que si el cajero teclea una letra o un simbolo, el input simplemente no lo refleja.
+
+```jsx
+<input
+  type="text"
+  inputMode="decimal"
+  autoFocus
+  value={amountReceivedInput}
+  onChange={(e) => setAmountReceivedInput(sanitizeAmount(e.target.value))}
+/>
+```
+- `type="text"` + `inputMode="decimal"`: abre el teclado numerico en terminales tactiles sin heredar el comportamiento de `type="number"` (spinners, `valueAsNumber` vacio ante entradas parciales).
+- `autoFocus`: el cajero teclea el monto en cuanto aparece el campo, sin clic previo.
+- El simbolo `$` se renderiza como adorno absoluto (`pointer-events-none`) en lugar de formatear el valor, para no pelear con la escritura en curso.
+
+#### Calculo y habilitacion instantaneos
+Todo se deriva de forma sincrona en el mismo render de cada pulsacion:
+
+| Derivado | Formula |
+| :--- | :--- |
+| `totalCents` / `receivedCents` | `Math.round(x * 100)` — comparacion en enteros para evitar falsos "insuficiente" por error de punto flotante (ej. `116.00` vs `115.999...`) |
+| `amountChange` | `Math.max(0, receivedCents - totalCents) / 100` |
+| `amountMissing` | `Math.max(0, totalCents - receivedCents) / 100` |
+| `cashInsufficient` | `isCash && (receivedCents == null \|\| receivedCents < totalCents)` |
+
+- El boton **"Confirmar Cobro"** conserva su `disabled={... \|\| (isCash && cashInsufficient)}`, pero ahora `cashInsufficient` se recalcula en cada tecla: se habilita/deshabilita en vivo, sin clics adicionales ni perdida de foco.
+- El panel verde "Cambio a devolver" y el banner rojo "Faltan $X" reaccionan desde el primer digito introducido.
+- El `TicketPreview` de la derecha refleja `amount_received` / `amount_change` en tiempo real via `previewOrder`.
+
+#### Otros ajustes
+- Se elimino el `useEffect` que limpiaba el monto al dejar de ser efectivo; ahora la limpieza ocurre en el `onChange` del Dropdown de metodo de pago (evento de origen en lugar de efecto en cascada). Esto tambien resuelve un error de la regla `react-hooks/set-state-in-effect` del linter.
+- El payload envia `amount_received: Math.round(amountReceived * 100) / 100`, alineado con `amount_change`.
+- `InputNumber` sigue en uso para el campo de descuento directo — el cambio esta acotado al input de efectivo.
+
+### Archivos Modificados en esta Fase
+**Backend (modificados):**
+- `app/Models/PaymentMethod.php` — Constantes de cache, `cachedList()`, `flushCache()` y `booted()` con invalidacion automatica en `saved`/`deleted`
+- `app/Http/Controllers/Catalog/PaymentMethodController.php` — `index()` servido desde Redis via `PaymentMethod::cachedList()`
+
+**Frontend (modificados):**
+- `src/components/pos/CheckoutModal.jsx` — Helpers `sanitizeAmount()` / `parseAmount()`, estado `amountReceivedInput` (string) con `amountReceived` derivado, input nativo con sanitizacion en `onChange`, calculo del cambio y validacion de suficiencia en enteros de centavos, limpieza del monto en el Dropdown de metodo de pago
 - `frontend/dist/` — Build de produccion regenerado
