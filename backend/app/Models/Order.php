@@ -6,6 +6,7 @@ use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Support\Carbon;
 
 class Order extends Model
@@ -17,11 +18,22 @@ class Order extends Model
         return Carbon::instance($date)->timezone('America/Mexico_City')->toIso8601String();
     }
 
+    /** Explicito: el modelo expone una relacion llamada table(). */
+    protected $table = 'orders';
+
+    public const STATUS_OPEN = 'open';
+    public const STATUS_COMPLETED = 'completed';
+    public const STATUS_CANCELED = 'canceled';
+
     protected $fillable = [
         'cash_register_id',
         'ticket_config_id',
         'payment_method_id',
         'promotion_id',
+        'table_id',
+        'table_name_at_sale',
+        'waiter_id',
+        'waiter_name_at_sale',
         'discount_type',
         'discount_value',
         'discount_total',
@@ -79,5 +91,33 @@ class Order extends Model
     public function items(): HasMany
     {
         return $this->hasMany(OrderItem::class);
+    }
+
+    /** Mesa de la que proviene la orden (null en ventas de mostrador). */
+    public function table(): BelongsTo
+    {
+        return $this->belongsTo(Table::class);
+    }
+
+    /** Mesero que abrio la cuenta (null en ventas de mostrador). */
+    public function waiter(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'waiter_id');
+    }
+
+    public function tableSession(): HasOne
+    {
+        return $this->hasOne(TableSession::class);
+    }
+
+    /**
+     * Excluye las cuentas de mesa todavia sin cobrar.
+     *
+     * Una orden 'open' no es una venta: no debe aparecer en el historial, en
+     * las exportaciones ni en ningun reporte de ingresos.
+     */
+    public function scopeSettled($query)
+    {
+        return $query->where('status', '!=', self::STATUS_OPEN);
     }
 }

@@ -14,6 +14,8 @@ use App\Http\Controllers\Catalog\PaymentMethodController;
 use App\Http\Controllers\Catalog\ProductController;
 use App\Http\Controllers\Catalog\ProductImageController;
 use App\Http\Controllers\Dashboard\DashboardController;
+use App\Http\Controllers\Dining\TableController;
+use App\Http\Controllers\Dining\TableSessionController;
 use App\Http\Controllers\Finance\AnalyticsController;
 use App\Http\Controllers\Finance\CashRegisterClosingController;
 use App\Http\Controllers\Finance\CashRegisterController;
@@ -98,6 +100,25 @@ Route::middleware(['auth:sanctum', 'user.active'])->group(function () {
 
     Route::get('sales/daily-summary', DailySummaryController::class);
     Route::get('sales/export', [SalesExportController::class, 'export']);
+
+    // --- Comedor (Dine-in) -------------------------------------------------
+    Route::prefix('tables')->group(function () {
+        // Plano de mesas y detalle de la cuenta viva: todo el piso los consulta.
+        Route::get('/', [TableController::class, 'index']);
+        Route::get('/{table}', [TableController::class, 'show']);
+
+        // Ciclo de vida de la mesa: transaccional, cualquier usuario operativo.
+        Route::post('/{table}/open', [TableSessionController::class, 'open']);
+        Route::post('/{table}/items', [TableSessionController::class, 'addItems']);
+        Route::post('/{table}/close', [TableSessionController::class, 'close']);
+
+        // Catalogo de mesas: administracion.
+        Route::middleware('role:admin,manager')->group(function () {
+            Route::post('/', [TableController::class, 'store']);
+            Route::put('/{table}', [TableController::class, 'update']);
+            Route::delete('/{table}', [TableController::class, 'destroy']);
+        });
+    });
 
     Route::get('payment-methods', [PaymentMethodController::class, 'index']);
 

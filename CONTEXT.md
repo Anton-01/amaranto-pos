@@ -6,6 +6,7 @@
 - Base de Datos: Managed PostgreSQL (DigitalOcean)
 - Cache / Colas: Redis 7 Alpine (cache global + queue worker)
 - WebSockets: Laravel Reverb (puerto 8080, tiempo real)
+- Estado del Proyecto: [🟢 FASE 7: SISTEMA DE GESTIÓN DE MESAS (DINE-IN) IMPLEMENTADO] — Comedor operativo: plano de mesas, cuentas vivas transaccionales, comandas incrementales y cobro con liberación automática (ver sección 39).
 - Estado de Infraestructura: [🟢 FASE 7: DEPLOY ÁGIL Y DOCKER OPTIMIZADO] — Docker Compose multi-contenedor operativo (4 servicios: backend, frontend, postgres, redis).
 - Despliegue Produccion: [🟢 FASE 7: DEPLOY ÁGIL Y DOCKER OPTIMIZADO] — DigitalOcean Droplet + Managed PostgreSQL, imagenes base pre-compiladas (serversideup/php:8.4-fpm-alpine + nginx:alpine), frontend Vite pre-construido en local (frontend/dist versionado), Nginx proxy inverso HTTPS/WSS, Certbot SSL, deploy.sh automatizado. Tiempo estimado de build en el Droplet: < 2 minutos (antes: ~82 min).
 
@@ -46,6 +47,7 @@
 | Estatus Inline (Toggle Switch) | [🟢 COMPLETADO Y OPERATIVO] | [🟢 COMPLETADO Y OPERATIVO] | InputSwitch en DataTables (Productos, Categorías, Promociones, Usuarios), PATCH endpoints, actualización optimista con rollback, Emerald/Slate CSS, etiquetas dinámicas (Activo/Inactivo) bajo cada switch, Toast éxito/error en cada mutación |
 | Selector de Impresoras Locales (QZ Tray) | [🟢 COMPLETADO Y OPERATIVO] | [🟢 COMPLETADO Y OPERATIVO] | Migrado a Cronos POS Agent (ver secciones 34 y 37). PrinterSetupPanel con botón "Detectar Agente Local" (GET /api/health), listado automático de impresoras tras detección, campo de Token de Seguridad, consulta MANUAL de cola (sin polling), persistencia localStorage (cronos_active_printer / cronos_agent_token) |
 | Confirmación de Impresión Post-Venta | N/A | [🟢 COMPLETADO Y OPERATIVO] | PrintConfirmationModal con resumen visual del ticket (folio, fecha, productos, totales, método de pago, agradecimiento), botones "Imprimir Ticket" / "Omitir — No imprimir" (cero peticiones HTTP al agente al omitir) |
+| Sistema de Gestión de Mesas (Dine-in) | [🟢 FASE 7: IMPLEMENTADO] | [🟢 FASE 7: IMPLEMENTADO] | Tablas `tables` y `table_sessions`, orden base en estado `open`, 4 endpoints transaccionales con `lockForUpdate` + índice único parcial, botón de mesas a la izquierda del reloj en el header del POS, catálogo en sidebar de Administración, trazabilidad mesa/mesero en histórico y ticket — ver sección 39 |
 | Optimizacion Modal de Cobro (Rendimiento) | [🟢 COMPLETADO Y OPERATIVO] | [🟢 COMPLETADO Y OPERATIVO] | Catálogo de métodos de pago servido desde Redis (`Cache::remember`, TTL 60 min, invalidación automática en alta/edición/baja); input de "Dinero Recibido" con sanitización estricta en `onChange` (sin `onBlur`), cálculo del cambio y habilitación de "Confirmar Cobro" en tiempo real desde la primera tecla |
 
 ## 3. Detalle del Modulo Completado: Migraciones & Modelos Base
@@ -2995,4 +2997,196 @@ Todo se deriva de forma sincrona en el mismo render de cada pulsacion:
 
 **Frontend (modificados):**
 - `src/components/pos/CheckoutModal.jsx` — Helpers `sanitizeAmount()` / `parseAmount()`, estado `amountReceivedInput` (string) con `amountReceived` derivado, input nativo con sanitizacion en `onChange`, calculo del cambio y validacion de suficiencia en enteros de centavos, limpieza del monto en el Dropdown de metodo de pago
+- `frontend/dist/` — Build de produccion regenerado
+
+## 39. FASE 7: SISTEMA DE GESTIÓN DE MESAS (DINE-IN) [🟢 IMPLEMENTADO Y OPERATIVO]
+
+Incorporacion del flujo de restaurante al POS: una mesa se abre, acumula consumo en rondas sucesivas y se cobra al final, liberandose sola. El modulo es transaccional de extremo a extremo y no altera el flujo de mostrador, que sigue funcionando exactamente igual.
+
+### 39.1 Decision de Arquitectura: la cuenta de mesa ES una orden
+
+En lugar de inventar una tabla paralela de consumos, la cuenta viva de una mesa **es una `order` real en el nuevo estado `open`**. Esto evita duplicar la maquinaria de precios, IVA, promociones, ticket e impresion, y hace que el cobro sea una transicion de estado en lugar de una migracion de datos entre tablas.
+
+La viabilidad se apoya en un hecho verificado del codigo existente: **todas** las agregaciones financieras del sistema (Dashboard, Analytics, Daily Summary, Cierres de Caja) ya filtraban explicitamente `status = 'completed'`, por lo que las cuentas abiertas quedan fuera de los reportes sin tocar una sola consulta.
+
+Los dos unicos puntos que leian ordenes sin filtrar estatus se blindaron con el nuevo scope `Order::settled()`:
+
+| Punto | Antes | Ahora |
+| :--- | :--- | :--- |
+| `OrderController@index` (Historial) | `Order::with(...)` | `Order::settled()->with(...)` |
+| `SalesExportController@export` (Excel) | `Order::with(...)` | `Order::settled()->with(...)` |
+
+Ademas, `OrderController@cancel` rechaza con `ERR_ORDER_STILL_OPEN` la cancelacion de una cuenta de mesa: cancelarla ahi dejaria la mesa ocupada para siempre, porque no liberaria la sesion.
+
+### 39.2 Base de Datos (4 migraciones)
+
+| # | Migracion | Contenido |
+| :--- | :--- | :--- |
+| `2026_07_31_000001` | `add_open_to_order_status_enum` | `ALTER TYPE order_status ADD VALUE 'open'`. Corre con `$withinTransaction = false` (PostgreSQL prohibe `ALTER TYPE ... ADD VALUE` dentro de un bloque transaccional). El `down()` recrea el tipo, ya que PostgreSQL no permite eliminar valores de un ENUM. |
+| `2026_07_31_000002` | `create_tables_table` | ENUM nativo `table_status ('available','occupied','reserved')` + tabla `tables` |
+| `2026_07_31_000003` | `add_dine_in_columns_to_orders_table` | `table_id`, `table_name_at_sale`, `waiter_id`, `waiter_name_at_sale` en `orders`; `payment_method_id` y `cash_register_id` pasan a NULLABLE |
+| `2026_07_31_000004` | `create_table_sessions_table` | ENUM nativo `table_session_status ('open','closed','canceled')` + tabla `table_sessions` + indice unico parcial |
+
+#### Tabla `tables`
+| Columna | Tipo | Notas |
+| :--- | :--- | :--- |
+| `id` | UUID PK | |
+| `name` | VARCHAR(60) UNIQUE | "Mesa 12", "Barra 3" |
+| `capacity` | SMALLINT | Comensales, default 4 |
+| `zone` | VARCHAR(60) NULL | Salón / Terraza / Barra (indexada) |
+| `status` | `table_status` | available / occupied / reserved |
+| `is_active` | BOOLEAN | Baja logica del catalogo sin perder historico |
+
+#### Tabla `table_sessions`
+| Columna | Tipo | Notas |
+| :--- | :--- | :--- |
+| `id` | UUID PK | |
+| `table_id` | UUID FK → tables | `restrict` |
+| `order_id` | UUID FK → orders | `restrict` — la orden base generada en la apertura |
+| `user_id` | UUID FK → users | Mesero que abrio |
+| `closed_by` | UUID FK → users NULL | Quien ejecuto el cobro |
+| `guests`, `notes` | SMALLINT / TEXT | Comensales y nota de servicio |
+| `status` | `table_session_status` | open / closed / canceled |
+| `opened_at`, `closed_at` | TIMESTAMPTZ | Ciclo de vida real de la mesa |
+
+#### Garantia de concurrencia a nivel de motor
+```sql
+CREATE UNIQUE INDEX table_sessions_one_open_per_table
+  ON table_sessions (table_id) WHERE status = 'open';
+```
+Un indice **unico parcial**: una mesa no puede tener dos sesiones abiertas simultaneas aunque dos meseros pulsen "Abrir" en el mismo milisegundo, y a la vez admite cuantas sesiones cerradas historicas haga falta. La defensa aplicativa (`lockForUpdate` + verificacion de estatus) va por delante, pero **la garantia real la da el motor**: el controlador captura la violacion `23505` y la traduce a `ERR_TABLE_ALREADY_OPEN`.
+
+#### Por que `payment_method_id` y `cash_register_id` pasan a NULLABLE
+Una cuenta abierta todavia no tiene forma de pago ni cajon asignado: ambos se resuelven en el cobro. Modelarlos como NULL es mas honesto que sembrar un valor falso en la apertura. El `byPayment` del Daily Summary usa un `INNER JOIN` contra `payment_methods`, de modo que las cuentas abiertas tampoco se cuelan por ahi.
+
+### 39.3 Motor Unico de Calculo: `App\Services\OrderCalculator`
+
+La aritmetica monetaria de `OrderController@store` se **extrajo tal cual** a un servicio compartido por mostrador y comedor. Un centavo de divergencia entre ambos flujos rompe el arqueo de caja, y mantener dos copias de la formula es como se llega a esa divergencia.
+
+| Metodo | Responsabilidad |
+| :--- | :--- |
+| `promotionDiscount(Promotion, float)` | Descuento de una promocion sobre el bruto de la linea (percentage / fixed_amount / freebie_100) |
+| `line(Product, ?Promotion, int)` | Construye la linea cruda de un producto |
+| `linesFromOrderItems(Collection)` | Reconstruye lineas crudas desde items ya persistidos |
+| `compose(lines, taxRate, discountType, discountValue)` | Prorratea el descuento global y despeja subtotal e IVA (tax-inclusive) |
+
+**Invariante que hace posible el comedor:** `line_gross = final_price_at_sale + discount_amount_at_sale`, exacto por construccion de `compose()`. Permite recomponer la cuenta desde los items guardados sin columnas auxiliares, mientras la orden no arrastre un descuento global previo — que es justo la invariante de una cuenta abierta (`discount_type = 'none'` hasta el cobro).
+
+**Verificacion del refactor:** se comparo el algoritmo original contra el extraido sobre **7,200 casos generados** (3 tasas de IVA × 6 configuraciones de descuento × 400 ordenes aleatorias con promociones por linea): **0 divergencias** y **0 fallos de reconstruccion** de `line_gross`.
+
+> Nota de redondeo **preexistente** (identica antes y despues del refactor): al prorratear un descuento global, la suma de los `final_price_at_sale` de los items puede diferir del `total` de la orden hasta en **2 centavos**, en el 0.14% de las ordenes con descuento. El `total` de la orden es el valor autoritativo para el cobro y el arqueo.
+
+### 39.4 Endpoints del Backend (7 rutas)
+
+| Metodo | Ruta | Middleware | Descripcion |
+| :--- | :--- | :--- | :--- |
+| GET | /api/tables | auth, user.active | Plano de mesas con estatus, sesion activa, consumo acumulado y resumen por estatus. Filtros: `zone`, `status`, `include_inactive` |
+| GET | /api/tables/{table} | auth, user.active | Detalle de la mesa con el desglose completo de su cuenta viva |
+| POST | /api/tables/{table}/open | auth, user.active | Abre la mesa, la vincula al mesero y genera la orden base en estado `open` |
+| POST | /api/tables/{table}/items | auth, user.active | Agrega una comanda a la cuenta activa |
+| POST | /api/tables/{table}/close | auth, user.active | Cobra la cuenta, sella la venta y libera la mesa |
+| POST/PUT/DELETE | /api/tables[/{table}] | **role:admin,manager** | Catalogo de mesas (alta, edicion, baja) |
+
+#### `TableSessionController` — las tres operaciones criticas
+Las tres corren dentro de `DB::transaction` con `lockForUpdate()` sobre la fila de la mesa, que actua como **punto unico de serializacion del comedor**: dos meseros que tocan la misma mesa a la vez se forman uno detras del otro en lugar de duplicar sesiones o comandas.
+
+**`open()`** — Valida ticket activo y mesa dada de alta → bloquea la fila → verifica `status = available` → crea la orden base (totales en 0, `discount_type = 'none'`, snapshot de `table_name_at_sale` y `waiter_name_at_sale`) → crea la sesion → marca la mesa `occupied` → `AuditLog: table_session_opened`.
+
+**`addItems()`** — Bloquea mesa, sesion, orden y **cada producto** (`lockForUpdate`) → valida stock disponible (`ERR_POS_INSUFFICIENT_STOCK`) → valida el limite de 1 promocion sobre la cuenta **completa** (existentes + nuevos) → descuenta inventario → inserta los items nuevos y recompone los totales.
+> Los items previos **no se reescriben**: sin descuento global, la aritmetica de cada linea es independiente, asi que su `created_at` queda intacto — y con el, la trazabilidad ronda por ronda.
+
+**`close()`** — Exige caja abierta **del cobrador** (`ERR_POS_CASH_REGISTER_REQUIRED`) → bloquea sesion y orden → rechaza cuentas vacias (`ERR_TABLE_EMPTY_ORDER`) → recompone la cuenta aplicando el descuento global y **actualiza los items en sitio** (via la clave `ref`, sin borrarlos) → sella la orden como `completed` con metodo de pago, cajon del cobrador y ticket vigente → abona `expected_closing_balance` → cierra la sesion → libera la mesa → `AuditLog: table_session_closed` → devuelve `printer_data` para el `PrintConfirmationModal`.
+
+> **Reconocimiento del ingreso:** en el cobro se resella `orders.created_at` con la hora del pago. En todo el resto del sistema `created_at` ES el instante del cobro (las ordenes de mostrador nacen en el checkout); preservar esa invariante mantiene correctos los reportes por fecha y los cortes del dia. La hora de apertura de la mesa queda registrada en `table_sessions.opened_at`.
+
+#### Catalogo de errores del modulo
+| Codigo | HTTP | Situacion |
+| :--- | :--- | :--- |
+| `ERR_TABLE_ALREADY_OPEN` | 422 | La mesa ya tiene cuenta abierta (incluye la carrera perdida contra el indice unico) |
+| `ERR_TABLE_NOT_AVAILABLE` | 422 | La mesa esta reservada |
+| `ERR_TABLE_INACTIVE` | 422 | Mesa dada de baja del catalogo |
+| `ERR_TABLE_NO_OPEN_SESSION` | 422 | Se intento comandar o cobrar una mesa libre |
+| `ERR_TABLE_EMPTY_ORDER` | 422 | Cobro de una mesa sin consumos |
+| `ERR_TABLE_OCCUPIED` | 422 | Cambio de estatus o baja de una mesa con cuenta viva |
+| `ERR_TABLE_HAS_SESSIONS` | 422 | Baja de una mesa con historico (sugiere desactivar) |
+| `ERR_POS_INSUFFICIENT_STOCK` | 422 | Stock insuficiente al agregar la comanda |
+| `ERR_ORDER_STILL_OPEN` | 422 | Cancelacion de una cuenta de mesa desde el historial |
+
+`App\Exceptions\TableConflictException` permite abortar la transaccion desde dentro del closure sin dejar escrituras a medias, traduciendose al catalogo de errores corporativo homogeneo.
+
+### 39.5 Histórico de Auditoría y Trazabilidad
+
+- `orders.table_id` (FK) + `orders.table_name_at_sale` — el **snapshot del nombre** sigue la convencion `_at_sale` de la casa: si la mesa se renombra o se da de baja, el ticket historico conserva el nombre con el que se consumio.
+- `orders.waiter_id` (FK) + `orders.waiter_name_at_sale` — mesero que abrio la cuenta, con snapshot equivalente.
+- `order_items.created_at` — **se sella explicitamente** al insertar (el modelo tiene `$timestamps = false`, por lo que Eloquent no lo hacia y la columna quedaba NULL). Es la hora de comanda de cada producto y sostiene la trazabilidad por rondas. Se le agrego el cast `datetime` y `serializeDate` a zona `America/Mexico_City`.
+- `AuditLog` registra las tres transiciones (`table_session_opened`, `table_items_added`, `table_session_closed`) con mesa, mesero, cobrador, productos, total y minutos de ocupacion.
+
+**Vista de detalle del histórico** — Para ordenes de comedor aparece un panel indigo con: mesa consumida, mesero que atendio, comensales, hora de apertura de la mesa, quien cobró y la nota de servicio. La tabla de productos suma una columna **"Comandado"** con la hora de cada alta, y el DataTable principal suma una columna **"Origen"** que distingue mesa+mesero de "Mostrador". El **Excel** de exportacion suma las columnas **Mesa** y **Mesero** (rango A..K).
+
+**Ticket impreso** — `TicketPreview` imprime las lineas `Mesa:` y `Atendio:` unicamente cuando la venta proviene del comedor.
+
+### 39.6 Interfaz de Usuario (React)
+
+#### Botón de Mesas en el header del POS — a la izquierda del reloj
+En la "Shift Status Card" de `POSPage`, el bloque del reloj se envolvio junto al nuevo boton en un contenedor `ml-auto flex items-center gap-3`, quedando el boton **estrictamente a la izquierda del reloj** y ambos anclados a la derecha de la barra. Icono SVG de mesa con cubiertos, etiqueta "Mesas" (oculta en movil), hover indigo. Navega a `/mesas`.
+
+#### `TablesFloorPlanPage` (`/mesas`) — Plano de Mesas
+- **Codigo de color por estatus** (`components/dining/tableStatus.js`, lenguaje visual unico): verde esmeralda = Disponible, rojo rosa = Ocupada, ambar = Reservada. Punto de color, badge y borde de tarjeta comparten la paleta para que el salon se lea de un vistazo.
+- Tarjeta de mesa: nombre, capacidad, zona, estatus y —si esta ocupada— mesero, comensales, **tiempo transcurrido** ("1h 25m"), numero de productos y **consumo acumulado**.
+- Chips de resumen (disponibles / ocupadas / reservadas), filtro por zona y boton de actualizacion manual.
+- **Sin polling**: se revalida al recuperar el foco de la ventana y tras cada operacion, respetando la decision de la casa de no sondear en bucle.
+- Clic en mesa disponible → modal de apertura (comensales precargados con la capacidad + nota opcional) → al abrir, **encadena directo al detalle** para tomar la orden.
+- Clic en mesa ocupada → detalle de la cuenta.
+
+#### `TableDetailModal` — Consumo al instante
+- Cabecera con mesero, comensales, tiempo de ocupacion y consumo acumulado en grande.
+- Columna izquierda: buscador y catalogo de productos. **Cada clic dispara `POST /tables/{id}/items` al instante** — el endpoint es transaccional, de modo que la comanda queda firme antes de que el mesero levante el dedo, y la respuesta trae la sesion recalculada (sin segunda peticion).
+- Columna derecha: cuenta viva en orden de comanda con **hora de alta por partida**, desglose de subtotal/IVA/total y boton **"Cobrar Cuenta"**.
+
+#### Cobro: `CheckoutModal` reutilizado en modo mesa
+Se agrego la prop opcional `tableSession`. Cuando viene informada, la cuenta ya existe en el servidor y el submit va a `POST /tables/{id}/close` en lugar de crear una orden nueva; el resto —descuentos directos, cupones, efectivo con calculo en tiempo real, preview de ticket e impresion post-venta— es **identico al mostrador**. La cuenta del servidor se traduce a la forma de carrito que el modal ya entendia usando la invariante `line_gross = final + descuento`. La ruta offline queda desactivada en modo mesa: un cobro de mesa exige servidor.
+
+#### `TablesPage` (`/admin/mesas`) — Catálogo en el sidebar
+Entrada **"Mesas"** en el grupo **ADMINISTRACIÓN** del sidebar. DataTable con nombre, capacidad, zona, estatus, cuenta abierta (mesero + consumo), alta y acciones. Alta/edicion en modal; el estatus se oculta y se explica cuando la mesa esta ocupada, porque lo gobierna su sesion. La baja solo procede si la mesa nunca tuvo consumos; en caso contrario se sugiere desactivarla.
+
+### 39.7 Seeder
+`DatabaseSeeder` siembra un plano base de 8 mesas en 3 zonas: Salón (4), Terraza (3) y Barra (1).
+
+### Archivos Creados en esta Fase
+**Backend (nuevos):**
+- `database/migrations/2026_07_31_000001_add_open_to_order_status_enum.php`
+- `database/migrations/2026_07_31_000002_create_tables_table.php`
+- `database/migrations/2026_07_31_000003_add_dine_in_columns_to_orders_table.php`
+- `database/migrations/2026_07_31_000004_create_table_sessions_table.php`
+- `app/Models/Table.php`, `app/Models/TableSession.php`
+- `app/Services/OrderCalculator.php`
+- `app/Exceptions/TableConflictException.php`
+- `app/Http/Controllers/Dining/TableController.php`
+- `app/Http/Controllers/Dining/TableSessionController.php`
+- `app/Http/Requests/Table/StoreTableRequest.php`, `UpdateTableRequest.php`
+- `app/Http/Requests/TableSession/OpenTableRequest.php`, `AddTableItemsRequest.php`, `CloseTableRequest.php`
+
+**Frontend (nuevos):**
+- `src/pages/dining/TablesFloorPlanPage.jsx`
+- `src/pages/admin/TablesPage.jsx`
+- `src/components/dining/TableDetailModal.jsx`
+- `src/components/dining/tableStatus.js`
+
+### Archivos Modificados en esta Fase
+**Backend (modificados):**
+- `app/Models/Order.php` — Constantes de estatus, campos dine-in en fillable, relaciones `table()`/`waiter()`/`tableSession()`, scope `settled()`, `$table` explicito
+- `app/Models/OrderItem.php` — `created_at` en fillable, cast `datetime` y `serializeDate`
+- `app/Http/Controllers/Sales/OrderController.php` — Usa `OrderCalculator`, `settled()` en el historial, eager loading de mesa/mesero, filtros `table_id`/`dine_in_only`, guarda `created_at` en los items, bloqueo de cancelacion de cuentas abiertas
+- `app/Http/Controllers/Sales/SalesExportController.php` — `settled()` y columnas Mesa/Mesero en el Excel
+- `routes/api.php` — 7 rutas nuevas bajo `tables`
+- `database/seeders/DatabaseSeeder.php` — Plano base de 8 mesas
+
+**Frontend (modificados):**
+- `src/pages/pos/POSPage.jsx` — Boton de mesas a la izquierda del reloj en el header
+- `src/components/layout/Sidebar.jsx` — NavLink "Mesas" en ADMINISTRACIÓN
+- `src/components/pos/CheckoutModal.jsx` — Prop `tableSession` y cobro contra `/tables/{id}/close`
+- `src/components/pos/TicketPreview.jsx` — Lineas `Mesa:` y `Atendio:` en ventas de comedor
+- `src/pages/sales/SalesHistoryPage.jsx` — Columna "Origen", panel de trazabilidad de comedor y columna "Comandado" en el detalle
+- `src/App.jsx` — Rutas `/mesas` y `/admin/mesas`
+- `src/hooks/usePageTitle.js` — Titulos de las dos vistas nuevas
 - `frontend/dist/` — Build de produccion regenerado

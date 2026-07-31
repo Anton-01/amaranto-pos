@@ -5,6 +5,7 @@ namespace Database\Seeders;
 use App\Models\GlobalSetting;
 use App\Models\NotificationType;
 use App\Models\PaymentMethod;
+use App\Models\Table;
 use App\Models\Role;
 use App\Models\User;
 use Illuminate\Database\Seeder;
@@ -46,6 +47,22 @@ class DatabaseSeeder extends Seeder
             'status' => 'active',
             'is_system' => true,
         ]);
+
+        // Plano base del comedor: 8 mesas repartidas en dos zonas.
+        $floorPlan = [
+            ['name' => 'Mesa 1', 'capacity' => 2, 'zone' => 'Salón'],
+            ['name' => 'Mesa 2', 'capacity' => 4, 'zone' => 'Salón'],
+            ['name' => 'Mesa 3', 'capacity' => 4, 'zone' => 'Salón'],
+            ['name' => 'Mesa 4', 'capacity' => 6, 'zone' => 'Salón'],
+            ['name' => 'Mesa 5', 'capacity' => 2, 'zone' => 'Terraza'],
+            ['name' => 'Mesa 6', 'capacity' => 4, 'zone' => 'Terraza'],
+            ['name' => 'Mesa 7', 'capacity' => 8, 'zone' => 'Terraza'],
+            ['name' => 'Barra 1', 'capacity' => 1, 'zone' => 'Barra'],
+        ];
+
+        foreach ($floorPlan as $table) {
+            Table::create($table + ['status' => 'available', 'is_active' => true]);
+        }
 
         $notificationTypes = [
             [

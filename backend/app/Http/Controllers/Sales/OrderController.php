@@ -17,6 +17,7 @@ use App\Models\User;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use App\Services\OrderCalculator;
 use App\Services\PrinterService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
@@ -26,11 +27,21 @@ class OrderController extends Controller
     public function __construct(
         private readonly TicketBuilder $ticketBuilder,
         private readonly PrinterService $printerService,
+        private readonly OrderCalculator $calculator,
     ) {}
     public function index(Request $request): JsonResponse
     {
-        $query = Order::with(['items.product', 'items.promotion', 'ticketConfig', 'paymentMethod', 'cashRegister.user', 'promotion'])
+        // settled() deja fuera las cuentas de mesa abiertas: aun no son ventas.
+        $query = Order::settled()
+            ->with(['items.product', 'items.promotion', 'ticketConfig', 'paymentMethod', 'cashRegister.user', 'promotion', 'table', 'waiter:id,name'])
             ->orderByDesc('created_at');
+
+        if ($request->filled('table_id')) {
+            $query->where('table_id', $request->table_id);
+        }
+        if ($request->boolean('dine_in_only')) {
+            $query->whereNotNull('table_id');
+        }
 
         if ($request->filled('date_from')) {
             $from = Carbon::parse($request->date_from, 'America/Mexico_City')->startOfDay();
@@ -71,7 +82,11 @@ class OrderController extends Controller
 
     public function show(Order $order): JsonResponse
     {
-        $order->load(['items.product', 'items.promotion', 'ticketConfig', 'cashRegister.user', 'paymentMethod', 'canceledByUser', 'promotion']);
+        $order->load([
+            'items.product', 'items.promotion', 'ticketConfig', 'cashRegister.user',
+            'paymentMethod', 'canceledByUser', 'promotion',
+            'table', 'waiter:id,name,email', 'tableSession.user:id,name', 'tableSession.closedByUser:id,name',
+        ]);
 
         return response()->json([
             'status' => 'success',
@@ -114,42 +129,15 @@ class OrderController extends Controller
             $taxSetting = GlobalSetting::where('key', 'tax_rate')->first();
             $taxRate = $taxSetting ? (float) ($taxSetting->value['rate'] ?? 0.16) : 0.16;
 
-            $totalGross = 0;
-            $itemsData = [];
+            $lines = [];
 
             foreach ($request->items as $item) {
                 $product = Product::findOrFail($item['product_id']);
                 $promotionId = $item['promotion_id'] ?? null;
-
-                $publicPrice = (float) $product->sale_price;
+                $promotion = $promotionId ? Promotion::findOrFail($promotionId) : null;
                 $quantity = (int) $item['quantity'];
-                $lineGross = $publicPrice * $quantity;
-                $discount = 0;
 
-                if ($promotionId) {
-                    $promotion = Promotion::findOrFail($promotionId);
-
-                    if ($promotion->type === 'percentage') {
-                        $discount = $lineGross * ((float) $promotion->value / 100);
-                    } elseif ($promotion->type === 'fixed_amount') {
-                        $discount = min((float) $promotion->value, $lineGross);
-                    } elseif ($promotion->type === 'freebie_100') {
-                        $discount = $lineGross;
-                    }
-                }
-
-                $finalLineTotal = $lineGross - $discount;
-
-                $itemsData[] = [
-                    'product_id' => $product->id,
-                    'promotion_id' => $promotionId,
-                    'quantity' => $quantity,
-                    'line_gross' => $lineGross,
-                    'item_discount' => $discount,
-                    'final_line_total' => $finalLineTotal,
-                ];
-
-                $totalGross += $finalLineTotal;
+                $lines[] = $this->calculator->line($product, $promotion, $quantity);
 
                 if ($product->track_stock) {
                     $product->decrement('current_stock', $quantity);
@@ -159,37 +147,8 @@ class OrderController extends Controller
             $discountType = $request->input('discount_type', 'none');
             $discountValue = (float) $request->input('discount_value', 0);
             $globalPromotionId = $request->input('promotion_id');
-            $discountTotal = 0;
 
-            if ($discountType === 'fixed' && $discountValue > 0) {
-                $discountTotal = min($discountValue, $totalGross);
-            } elseif ($discountType === 'percentage' && $discountValue > 0) {
-                $discountTotal = round($totalGross * ($discountValue / 100), 2);
-                $discountTotal = min($discountTotal, $totalGross);
-            }
-
-            $totalAfterDiscount = round($totalGross - $discountTotal, 2);
-            $subtotal = round($totalAfterDiscount / (1 + $taxRate), 2);
-            $ivaTotal = round($totalAfterDiscount - $subtotal, 2);
-
-            $savedItems = [];
-            foreach ($itemsData as $itemData) {
-                $proportion = $totalGross > 0 ? $itemData['final_line_total'] / $totalGross : 0;
-                $itemDiscountShare = round($discountTotal * $proportion, 2);
-                $adjustedFinal = $itemData['final_line_total'] - $itemDiscountShare;
-                $netPrice = $adjustedFinal / (1 + $taxRate);
-                $tax = $adjustedFinal - $netPrice;
-
-                $savedItems[] = [
-                    'product_id' => $itemData['product_id'],
-                    'promotion_id' => $itemData['promotion_id'],
-                    'quantity' => $itemData['quantity'],
-                    'base_price_at_sale' => round($netPrice / $itemData['quantity'], 2),
-                    'discount_amount_at_sale' => round($itemData['item_discount'] + $itemDiscountShare, 2),
-                    'final_price_at_sale' => round($adjustedFinal, 2),
-                    'tax_amount_at_sale' => round($tax, 2),
-                ];
-            }
+            $composed = $this->calculator->compose($lines, $taxRate, $discountType, $discountValue);
 
             $order = Order::create([
                 'cash_register_id' => $cashRegister->id,
@@ -198,21 +157,21 @@ class OrderController extends Controller
                 'promotion_id' => $globalPromotionId,
                 'discount_type' => $discountType,
                 'discount_value' => $discountValue,
-                'discount_total' => round($discountTotal, 2),
-                'subtotal' => $subtotal,
-                'iva_total' => $ivaTotal,
-                'total' => $totalAfterDiscount,
+                'discount_total' => $composed['discount_total'],
+                'subtotal' => $composed['subtotal'],
+                'iva_total' => $composed['iva_total'],
+                'total' => $composed['total'],
                 'amount_received' => $request->amount_received,
                 'amount_change' => $request->amount_change,
                 'custom_legend' => $request->custom_legend,
-                'status' => 'completed',
+                'status' => Order::STATUS_COMPLETED,
             ]);
 
-            foreach ($savedItems as $itemData) {
-                $order->items()->create($itemData);
+            foreach ($composed['items'] as $itemData) {
+                $order->items()->create($itemData + ['created_at' => now()]);
             }
 
-            $cashRegister->increment('expected_closing_balance', $totalAfterDiscount);
+            $cashRegister->increment('expected_closing_balance', $composed['total']);
 
             return $order;
         });
@@ -243,11 +202,21 @@ class OrderController extends Controller
             'reason' => 'required|string|max:500',
         ]);
 
-        if ($order->status === 'canceled') {
+        if ($order->status === Order::STATUS_CANCELED) {
             return response()->json([
                 'status' => 'error',
                 'code' => 'ERR_ORDER_ALREADY_CANCELED',
                 'message' => 'Esta orden ya fue cancelada previamente.',
+            ], 422);
+        }
+
+        // Cancelar aqui una cuenta de mesa dejaria la mesa ocupada para siempre:
+        // la liberacion es responsabilidad del modulo de comedor.
+        if ($order->status === Order::STATUS_OPEN) {
+            return response()->json([
+                'status' => 'error',
+                'code' => 'ERR_ORDER_STILL_OPEN',
+                'message' => 'Esta cuenta pertenece a una mesa abierta. Cancelala desde el plano de mesas para liberar la mesa.',
             ], 422);
         }
 

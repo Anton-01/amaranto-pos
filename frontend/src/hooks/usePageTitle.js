@@ -4,6 +4,7 @@ import { useLocation } from 'react-router-dom';
 const PAGE_TITLES = {
   '/dashboard': 'Dashboard',
   '/pos': 'Punto de Venta',
+  '/mesas': 'Plano de Mesas',
   '/ticket-config': 'Configuracion de Tickets',
   '/products': 'Productos',
   '/products/create': 'Nuevo Producto',
@@ -15,6 +16,7 @@ const PAGE_TITLES = {
   '/admin/usuarios': 'Gestion de Usuarios',
   '/admin/ventas': 'Historial de Tickets',
   '/admin/metodos-pago': 'Metodos de Pago',
+  '/admin/mesas': 'Catalogo de Mesas',
   '/admin/roles-permisos': 'Roles y Permisos',
   '/admin/configuracion': 'Configuracion del Sistema',
   '/admin/notificaciones/plantillas': 'Plantillas de Correo',

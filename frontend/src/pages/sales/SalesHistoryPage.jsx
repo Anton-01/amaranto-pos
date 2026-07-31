@@ -271,6 +271,20 @@ export default function SalesHistoryPage() {
     <span className="text-sm text-slate-700">{row.cash_register?.user?.name || 'N/A'}</span>
   );
 
+  /** Distingue de un vistazo la venta de comedor de la de mostrador. */
+  const originTemplate = (row) => (
+    row.table_name_at_sale ? (
+      <div className="text-sm">
+        <p className="font-medium text-slate-800">{row.table_name_at_sale}</p>
+        {row.waiter_name_at_sale && (
+          <p className="text-xs text-slate-500">{row.waiter_name_at_sale}</p>
+        )}
+      </div>
+    ) : (
+      <span className="text-xs text-slate-400">Mostrador</span>
+    )
+  );
+
   const paymentTemplate = (row) => (
     <Tag value={row.payment_method?.name || 'N/A'} className="text-xs" severity="info" />
   );
@@ -467,6 +481,7 @@ export default function SalesHistoryPage() {
           <Column body={ticketIdTemplate} header="ID Ticket" style={{ width: '100px' }} />
           <Column body={dateTemplate} header="Fecha/Hora" style={{ width: '160px' }} />
           <Column body={vendorTemplate} header="Vendedor" />
+          <Column body={originTemplate} header="Origen" style={{ width: '130px' }} />
           <Column body={paymentTemplate} header="Método de Pago" style={{ width: '140px' }} />
           <Column body={totalTemplate} header="Total" style={{ width: '100px' }} />
           <Column body={(row) => {
@@ -544,6 +559,50 @@ export default function SalesHistoryPage() {
                 </div>
               </div>
 
+              {/* Trazabilidad de comedor: solo en ventas originadas en una mesa */}
+              {detailOrder.table_name_at_sale && (
+                <div className="rounded-lg border border-indigo-200 bg-indigo-50/60 p-3">
+                  <div className="flex items-center gap-2">
+                    <i className="pi pi-users text-indigo-600 text-sm" />
+                    <p className="text-sm font-semibold text-indigo-900">
+                      Consumo en {detailOrder.table_name_at_sale}
+                    </p>
+                    <Tag value="Comedor" severity="info" className="text-[10px]" />
+                  </div>
+                  <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-indigo-800 sm:grid-cols-4">
+                    <div>
+                      <span className="text-indigo-500">Mesero</span>
+                      <p className="font-medium">{detailOrder.waiter_name_at_sale || 'N/D'}</p>
+                    </div>
+                    {detailOrder.table_session?.guests != null && (
+                      <div>
+                        <span className="text-indigo-500">Comensales</span>
+                        <p className="font-medium">{detailOrder.table_session.guests}</p>
+                      </div>
+                    )}
+                    {detailOrder.table_session?.opened_at && (
+                      <div>
+                        <span className="text-indigo-500">Mesa abierta</span>
+                        <p className="font-medium">
+                          {new Date(detailOrder.table_session.opened_at).toLocaleString('es-MX')}
+                        </p>
+                      </div>
+                    )}
+                    {detailOrder.table_session?.closed_by_user?.name && (
+                      <div>
+                        <span className="text-indigo-500">Cobró</span>
+                        <p className="font-medium">{detailOrder.table_session.closed_by_user.name}</p>
+                      </div>
+                    )}
+                  </div>
+                  {detailOrder.table_session?.notes && (
+                    <p className="mt-2 text-xs italic text-indigo-700">
+                      Nota: {detailOrder.table_session.notes}
+                    </p>
+                  )}
+                </div>
+              )}
+
               {detailOrder.status === 'canceled' && (
                 <div className="rounded-lg bg-rose-50 p-3 text-sm">
                   <p className="font-medium text-rose-700">Cancelado por: {detailOrder.canceled_by_user?.name || 'N/A'}</p>
@@ -559,6 +618,9 @@ export default function SalesHistoryPage() {
                   <thead>
                     <tr className="border-b border-slate-200 bg-slate-50">
                       <th className="px-3 py-2 text-left text-xs font-semibold text-slate-600">Producto</th>
+                      {detailOrder.table_name_at_sale && (
+                        <th className="px-3 py-2 text-left text-xs font-semibold text-slate-600">Comandado</th>
+                      )}
                       <th className="px-3 py-2 text-right text-xs font-semibold text-slate-600">Qty</th>
                       <th className="px-3 py-2 text-right text-xs font-semibold text-slate-600">P. Unit.</th>
                       <th className="px-3 py-2 text-right text-xs font-semibold text-slate-600">Desc.</th>
@@ -574,6 +636,13 @@ export default function SalesHistoryPage() {
                             <span className="ml-1 text-xs text-emerald-600">({item.promotion.name})</span>
                           )}
                         </td>
+                        {detailOrder.table_name_at_sale && (
+                          <td className="px-3 py-2 text-xs text-slate-500">
+                            {item.created_at
+                              ? new Date(item.created_at).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' })
+                              : '—'}
+                          </td>
+                        )}
                         <td className="px-3 py-2 text-right text-slate-700">{item.quantity}</td>
                         <td className="px-3 py-2 text-right text-slate-700">{fmt(item.base_price_at_sale)}</td>
                         <td className="px-3 py-2 text-right text-emerald-600">
