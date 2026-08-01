@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useLocation } from 'react-router-dom';
 import { Dialog } from 'primereact/dialog';
 import { DataTable } from 'primereact/datatable';
@@ -6,7 +6,12 @@ import { Column } from 'primereact/column';
 import UserProfileDropdown from './UserProfileDropdown';
 import NotificationBell from '../notifications/NotificationBell';
 import useOnlineStatus from '../../hooks/useOnlineStatus';
+import useRefreshOnVisible from '../../hooks/useRefreshOnVisible';
+import { cachedGet, isStale } from '../../api/readCache';
 import api from '../../api/axios';
+
+const QUICK_STATS_KEY = 'header-today-sales';
+const QUICK_STATS_TTL = 60000;
 
 const pageNames = {
   '/dashboard': 'Dashboard',
@@ -52,20 +57,38 @@ export default function AppHeader({ onToggleSidebar }) {
 
   const currentPage = pageNames[location.pathname] || '';
 
-  useEffect(() => {
-    const fetchQuickStats = async () => {
-      try {
-        const today = new Date().toISOString().split('T')[0];
-        const res = await api.get('/orders', { params: { date_from: today, date_to: today, per_page: 1 } });
-        setTodaySales(res.data?.metadata?.total ?? null);
-      } catch {
-        // silently fail
-      }
-    };
-    fetchQuickStats();
-    const interval = setInterval(fetchQuickStats, 60000);
-    return () => clearInterval(interval);
+  /**
+   * Contador de ventas del dia. Se lee al montar el header y al volver a la
+   * pestana (si el dato ya vencio); nunca por temporizador.
+   *
+   * El `setInterval` de 60s que vivia aqui era, junto con el de la campana, el
+   * origen del trafico ciclico: dos GET intercalados cada minuto en cualquier
+   * ruta, indefinidamente y por cada pestana abierta. La cache de proceso
+   * ademas evita que cada navegacion (que remonta el layout) lo vuelva a pedir.
+   */
+  const fetchQuickStats = useCallback(async ({ force = false } = {}) => {
+    try {
+      const today = new Date().toISOString().split('T')[0];
+      const total = await cachedGet(
+        QUICK_STATS_KEY,
+        () => api
+          .get('/orders', { params: { date_from: today, date_to: today, per_page: 1 } })
+          .then((res) => res.data?.metadata?.total ?? null),
+        { ttl: QUICK_STATS_TTL, force }
+      );
+      setTodaySales(total);
+    } catch {
+      // silently fail
+    }
   }, []);
+
+  useEffect(() => {
+    fetchQuickStats();
+  }, [fetchQuickStats]);
+
+  useRefreshOnVisible(() => {
+    if (isStale(QUICK_STATS_KEY, QUICK_STATS_TTL)) fetchQuickStats({ force: true });
+  });
 
   const openSalesModal = async () => {
     setShowSalesModal(true);
