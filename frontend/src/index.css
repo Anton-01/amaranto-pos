@@ -7,6 +7,30 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* Login — correo y contrasena con el mismo tamano.
+   Las utilidades de Tailwind viven en @layer, por lo que el tema de PrimeReact
+   (importado sin capa en vendor.css) las sobreescribe. Estas reglas van sin
+   capa y con mayor especificidad para fijar el tamano de ambos campos. */
+.p-inputtext.login-field {
+  width: 100%;
+  padding: 0.75rem 1rem;
+  font-size: 0.875rem;
+  line-height: 1.5rem;
+  border-radius: 0.75rem;
+}
+
+/* El wrapper de <Password> es inline-flex y no toma el ancho del formulario */
+.login-password,
+.p-password.login-password {
+  display: block;
+  width: 100%;
+}
+
+.p-password.login-password .p-inputtext {
+  width: 100%;
+  padding-right: 2.75rem; /* espacio para el icono de mostrar/ocultar */
+}
+
 /* InputSwitch — Emerald activo / Slate inactivo */
 .p-inputswitch .p-inputswitch-slider {
   transition: background-color 0.2s ease, box-shadow 0.2s ease;

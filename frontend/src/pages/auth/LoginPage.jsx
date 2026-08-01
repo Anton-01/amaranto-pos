@@ -112,8 +112,7 @@ export default function LoginPage() {
                 placeholder="usuario@cronos.pos"
                 required
                 disabled={loading}
-                className="w-full rounded-xl border-slate-200 px-4 py-3 text-sm shadow-sm transition-all focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200"
-                pt={{ root: { className: 'w-full' } }}
+                className="login-field border-slate-200 shadow-sm transition-all focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200"
               />
             </div>
 
@@ -130,9 +129,8 @@ export default function LoginPage() {
                 disabled={loading}
                 toggleMask
                 feedback={false}
-                className="w-full"
-                inputClassName="w-full !w-full rounded-xl border-slate-200 px-4 py-3 text-sm shadow-sm transition-all focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200"
-                pt={{ root: { className: 'w-full', style: { width: '100%' } }, input: { className: 'w-full', style: { width: '100%' } }, iconField: { className: 'w-full', style: { width: '100%' } } }}
+                className="login-password"
+                inputClassName="login-field border-slate-200 shadow-sm transition-all focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200"
               />
             </div>
 
