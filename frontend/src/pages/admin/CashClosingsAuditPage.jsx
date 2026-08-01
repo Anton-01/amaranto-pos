@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Navigate } from 'react-router-dom';
 import { DataTable } from 'primereact/datatable';
 import { Column } from 'primereact/column';
@@ -43,17 +43,24 @@ export default function CashClosingsAuditPage() {
 
   const isAdmin = user?.roles?.includes('admin');
 
-  const fetchClosings = useCallback(async (targetPage = 0) => {
+  /**
+   * Carga explicita: al confirmar el rol admin (una vez), al paginar o al
+   * aplicar un filtro manual. Antes era un useCallback con `search` en sus
+   * dependencias usado como dependencia del efecto: cada tecla del buscador
+   * recreaba el callback y disparaba una peticion por caracter.
+   */
+  const fetchClosings = async (targetPage = 0, overrides = {}) => {
+    const f = { typeFilter, dateRange, search, ...overrides };
     setLoading(true);
     try {
       const res = await api.get('/admin/cash-closings-audit', {
         params: {
           page: targetPage + 1,
           per_page: 15,
-          type: typeFilter ?? undefined,
-          date_from: toYmd(dateRange?.[0]) ?? undefined,
-          date_to: toYmd(dateRange?.[1]) ?? undefined,
-          search: search || undefined,
+          type: f.typeFilter ?? undefined,
+          date_from: toYmd(f.dateRange?.[0]) ?? undefined,
+          date_to: toYmd(f.dateRange?.[1]) ?? undefined,
+          search: f.search || undefined,
         },
       });
       setClosings(res.data.data);
@@ -65,11 +72,16 @@ export default function CashClosingsAuditPage() {
     } finally {
       setLoading(false);
     }
-  }, [typeFilter, dateRange, search]);
+  };
 
+  // Una sola carga inicial, en cuanto el contexto confirma el rol admin.
+  const didInitialFetch = useRef(false);
   useEffect(() => {
-    if (isAdmin) fetchClosings(0);
-  }, [isAdmin, fetchClosings]);
+    if (!isAdmin || didInitialFetch.current) return;
+    didInitialFetch.current = true;
+    fetchClosings(0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAdmin]);
 
   if (user && !isAdmin) {
     return <Navigate to="/dashboard" replace />;
@@ -148,13 +160,20 @@ export default function CashClosingsAuditPage() {
             { label: 'Manuales', value: 'manual' },
             { label: 'Automáticos (System Job)', value: 'automated' },
           ]}
-          onChange={(e) => setTypeFilter(e.value)}
+          onChange={(e) => {
+            setTypeFilter(e.value);
+            // Click deliberado en el dropdown = aplicar filtro al instante.
+            fetchClosings(0, { typeFilter: e.value });
+          }}
           className="w-56 text-sm"
           pt={{ root: { className: 'w-56' } }}
         />
         <Calendar
           value={dateRange}
-          onChange={(e) => setDateRange(e.value)}
+          onChange={(e) => {
+            setDateRange(e.value);
+            fetchClosings(0, { dateRange: e.value });
+          }}
           selectionMode="range"
           readOnlyInput
           placeholder="Rango de fechas"

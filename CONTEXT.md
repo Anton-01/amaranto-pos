@@ -3363,3 +3363,61 @@ Controlador invocable `MonthlyAnalyticsController`. Parametro `month` (`Y-m`, de
 - `src/App.jsx` — Ruta `/admin/cash-closings-audit`
 - `src/hooks/usePageTitle.js` — Titulo de la vista de auditoria
 - `frontend/dist/` — Build de produccion regenerado
+
+## 41. Correccion de Peticiones Infinitas en Historico de Ventas & Auditoria Global de Red [🟢 COMPLETADO]
+
+### 41.1 Causa Raiz del Bug (SalesHistoryPage.jsx)
+
+El componente cargaba las ordenes con un efecto **reactivo a la identidad de un callback**:
+
+```js
+const getDateParams = useCallback(..., [quickFilter, dateRange]);
+const fetchOrders  = useCallback(..., [getDateParams, perPage, selectedPaymentMethod,
+                                       selectedUser, totalMin, totalMax, selectedStatus]);
+useEffect(() => { setPage(0); fetchOrders(0); }, [fetchOrders]);
+```
+
+Ese patron encadena la peticion HTTP a la identidad de `fetchOrders`, que a su vez depende transitivamente de **8 estados**. Dos consecuencias:
+
+1. **Ciclo descontrolado**: la propia peticion provoca renders (`setLoading` → `setOrders` → `setLoading`). Basta con que UNA dependencia de la cadena se recree en cualquiera de esos renders (contexto de autenticacion resolviendo el usuario, doble montaje de StrictMode, cualquier estado intermedio) para cerrar el bucle *fetch → render → nueva identidad del callback → el efecto vuelve a disparar el fetch*. La peticion no tenia un dueño explicito: se disparaba como efecto colateral de la identidad de una funcion.
+2. **Peticion por tecla**: los `InputNumber` de monto actualizaban `totalMin` en cada digito; cada digito recreaba `fetchOrders` y el efecto lanzaba una consulta al backend. Escribir "$1,500" costaba 4+ peticiones; seleccionar un rango de fechas disparaba con la primera fecha y otra vez con la segunda. No existia ninguna accion de "aplicar".
+
+### 41.2 Solucion Aplicada (ciclo de vida explicito)
+
+Se elimino por completo el acoplamiento reactivo. La carga de ordenes ahora tiene **duenos explicitos** y ningun `useEffect` depende de la identidad de un callback:
+
+| Momento | Mecanismo |
+| :--- | :--- |
+| Montaje de la vista | Efecto con deps `[]` + guard `useRef` (`didInitialFetch`): **estrictamente 1 peticion**, blindada contra el doble montaje de StrictMode y contra cualquier re-render posterior |
+| Filtro rapido (Hoy/Semana/Mes) | Click deliberado → `applyFilters({quickFilter})` en el propio `onChange` (la deseleccion del SelectButton se ignora para no lanzar consultas sin acotar) |
+| Filtros avanzados | Los inputs **solo actualizan estado local**; la peticion sale unicamente con los nuevos botones **"Aplicar Filtros"** / **"Limpiar Filtros"** |
+| Paginacion | `onPageChange` → `fetchOrders(pagina)` |
+| Post-cancelacion de orden | `fetchOrders(page)` explicito |
+
+- `buildParams(overrides)` y `fetchOrders(page, overrides)` son **funciones normales, no useCallback**: su identidad no participa en ningun efecto, asi que recrearlas por render es inocuo. `overrides` resuelve el clasico desfase de los setters de React dentro del mismo evento (el handler pasa el valor recien elegido sin esperar al re-render).
+- El export a Excel reutiliza `buildParams()`: el archivo exporta exactamente lo que la tabla filtra.
+- De paso se agrego el campo **Monto Maximo** al panel avanzado (el estado `totalMax` existia y el backend ya soportaba `total_max`, pero el input nunca se habia montado).
+
+### 41.3 Auditoria Global de Llamadas de Red (todo el frontend)
+
+Barrido transversal de `pages/`, `components/`, `hooks/` y `context/`: **83 `useEffect` auditados**.
+
+**Resultado sano (sin accion):**
+- **0 efectos sin array de dependencias** (ninguno corre en cada render).
+- Todos los `setInterval` tienen `clearInterval` en el cleanup y son sondeos acotados y deliberados: quick-stats del header (60s), campana de notificaciones (60s), reloj del POS (1s).
+- Todos los `addEventListener` tienen `removeEventListener`: `useOnlineStatus` (online/offline) y el revalidado por foco del plano de mesas.
+- Los `setTimeout` restantes son one-shot dentro de handlers (impresion 350ms, seleccion en plantillas de correo, perfil) — sin fugas.
+- Efectos `[callback]` verificados con cadenas de identidad **estables** (deps `[]` o solo estados que cambian por click deliberado): POSPage, TablesFloorPlanPage, TablesPage, UsersPage (3 dropdowns), CashRegisterClosingsPage (calendario/quick filter), NotificationPreferencesPage, ProductFormPage, MonthlyAnalyticsModal, TableDetailModal, NotificationBell.
+
+**Anomalias encontradas y corregidas:**
+
+| Componente | Anomalia | Correccion |
+| :--- | :--- | :--- |
+| `pages/admin/TrashPage.jsx` | El buscador lanzaba **una peticion HTTP por cada tecla** (`search` en las deps de `fetchItems`, que era dependencia del efecto) | **Debounce de 400ms** con `setTimeout` + cleanup: el input actualiza `search` al teclear, pero la peticion usa `debouncedSearch` y solo sale al dejar de escribir |
+| `pages/admin/CashClosingsAuditPage.jsx` | Mismo anti-patron que el Historico (introducido en Fase 8): `fetchClosings` con `search` en deps + efecto `[isAdmin, fetchClosings]` → peticion por tecla del buscador | Migrado al patron explicito de 41.2: funcion normal + carga inicial unica con guard `useRef` al confirmar rol admin + dropdown/calendario disparan `fetchClosings(0, overrides)` en su `onChange`; la busqueda ya solo dispara con Enter o el boton |
+
+### Archivos Modificados en esta Fase
+- `src/pages/sales/SalesHistoryPage.jsx` — Refactor completo del ciclo de carga (41.2) + campo Monto Maximo + botones Aplicar/Limpiar
+- `src/pages/admin/TrashPage.jsx` — Debounce de busqueda (400ms)
+- `src/pages/admin/CashClosingsAuditPage.jsx` — Patron de carga explicito con guard de montaje
+- `frontend/dist/` — Build de produccion regenerado

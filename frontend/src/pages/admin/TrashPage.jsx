@@ -26,8 +26,17 @@ export default function TrashPage() {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState('');
+  // Termino efectivo de busqueda: el input actualiza `search` en cada tecla,
+  // pero la peticion HTTP solo sale cuando el usuario deja de teclear 400ms
+  // (antes se lanzaba una peticion por cada caracter).
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [pagination, setPagination] = useState({ current_page: 1, last_page: 1, total: 0 });
   const [page, setPage] = useState(1);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(search), 400);
+    return () => clearTimeout(timer);
+  }, [search]);
 
   const [reasonModal, setReasonModal] = useState({ visible: false, text: '' });
   const [purgeModal, setPurgeModal] = useState({ visible: false, item: null });
@@ -38,7 +47,7 @@ export default function TrashPage() {
     setLoading(true);
     try {
       const params = { page };
-      if (search.trim()) params.search = search.trim();
+      if (debouncedSearch.trim()) params.search = debouncedSearch.trim();
       const { data } = await api.get(`/admin/trash/${type}`, { params });
       setItems(data.data.data);
       setPagination({
@@ -51,7 +60,7 @@ export default function TrashPage() {
     } finally {
       setLoading(false);
     }
-  }, [type, page, search]);
+  }, [type, page, debouncedSearch]);
 
   useEffect(() => {
     setPage(1);
