@@ -8,14 +8,12 @@ use App\Http\Requests\CashRegisterClosing\StoreCashRegisterClosingRequest;
 use App\Mail\CashRegisterClosingMail;
 use App\Models\CashRegister;
 use App\Models\CashRegisterClosing;
-use App\Models\Order;
 use App\Models\PaymentMethod;
 use App\Models\PettyCashTransaction;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Style\Alignment;
@@ -25,6 +23,10 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class CashRegisterClosingController extends Controller
 {
+    public function __construct(
+        private readonly \App\Services\CashClosingService $closingService,
+    ) {}
+
     public function current(Request $request): JsonResponse
     {
         $user = $request->user();
@@ -102,67 +104,24 @@ class CashRegisterClosingController extends Controller
             ], 422);
         }
 
-        $closing = DB::transaction(function () use ($request, $cashRegister, $user) {
-            $paymentMethods = PaymentMethod::where('status', 'active')
-                ->orderBy('name')
-                ->get();
-
-            $expectedByMethod = Order::where('cash_register_id', $cashRegister->id)
-                ->where('status', 'completed')
-                ->selectRaw('payment_method_id, SUM(total) as total')
-                ->groupBy('payment_method_id')
-                ->get()
-                ->keyBy('payment_method_id');
-
-            $declarations = $request->declarations ?? [];
-
-            $openingBalance = (float) $cashRegister->opening_balance;
-
-            $pettyCashTotal = (float) PettyCashTransaction::where('user_id', $cashRegister->user_id)
-                ->where('created_at', '>=', $cashRegister->opened_at)
-                ->sum('amount');
-
-            $breakdown    = [];
-            $salesTotal   = 0.0;
-            $declaredTotal = 0.0;
-
-            foreach ($paymentMethods as $pm) {
-                $salesAmount = (float) ($expectedByMethod[$pm->id]->total ?? 0);
-                $declared    = (float) ($declarations[$pm->id] ?? 0);
-
-                $salesTotal += $salesAmount;
-
-                $breakdown[] = [
-                    'payment_method_id' => $pm->id,
-                    'name'              => $pm->name,
-                    'slug'              => $pm->slug,
-                    'expected'          => round($salesAmount, 2),
-                    'declared'          => round($declared, 2),
-                    'difference'        => round($declared - $salesAmount, 2),
-                ];
-
-                $declaredTotal += $declared;
+        // La aritmetica del arqueo vive en CashClosingService, compartida con
+        // el cierre automatico del scheduler para que ambos cuadren identico.
+        try {
+            $closing = $this->closingService->close(
+                $cashRegister,
+                $user,
+                $request->declarations ?? [],
+            );
+        } catch (\RuntimeException $e) {
+            if (str_starts_with($e->getMessage(), 'ERR_REGISTER_ALREADY_CLOSED')) {
+                return response()->json([
+                    'status'  => 'error',
+                    'code'    => 'ERR_REGISTER_ALREADY_CLOSED',
+                    'message' => 'La caja ya fue cerrada (posiblemente por el cierre automatico de las 21:00).',
+                ], 422);
             }
-
-            $expectedTotal = round($openingBalance + $salesTotal - $pettyCashTotal, 2);
-            $differenceTotal = round($declaredTotal - $expectedTotal, 2);
-
-            $closing = CashRegisterClosing::create([
-                'cash_register_id'  => $cashRegister->id,
-                'closed_by'         => $user->id,
-                'expected_amount'   => round($expectedTotal, 2),
-                'declared_amount'   => round($declaredTotal, 2),
-                'difference_amount' => $differenceTotal,
-                'payment_breakdown' => $breakdown,
-            ]);
-
-            $cashRegister->update([
-                'closed_at'              => now(),
-                'actual_closing_balance' => round($declaredTotal, 2),
-            ]);
-
-            return $closing;
-        });
+            throw $e;
+        }
 
         $closing->load(['cashRegister.user', 'closedByUser']);
 
@@ -171,6 +130,74 @@ class CashRegisterClosingController extends Controller
             'data'     => $closing,
             'metadata' => ['message' => 'Caja cerrada exitosamente. El arqueo ha sido registrado de forma inmutable.'],
         ], 201);
+    }
+
+    /**
+     * GET /api/admin/cash-closings-audit — role:admin (exclusivo).
+     *
+     * Auditoria historica de cierres, manuales y automaticos. Vista de solo
+     * lectura por triple diseno: este controlador no expone update/delete
+     * para cierres, el modelo CashRegisterClosing lanza RuntimeException ante
+     * cualquier intento de mutacion, y no existe ninguna ruta de escritura.
+     */
+    public function audit(Request $request): JsonResponse
+    {
+        $query = CashRegisterClosing::with(['cashRegister.user:id,name,email', 'closedByUser:id,name,email'])
+            ->orderByDesc('created_at');
+
+        if ($request->filled('date_from')) {
+            $from = Carbon::parse($request->date_from, 'America/Mexico_City')->startOfDay();
+            $query->where('created_at', '>=', $from);
+        }
+        if ($request->filled('date_to')) {
+            $to = Carbon::parse($request->date_to, 'America/Mexico_City')->endOfDay();
+            $query->where('created_at', '<=', $to);
+        }
+        if ($request->filled('type') && in_array($request->type, ['manual', 'automated'], true)) {
+            $query->where('is_automated', $request->type === 'automated');
+        }
+        if ($request->filled('difference') && $request->difference === 'nonzero') {
+            $query->where('difference_amount', '!=', 0);
+        }
+        if ($request->filled('search')) {
+            $term = $request->search;
+            $query->whereHas('cashRegister.user', fn ($q) => $q
+                ->where('name', 'ilike', "%{$term}%")
+                ->orWhere('email', 'ilike', "%{$term}%"));
+        }
+
+        $closings = $query->paginate($request->input('per_page', 20));
+
+        return response()->json([
+            'status' => 'success',
+            'data' => $closings->items(),
+            'metadata' => [
+                'current_page' => $closings->currentPage(),
+                'last_page' => $closings->lastPage(),
+                'total' => $closings->total(),
+                'summary' => [
+                    'automated_count' => CashRegisterClosing::where('is_automated', true)->count(),
+                    'manual_count' => CashRegisterClosing::where('is_automated', false)->count(),
+                    'with_difference_count' => CashRegisterClosing::where('difference_amount', '!=', 0)->count(),
+                ],
+            ],
+        ]);
+    }
+
+    /**
+     * GET /api/admin/cash-closings-audit/{closing} — role:admin.
+     *
+     * Radiografia forense completa de un cierre: desglose por metodo,
+     * declarado vs calculado, responsable (humano o System Job) y la caja.
+     */
+    public function auditShow(CashRegisterClosing $closing): JsonResponse
+    {
+        $closing->load(['cashRegister.user:id,name,email', 'closedByUser:id,name,email']);
+
+        return response()->json([
+            'status' => 'success',
+            'data' => $closing,
+        ]);
     }
 
     public function exportExcel(Request $request): StreamedResponse

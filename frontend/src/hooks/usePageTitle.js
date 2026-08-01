@@ -22,6 +22,7 @@ const PAGE_TITLES = {
   '/admin/notificaciones/plantillas': 'Plantillas de Correo',
   '/admin/papelera': 'Papelera Global',
   '/admin/cierres': 'Cierres de Caja',
+  '/admin/cash-closings-audit': 'Auditoria de Cierres',
   '/profile': 'Mi Perfil',
   '/profile/notifications': 'Preferencias de Notificaciones',
   '/login': 'Iniciar Sesion',

@@ -15,6 +15,22 @@ class User extends Authenticatable
 {
     use HasFactory, HasUuids, HasApiTokens, Notifiable, AdvancedSoftDeletes;
 
+    /**
+     * Identidad no-humana bajo la que firman los procesos automatizados
+     * (scheduler). Sembrada por migracion; sin rol y sin password conocido.
+     */
+    public const SYSTEM_EMAIL = 'system@cronos.pos';
+
+    public static function systemProcess(): self
+    {
+        return static::where('email', self::SYSTEM_EMAIL)->firstOrFail();
+    }
+
+    public function isSystemProcess(): bool
+    {
+        return $this->email === self::SYSTEM_EMAIL;
+    }
+
     protected $fillable = [
         'name',
         'email',

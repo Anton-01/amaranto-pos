@@ -14,6 +14,7 @@ use App\Http\Controllers\Catalog\PaymentMethodController;
 use App\Http\Controllers\Catalog\ProductController;
 use App\Http\Controllers\Catalog\ProductImageController;
 use App\Http\Controllers\Dashboard\DashboardController;
+use App\Http\Controllers\Dashboard\MonthlyAnalyticsController;
 use App\Http\Controllers\Dining\TableController;
 use App\Http\Controllers\Dining\TableSessionController;
 use App\Http\Controllers\Finance\AnalyticsController;
@@ -21,6 +22,7 @@ use App\Http\Controllers\Finance\CashRegisterClosingController;
 use App\Http\Controllers\Finance\CashRegisterController;
 use App\Http\Controllers\Finance\PettyCashController;
 use App\Http\Controllers\Logistics\StockMovementController;
+use App\Http\Controllers\Notifications\SystemNotificationController;
 use App\Http\Controllers\Profile\NotificationPreferenceController;
 use App\Http\Controllers\Profile\ProfileController;
 use App\Http\Controllers\Promotion\PromotionController;
@@ -132,6 +134,20 @@ Route::middleware(['auth:sanctum', 'user.active'])->group(function () {
         Route::get('/stats', [DashboardController::class, 'stats']);
         Route::get('/hourly-trend', [DashboardController::class, 'hourlyTrend']);
         Route::get('/top-products', [DashboardController::class, 'topProducts']);
+        Route::get('/monthly-analytics', MonthlyAnalyticsController::class)
+            ->middleware('role:admin,manager');
+    });
+
+    // Notificaciones estructuradas por tag (campana del header)
+    Route::prefix('notifications')->group(function () {
+        Route::get('/', [SystemNotificationController::class, 'index']);
+        Route::post('/{notification}/read', [SystemNotificationController::class, 'markRead']);
+    });
+
+    // Auditoria inmutable de cierres — EXCLUSIVA de administradores
+    Route::middleware('role:admin')->group(function () {
+        Route::get('admin/cash-closings-audit', [CashRegisterClosingController::class, 'audit']);
+        Route::get('admin/cash-closings-audit/{closing}', [CashRegisterClosingController::class, 'auditShow']);
     });
 
     Route::prefix('stock-movements')->group(function () {

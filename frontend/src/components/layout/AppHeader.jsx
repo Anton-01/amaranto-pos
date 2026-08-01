@@ -4,6 +4,7 @@ import { Dialog } from 'primereact/dialog';
 import { DataTable } from 'primereact/datatable';
 import { Column } from 'primereact/column';
 import UserProfileDropdown from './UserProfileDropdown';
+import NotificationBell from '../notifications/NotificationBell';
 import useOnlineStatus from '../../hooks/useOnlineStatus';
 import api from '../../api/axios';
 
@@ -27,6 +28,10 @@ const pageNames = {
   '/admin/configuracion': 'Configuracion del Sistema',
   '/admin/notificaciones/plantillas': 'Plantillas de Correo',
   '/profile': 'Mi Perfil',
+  '/mesas': 'Plano de Mesas',
+  '/admin/mesas': 'Catálogo de Mesas',
+  '/admin/cierres': 'Cierres de Caja',
+  '/admin/cash-closings-audit': 'Auditoría de Cierres',
 };
 
 const fmt = (v) => `$${Number(v).toLocaleString('es-MX', { minimumFractionDigits: 2 })}`;
@@ -41,7 +46,6 @@ export default function AppHeader({ onToggleSidebar }) {
   const location = useLocation();
   const isOnline = useOnlineStatus();
   const [todaySales, setTodaySales] = useState(null);
-  const [notificationCount] = useState(0);
   const [showSalesModal, setShowSalesModal] = useState(false);
   const [dailySummary, setDailySummary] = useState(null);
   const [summaryLoading, setSummaryLoading] = useState(false);
@@ -129,19 +133,7 @@ export default function AppHeader({ onToggleSidebar }) {
             </svg>
           </button>
 
-          <button
-            className="relative flex h-9 w-9 cursor-pointer items-center justify-center rounded-lg text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700"
-            title="Notificaciones"
-          >
-            <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.75} stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M14.857 17.082a23.848 23.848 0 0 0 5.454-1.31A8.967 8.967 0 0 1 18 9.75V9A6 6 0 0 0 6 9v.75a8.967 8.967 0 0 1-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 0 1-5.714 0m5.714 0a3 3 0 1 1-5.714 0" />
-            </svg>
-            {notificationCount > 0 && (
-              <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-rose-500 px-1 text-[10px] font-bold text-white">
-                {notificationCount > 9 ? '9+' : notificationCount}
-              </span>
-            )}
-          </button>
+          <NotificationBell />
 
           <div className="mx-1 h-6 w-px bg-slate-200" />
 

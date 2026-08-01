@@ -25,6 +25,7 @@ import RolesPermissionsPage from './pages/admin/RolesPermissionsPage';
 import MailTemplatesPage from './pages/admin/MailTemplatesPage';
 import TablesFloorPlanPage from './pages/dining/TablesFloorPlanPage';
 import TablesPage from './pages/admin/TablesPage';
+import CashClosingsAuditPage from './pages/admin/CashClosingsAuditPage';
 
 function ProtectedRoute({ children }) {
   const { user, loading } = useAuth();
@@ -105,6 +106,7 @@ export default function App() {
           <Route path="/admin/papelera" element={<ProtectedRoute><TrashPage /></ProtectedRoute>} />
           <Route path="/admin/roles-permisos" element={<ProtectedRoute><RolesPermissionsPage /></ProtectedRoute>} />
           <Route path="/admin/cierres" element={<ProtectedRoute><CashRegisterClosingsPage /></ProtectedRoute>} />
+          <Route path="/admin/cash-closings-audit" element={<ProtectedRoute><CashClosingsAuditPage /></ProtectedRoute>} />
           <Route path="/admin/notificaciones/plantillas" element={<ProtectedRoute><MailTemplatesPage /></ProtectedRoute>} />
           <Route path="*" element={<Navigate to="/login" replace />} />
         </Routes>

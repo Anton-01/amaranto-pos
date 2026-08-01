@@ -6,7 +6,8 @@
 - Base de Datos: Managed PostgreSQL (DigitalOcean)
 - Cache / Colas: Redis 7 Alpine (cache global + queue worker)
 - WebSockets: Laravel Reverb (puerto 8080, tiempo real)
-- Estado del Proyecto: [🟢 FASE 7: SISTEMA DE GESTIÓN DE MESAS (DINE-IN) IMPLEMENTADO] — Comedor operativo: plano de mesas, cuentas vivas transaccionales, comandas incrementales y cobro con liberación automática (ver sección 39).
+- Estado del Proyecto: [🟢 FASE 8: SISTEMA ENTERPRISE DE CIERRES AUTOMÁTICOS, NOTIFICACIONES TAGGEADAS, ANALÍTICA FINANCIERA Y AUDITORÍA INMUTABLE COMPLETADO] — Scheduler de cierre de caja 21:00 bajo usuario de sistema, notificaciones estructuradas por tags JSON con modal de plantillas dinámicas, modal de analítica financiera mensual con export CSV, y auditoría forense de cierres admin-only (ver sección 40).
+- Fase previa: [🟢 FASE 7: SISTEMA DE GESTIÓN DE MESAS (DINE-IN) IMPLEMENTADO] — Comedor operativo: plano de mesas, cuentas vivas transaccionales, comandas incrementales y cobro con liberación automática (ver sección 39).
 - Estado de Infraestructura: [🟢 FASE 7: DEPLOY ÁGIL Y DOCKER OPTIMIZADO] — Docker Compose multi-contenedor operativo (4 servicios: backend, frontend, postgres, redis).
 - Despliegue Produccion: [🟢 FASE 7: DEPLOY ÁGIL Y DOCKER OPTIMIZADO] — DigitalOcean Droplet + Managed PostgreSQL, imagenes base pre-compiladas (serversideup/php:8.4-fpm-alpine + nginx:alpine), frontend Vite pre-construido en local (frontend/dist versionado), Nginx proxy inverso HTTPS/WSS, Certbot SSL, deploy.sh automatizado. Tiempo estimado de build en el Droplet: < 2 minutos (antes: ~82 min).
 
@@ -47,6 +48,10 @@
 | Estatus Inline (Toggle Switch) | [🟢 COMPLETADO Y OPERATIVO] | [🟢 COMPLETADO Y OPERATIVO] | InputSwitch en DataTables (Productos, Categorías, Promociones, Usuarios), PATCH endpoints, actualización optimista con rollback, Emerald/Slate CSS, etiquetas dinámicas (Activo/Inactivo) bajo cada switch, Toast éxito/error en cada mutación |
 | Selector de Impresoras Locales (QZ Tray) | [🟢 COMPLETADO Y OPERATIVO] | [🟢 COMPLETADO Y OPERATIVO] | Migrado a Cronos POS Agent (ver secciones 34 y 37). PrinterSetupPanel con botón "Detectar Agente Local" (GET /api/health), listado automático de impresoras tras detección, campo de Token de Seguridad, consulta MANUAL de cola (sin polling), persistencia localStorage (cronos_active_printer / cronos_agent_token) |
 | Confirmación de Impresión Post-Venta | N/A | [🟢 COMPLETADO Y OPERATIVO] | PrintConfirmationModal con resumen visual del ticket (folio, fecha, productos, totales, método de pago, agradecimiento), botones "Imprimir Ticket" / "Omitir — No imprimir" (cero peticiones HTTP al agente al omitir) |
+| Cierre Automático de Caja (Scheduler 21:00) | [🟢 FASE 8: COMPLETADO] | [🟢 FASE 8: COMPLETADO] | Comando `cronos:auto-close-registers` diario 21:00 (America/Mexico_City), usuario System Automated Process, ledger insert-only, notificación a admins — ver sección 40 |
+| Notificaciones Estructuradas por Tags JSON | [🟢 FASE 8: COMPLETADO] | [🟢 FASE 8: COMPLETADO] | Tabla `system_notifications` (data JSONB inmutable), campana del header conectada con badge y polling 60s, modal de plantillas dinámicas por `type` — ver sección 40 |
+| Analítica Financiera Mensual (Dashboard) | [🟢 FASE 8: COMPLETADO] | [🟢 FASE 8: COMPLETADO] | Endpoint agregado role:admin,manager (totales, comparativa mensual, métodos de pago, top productos, horas pico, tendencia diaria), modal con skeleton + export CSV — ver sección 40 |
+| Auditoría Histórica de Cierres (Admin Only) | [🟢 FASE 8: COMPLETADO] | [🟢 FASE 8: COMPLETADO] | `/admin/cash-closings-audit` con middleware role:admin, tabla lazy paginada con filtros, radiografía forense de solo lectura, triple candado de inmutabilidad — ver sección 40 |
 | Sistema de Gestión de Mesas (Dine-in) | [🟢 FASE 7: IMPLEMENTADO] | [🟢 FASE 7: IMPLEMENTADO] | Tablas `tables` y `table_sessions`, orden base en estado `open`, 4 endpoints transaccionales con `lockForUpdate` + índice único parcial, botón de mesas a la izquierda del reloj en el header del POS, catálogo en sidebar de Administración, trazabilidad mesa/mesero en histórico y ticket — ver sección 39 |
 | Optimizacion Modal de Cobro (Rendimiento) | [🟢 COMPLETADO Y OPERATIVO] | [🟢 COMPLETADO Y OPERATIVO] | Catálogo de métodos de pago servido desde Redis (`Cache::remember`, TTL 60 min, invalidación automática en alta/edición/baja); input de "Dinero Recibido" con sanitización estricta en `onChange` (sin `onBlur`), cálculo del cambio y habilitación de "Confirmar Cobro" en tiempo real desde la primera tecla |
 
@@ -3189,4 +3194,172 @@ Entrada **"Mesas"** en el grupo **ADMINISTRACIÓN** del sidebar. DataTable con n
 - `src/pages/sales/SalesHistoryPage.jsx` — Columna "Origen", panel de trazabilidad de comedor y columna "Comandado" en el detalle
 - `src/App.jsx` — Rutas `/mesas` y `/admin/mesas`
 - `src/hooks/usePageTitle.js` — Titulos de las dos vistas nuevas
+- `frontend/dist/` — Build de produccion regenerado
+
+## 40. FASE 8: SISTEMA ENTERPRISE — CIERRES AUTOMÁTICOS, NOTIFICACIONES TAGGEADAS, ANALÍTICA FINANCIERA Y AUDITORÍA INMUTABLE [🟢 COMPLETADO Y OPERATIVO]
+
+Suite corporativa de cuatro módulos entrelazados: el scheduler cierra las cajas olvidadas a las 21:00 bajo una identidad de sistema, ese cierre dispara una notificación estructurada que la campana del header renderiza con plantilla propia, y todo cierre —humano o automático— queda expuesto en una vista de auditoría forense exclusiva de administradores. La analítica financiera mensual completa la toma de decisiones desde el Dashboard.
+
+### 40.1 Motor de Cierre Automatizado de Caja (Laravel Scheduler)
+
+#### Estructura del Schedule (`routes/console.php`)
+```php
+Schedule::command('cronos:auto-close-registers')
+    ->dailyAt('21:00')
+    ->timezone('America/Mexico_City')
+    ->withoutOverlapping()
+    ->onOneServer();
+```
+El cron de produccion ya invoca `php artisan schedule:run` cada minuto (FASE 7, crontab del Droplet), por lo que el schedule engancha sin cambios de infraestructura. `withoutOverlapping` evita dobles corridas si una ejecucion se alarga; `onOneServer` cubre despliegues multi-contenedor.
+
+#### Comando: `app/Console/Commands/AutoCloseCashRegisters.php`
+- Firma: `cronos:auto-close-registers {--dry-run}` (el flag lista las cajas candidatas sin cerrar nada).
+- **Alcance**: toda caja con `closed_at IS NULL` y sin arqueo (`whereDoesntHave('closing')`) — incluidas las **rezagadas de dias anteriores** que un cajero olvido cerrar, exactamente para evitar inconsistencias por dias sin cierre.
+- **Transaccionalidad**: cada caja se cierra en su **propia** `DB::transaction` con `lockForUpdate` sobre la fila de la caja (dentro de `CashClosingService::close`). Un fallo en una caja no bloquea el cierre de las demas, y la carrera contra un cierre manual simultaneo (cajero cerrando a las 20:59) se resuelve limpiamente: el perdedor recibe `ERR_REGISTER_ALREADY_CLOSED` y el comando la omite sin duplicar.
+- **Identidad**: firma como usuario **System Automated Process** (`User::systemProcess()`).
+- **Convencion contable del cierre automatico**: el sistema no cuenta dinero fisico, por lo que asienta `declared = expected` (diferencia declarada cero) y lo deja explicito en `notes`: *"Montos declarados no verificados fisicamente... Requiere conciliacion del efectivo al siguiente turno"*. La marca `is_automated = true` distingue estos cierres en toda la auditoria.
+- Al terminar, si cerro al menos una caja, emite la notificacion `auto_cash_closing` a todos los administradores activos.
+
+#### Usuario de Sistema (migracion `2026_08_01_000003_create_system_process_user`)
+- `system@cronos.pos` / "System Automated Process". Sembrado por **migracion idempotente** (no seeder) para que exista tambien en las bases de produccion ya desplegadas.
+- Inoperable por diseño: password aleatorio de 64 caracteres que nadie conoce, **sin rol asignado** (el RBAC le niega todo endpoint), sin 2FA. Solo existe como FK de auditoria (`closed_by`).
+- Constantes en el modelo: `User::SYSTEM_EMAIL`, `User::systemProcess()`, `User::isSystemProcess()`.
+- El `down()` de la migracion NO lo elimina: los cierres historicos lo referencian con FK `restrict`.
+
+#### Servicio: `App\Services\CashClosingService` (motor unico del arqueo)
+La aritmetica del arqueo (`Esperado = Fondo + Ventas('completed') − Caja Chica`, breakdown por metodo de pago) se **extrajo** de `CashRegisterClosingController::store` a este servicio, compartido por el cierre manual y el automatico — la misma filosofia que `OrderCalculator` en Fase 7: dos copias de la formula es como se llega a un arqueo que no cuadra.
+- `snapshot(CashRegister)` — radiografia financiera sin efectos secundarios.
+- `close(CashRegister, User $closedBy, ?array $declarations, bool $automated, ?string $notes)` — transaccional con `lockForUpdate`; `declarations = null` activa la convencion del cierre automatico. Lanza `ERR_REGISTER_ALREADY_CLOSED` si pierde la carrera.
+- El controller manual ahora traduce esa excepcion al catalogo corporativo con el mensaje "posiblemente por el cierre automatico de las 21:00".
+
+#### Inmutabilidad tipo Ledger (insert-only)
+`cash_register_closings` ya bloqueaba `updating`/`deleting` a nivel Eloquent con `RuntimeException` (`ERR_CLOSING_IMMUTABLE`). Fase 8 agrega las columnas `is_automated` (boolean, indexada) y `notes` (text, nace con el registro y nunca se edita) via migracion `2026_08_01_000002`.
+
+### 40.2 Sistema de Notificaciones Estructuradas por Tags JSON
+
+#### Tabla `system_notifications` (migracion `2026_08_01_000001`)
+| Columna | Tipo | Notas |
+| :--- | :--- | :--- |
+| `id` | UUID PK | |
+| `user_id` | UUID FK → users | `cascade` |
+| `type` | VARCHAR(60) indexado | **Etiqueta de renderizado**: el frontend la evalua para elegir plantilla |
+| `data` | JSONB | **Snapshot inmutable** del evento; nunca se reconstruye desde tablas vivas |
+| `read_at` | TIMESTAMPTZ NULL | Acuse de lectura — la UNICA columna mutable |
+| `created_at` | TIMESTAMPTZ | |
+
+Indice parcial `system_notifications_unread ON (user_id) WHERE read_at IS NULL`: el badge de no-leidas (la consulta mas frecuente) se sirve sin recorrer el historico leido.
+
+#### Modelo `SystemNotification` — contrato de inmutabilidad
+El guard de `booted()` permite el update **solo si** las columnas dirty ⊆ `{read_at}`; cualquier otro update y todo delete lanzan `ERR_NOTIFICATION_IMMUTABLE`. Helper `notifyAdmins(type, data)` emite a todos los admins activos.
+
+#### Esquema JSON del tag `auto_cash_closing`
+```json
+{
+  "executed_at": "2026-08-01T21:00:03-06:00",
+  "executed_by": "System Automated Process",
+  "registers_closed": 2,
+  "registers_failed": 0,
+  "total_expected": 15230.50,
+  "total_declared": 15230.50,
+  "total_difference": 0,
+  "closings": [
+    {
+      "closing_id": "uuid", "cash_register_id": "uuid",
+      "register_folio": "A1B2C3D4",
+      "operator_id": "uuid", "operator_name": "Juan Perez",
+      "opened_at": "2026-08-01T09:12:00-06:00",
+      "opening_balance": 500.00,
+      "expected_amount": 7615.25, "declared_amount": 7615.25,
+      "difference_amount": 0,
+      "was_stale": false
+    }
+  ]
+}
+```
+`was_stale = true` marca cajas rezagadas de dias anteriores.
+
+#### Endpoints REST
+| Metodo | Ruta | Middleware | Descripcion |
+| :--- | :--- | :--- | :--- |
+| GET | /api/notifications | auth, user.active | `{unread[≤50], recent[≤10 leidas], unread_count}` del usuario autenticado |
+| POST | /api/notifications/{id}/read | auth, user.active | Marca leida; **403 `ERR_NOTIFICATION_FORBIDDEN`** si la notificacion es de otro usuario |
+
+#### Frontend — Campana conectada y Modal de Plantillas Dinamicas
+- **`NotificationBell`** (header): reemplaza el boton muerto. Badge de no-leidas, polling cada 60s (mismo cadence que las quick-stats del header) + refresh al abrir. Panel OverlayPanel con la lista catalogada por tipo y **chips de filtro por tag**.
+- **"Ver Detalles"** marca la notificacion como leida y abre **`NotificationDetailModal`**, que evalua `type` contra el **registro de tipos** (`notificationTypes.js`) e inyecta dinamicamente la plantilla correspondiente.
+- **Registro extensible**: agregar un nuevo tipo = registrar `{label, icon, chip, iconBox, summary(data), Detail}` en `NOTIFICATION_TYPES`; la campana y la modal no se tocan. Tipo desconocido → `DEFAULT_TYPE` con render generico key-value (nunca rompe la campana).
+- Plantilla `auto_cash_closing` (`NotificationDetailTemplates.jsx`): KPIs (cajas cerradas / total esperado / fallidas), tabla por caja (folio, operador, esperado, diferencia, tag "DIA PREVIO" para rezagadas) y banner de advertencia de conciliacion.
+
+### 40.3 Modal de Analitica Financiera Mensual (Dashboard)
+
+#### Backend — `GET /api/dashboard/monthly-analytics` (role:admin,manager)
+Controlador invocable `MonthlyAnalyticsController`. Parametro `month` (`Y-m`, default mes corriente; el dia se ancla explicitamente al 1 para evitar el desborde de `createFromFormat` a fin de mes). Una sola respuesta con todas las agregaciones (PostgreSQL directo, `status='completed'`, hora local `America/Mexico_City`):
+- `totals` — ventas totales, neto sin IVA, IVA, descuentos, ordenes, ticket promedio.
+- `previous` + `comparison` — mismos totales del mes anterior y deltas porcentuales (null si no hay base de comparacion).
+- `by_payment_method` — distribucion por metodo (ordenes + total).
+- `top_products` — top 10 por ingreso.
+- `peak_hours` — 24 horas del dia con ordenes/total (horas pico).
+- `daily_trend` — serie diaria del mes.
+
+#### Frontend — `MonthlyAnalyticsModal`
+- Boton destacado (gradiente indigo→violeta) en la cabecera del Dashboard, **visible solo para admin/manager** (`user.roles`), ademas del candado backend.
+- **Estado de carga robusto**: spinner animado + **esqueleto visual** (4 KPI placeholders + 2 bloques de chart + 1 tabla, `animate-pulse`) para latencias con volumen alto.
+- Navegacion de meses (← →, bloqueado a futuro), KPIs con chips de delta (verde sube / rojo baja), PieChart de metodos de pago, BarChart de horas pico, LineChart de tendencia diaria, tabla top 10 productos.
+- **"Exportar Reporte"**: CSV estructurado generado client-side desde los mismos datos mostrados (lo que exportas es lo que ves), con BOM UTF-8 para Excel. Secciones: metricas + comparativa, distribucion por metodo, top productos, ventas por hora.
+
+### 40.4 Vista de Auditoria Historica de Cierres (Admin Only)
+
+#### Politica de seguridad (doble candado + triple inmutabilidad)
+| Capa | Mecanismo |
+| :--- | :--- |
+| Backend | Rutas `GET /api/admin/cash-closings-audit[/{closing}]` bajo middleware **`role:admin`** (exclusivo: manager NO entra) |
+| Frontend | `/admin/cash-closings-audit` redirige a `/dashboard` a cualquier no-admin; entrada del sidebar con flag `adminOnly` visible solo para admin |
+| Inmutabilidad 1 | El controlador no expone NINGUNA ruta de escritura sobre cierres |
+| Inmutabilidad 2 | El modelo `CashRegisterClosing` lanza `RuntimeException` ante todo update/delete |
+| Inmutabilidad 3 | La UI es de solo lectura: no existe boton de edicion ni borrado; sello visual "REGISTRO INMUTABLE" |
+
+#### Endpoint `audit()` — filtros y resumen
+`date_from`/`date_to`, `type` (`manual`/`automated`), `difference=nonzero`, `search` (nombre/email del operador, ilike). Paginado server-side. `metadata.summary` con conteos globales: automaticos, manuales y con diferencia.
+
+#### Frontend — `CashClosingsAuditPage`
+- DataTable **lazy paginada** con: folio de caja, fecha/hora, operador, "Cerrado por" (humano con email, o **System Job** con icono de engrane y leyenda "Proceso automatizado 21:00"), tag AUTOMÁTICO/MANUAL, esperado, declarado, diferencia coloreada (rojo faltante / verde sobrante).
+- Chips de resumen global y filtros (tipo, rango de fechas, busqueda de operador).
+- Click en fila → **modal de radiografia forense** (solo lectura): dinero calculado vs declarado vs diferencia en tarjetas, desglose completo por metodo de pago desde el JSONB `payment_breakdown`, responsable, y la nota del sistema si fue cierre automatico.
+
+### Sidebar con RBAC visual
+`Sidebar.jsx` ahora filtra items con flag `adminOnly` contra `user.roles` (via `useAuth`). Primera entrada que lo usa: "Auditoría de Cierres" en el grupo LOGÍSTICA.
+
+### Archivos Creados en esta Fase
+**Backend (nuevos):**
+- `app/Console/Commands/AutoCloseCashRegisters.php`
+- `app/Services/CashClosingService.php`
+- `app/Models/SystemNotification.php`
+- `app/Http/Controllers/Notifications/SystemNotificationController.php`
+- `app/Http/Controllers/Dashboard/MonthlyAnalyticsController.php`
+- `database/migrations/2026_08_01_000001_create_system_notifications_table.php`
+- `database/migrations/2026_08_01_000002_add_automation_columns_to_cash_register_closings.php`
+- `database/migrations/2026_08_01_000003_create_system_process_user.php`
+
+**Frontend (nuevos):**
+- `src/components/notifications/NotificationBell.jsx`
+- `src/components/notifications/NotificationDetailModal.jsx`
+- `src/components/notifications/NotificationDetailTemplates.jsx`
+- `src/components/notifications/notificationTypes.js`
+- `src/components/dashboard/MonthlyAnalyticsModal.jsx`
+- `src/pages/admin/CashClosingsAuditPage.jsx`
+
+### Archivos Modificados en esta Fase
+**Backend (modificados):**
+- `routes/console.php` — Schedule del cierre automatico (21:00, timezone, withoutOverlapping, onOneServer)
+- `routes/api.php` — Rutas de notificaciones, analitica mensual (role:admin,manager) y auditoria (role:admin)
+- `app/Models/User.php` — `SYSTEM_EMAIL`, `systemProcess()`, `isSystemProcess()`
+- `app/Models/CashRegisterClosing.php` — `is_automated` y `notes` en fillable/casts
+- `app/Http/Controllers/Finance/CashRegisterClosingController.php` — `store()` delegado a `CashClosingService` (con manejo de `ERR_REGISTER_ALREADY_CLOSED`), nuevos `audit()` y `auditShow()`
+
+**Frontend (modificados):**
+- `src/components/layout/AppHeader.jsx` — Boton muerto reemplazado por `NotificationBell`; titulos de rutas nuevas
+- `src/components/layout/Sidebar.jsx` — Filtrado `adminOnly` por rol + entrada "Auditoría de Cierres"
+- `src/pages/DashboardPage.jsx` — Boton destacado "Analítica Financiera" (gate admin/manager) + montaje de la modal
+- `src/App.jsx` — Ruta `/admin/cash-closings-audit`
+- `src/hooks/usePageTitle.js` — Titulo de la vista de auditoria
 - `frontend/dist/` — Build de produccion regenerado
