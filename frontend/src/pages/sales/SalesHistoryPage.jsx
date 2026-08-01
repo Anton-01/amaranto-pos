@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { DataTable } from 'primereact/datatable';
 import { Column } from 'primereact/column';
 import { Button } from 'primereact/button';
@@ -79,45 +79,77 @@ export default function SalesHistoryPage() {
     }
   }, [isAdminOrManager]);
 
-  const getDateParams = useCallback(() => {
-    if (dateRange && dateRange[0]) {
-      const from = dateRange[0].toISOString().split('T')[0];
-      const to = dateRange[1] ? dateRange[1].toISOString().split('T')[0] : from;
-      return { date_from: from, date_to: to };
-    }
-    const today = new Date();
-    const todayStr = today.toISOString().split('T')[0];
-    if (quickFilter === 'today') {
-      return { date_from: todayStr, date_to: todayStr };
-    }
-    if (quickFilter === 'week') {
-      const d = new Date(today);
-      d.setDate(d.getDate() - 7);
-      return { date_from: d.toISOString().split('T')[0], date_to: todayStr };
-    }
-    if (quickFilter === 'month') {
-      const d = new Date(today);
-      d.setMonth(d.getMonth() - 1);
-      return { date_from: d.toISOString().split('T')[0], date_to: todayStr };
-    }
-    return {};
-  }, [quickFilter, dateRange]);
+  /**
+   * Construye los parametros de consulta desde el estado actual de filtros.
+   *
+   * `overrides` permite a los handlers pasar el valor recien elegido (los
+   * setters de React aun no se reflejan en el estado durante el mismo evento).
+   * Es una funcion normal, NO un useCallback: su identidad no participa en
+   * ningun useEffect, asi que recrearla por render es gratis e inocuo.
+   */
+  const buildParams = (overrides = {}) => {
+    const f = {
+      quickFilter,
+      dateRange,
+      selectedPaymentMethod,
+      selectedUser,
+      totalMin,
+      totalMax,
+      selectedStatus,
+      ...overrides,
+    };
 
-  const fetchOrders = useCallback(async (pageNum = 0) => {
+    const params = {};
+
+    if (f.dateRange && f.dateRange[0]) {
+      const from = f.dateRange[0].toISOString().split('T')[0];
+      params.date_from = from;
+      params.date_to = f.dateRange[1] ? f.dateRange[1].toISOString().split('T')[0] : from;
+    } else if (f.quickFilter) {
+      const today = new Date();
+      const todayStr = today.toISOString().split('T')[0];
+      if (f.quickFilter === 'today') {
+        params.date_from = todayStr;
+        params.date_to = todayStr;
+      } else {
+        const d = new Date(today);
+        if (f.quickFilter === 'week') d.setDate(d.getDate() - 7);
+        else d.setMonth(d.getMonth() - 1);
+        params.date_from = d.toISOString().split('T')[0];
+        params.date_to = todayStr;
+      }
+    }
+
+    if (f.selectedPaymentMethod) params.payment_method_id = f.selectedPaymentMethod;
+    if (f.selectedUser) params.user_id = f.selectedUser;
+    if (f.totalMin != null) params.total_min = f.totalMin;
+    if (f.totalMax != null) params.total_max = f.totalMax;
+    if (f.selectedStatus) params.status = f.selectedStatus;
+
+    return params;
+  };
+
+  /**
+   * Unica via de carga de ordenes. Se invoca EXPLICITAMENTE: al montar (una
+   * vez), al paginar, al aplicar un filtro manual o tras cancelar una orden.
+   *
+   * Antes vivia en un useCallback cuya identidad dependia de 8 estados y era
+   * dependencia de un useEffect: cualquier render que recreara esa cadena
+   * re-disparaba la peticion, y la peticion misma provocaba renders
+   * (setLoading/setOrders), cerrando el ciclo fetch → render → nueva
+   * identidad → fetch. Ademas, cada tecla en los montos recreaba el callback
+   * y lanzaba una peticion por digito. Ese acoplamiento reactivo se elimino.
+   */
+  const fetchOrders = async (pageNum = 0, overrides = {}) => {
     setLoading(true);
     try {
-      const params = {
-        ...getDateParams(),
-        page: pageNum + 1,
-        per_page: perPage,
-      };
-      if (selectedPaymentMethod) params.payment_method_id = selectedPaymentMethod;
-      if (selectedUser) params.user_id = selectedUser;
-      if (totalMin != null) params.total_min = totalMin;
-      if (totalMax != null) params.total_max = totalMax;
-      if (selectedStatus) params.status = selectedStatus;
-
-      const res = await api.get('/orders', { params });
+      const res = await api.get('/orders', {
+        params: {
+          ...buildParams(overrides),
+          page: pageNum + 1,
+          per_page: perPage,
+        },
+      });
       setOrders(res.data.data);
       setTotalRecords(res.data.metadata.total);
     } catch {
@@ -125,12 +157,43 @@ export default function SalesHistoryPage() {
     } finally {
       setLoading(false);
     }
-  }, [getDateParams, perPage, selectedPaymentMethod, selectedUser, totalMin, totalMax, selectedStatus]);
+  };
 
+  // Carga inicial: estrictamente UNA peticion al montar la vista. El ref
+  // blinda contra el doble montaje de StrictMode en desarrollo y contra
+  // cualquier re-render posterior: este efecto jamas vuelve a pedir datos.
+  const didInitialFetch = useRef(false);
   useEffect(() => {
-    setPage(0);
+    if (didInitialFetch.current) return;
+    didInitialFetch.current = true;
     fetchOrders(0);
-  }, [fetchOrders]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /** Aplica filtros con los valores recien elegidos y regresa a la pagina 1. */
+  const applyFilters = (overrides = {}) => {
+    setPage(0);
+    fetchOrders(0, overrides);
+  };
+
+  const clearAdvancedFilters = () => {
+    setDateRange(null);
+    setSelectedPaymentMethod(null);
+    setSelectedUser(null);
+    setTotalMin(null);
+    setTotalMax(null);
+    setSelectedStatus(null);
+    setQuickFilter('today');
+    applyFilters({
+      dateRange: null,
+      selectedPaymentMethod: null,
+      selectedUser: null,
+      totalMin: null,
+      totalMax: null,
+      selectedStatus: null,
+      quickFilter: 'today',
+    });
+  };
 
   const onPageChange = (e) => {
     const newPage = e.first / perPage;
@@ -222,12 +285,8 @@ export default function SalesHistoryPage() {
   const handleExport = async () => {
     setExporting(true);
     try {
-      const params = { ...getDateParams() };
-      if (selectedPaymentMethod) params.payment_method_id = selectedPaymentMethod;
-      if (selectedUser) params.user_id = selectedUser;
-      if (totalMin != null) params.total_min = totalMin;
-      if (totalMax != null) params.total_max = totalMax;
-      if (selectedStatus) params.status = selectedStatus;
+      // El Excel exporta exactamente lo que la tabla esta filtrando.
+      const params = buildParams();
 
       const res = await api.get('/sales/export', { params, responseType: 'blob' });
       const url = window.URL.createObjectURL(new Blob([res.data]));
@@ -269,6 +328,20 @@ export default function SalesHistoryPage() {
 
   const vendorTemplate = (row) => (
     <span className="text-sm text-slate-700">{row.cash_register?.user?.name || 'N/A'}</span>
+  );
+
+  /** Distingue de un vistazo la venta de comedor de la de mostrador. */
+  const originTemplate = (row) => (
+    row.table_name_at_sale ? (
+      <div className="text-sm">
+        <p className="font-medium text-slate-800">{row.table_name_at_sale}</p>
+        {row.waiter_name_at_sale && (
+          <p className="text-xs text-slate-500">{row.waiter_name_at_sale}</p>
+        )}
+      </div>
+    ) : (
+      <span className="text-xs text-slate-400">Mostrador</span>
+    )
   );
 
   const paymentTemplate = (row) => (
@@ -347,7 +420,15 @@ export default function SalesHistoryPage() {
       <div className="mb-4 flex flex-wrap items-center gap-4">
         <SelectButton
           value={quickFilter}
-          onChange={(e) => { setQuickFilter(e.value); setDateRange(null); }}
+          onChange={(e) => {
+            // Deseleccionar el boton activo (e.value null) no es un filtro:
+            // se ignora para no lanzar una consulta sin acotar por fecha.
+            if (e.value == null) return;
+            setQuickFilter(e.value);
+            setDateRange(null);
+            // Click deliberado = filtro manual: una peticion, aqui mismo.
+            applyFilters({ quickFilter: e.value, dateRange: null });
+          }}
           options={quickFilters}
           className="text-sm"
         />
@@ -430,6 +511,20 @@ export default function SalesHistoryPage() {
               />
             </div>
             <div>
+              <label className="mb-1.5 block text-xs font-medium text-slate-600">Monto Máximo</label>
+              <InputNumber
+                value={totalMax}
+                onValueChange={(e) => setTotalMax(e.value)}
+                mode="currency"
+                currency="MXN"
+                locale="es-MX"
+                placeholder="Max"
+                className="w-full"
+                inputClassName="w-full text-sm rounded-lg border-slate-200 px-3 py-2"
+                pt={{ root: { className: 'w-full' } }}
+              />
+            </div>
+            <div>
               <label className="mb-1.5 block text-xs font-medium text-slate-600">Estatus</label>
               <Dropdown
                 value={selectedStatus}
@@ -442,6 +537,27 @@ export default function SalesHistoryPage() {
                 pt={{ root: { className: 'w-full' } }}
               />
             </div>
+          </div>
+
+          {/* Los inputs de arriba SOLO actualizan estado local: ninguna
+              peticion sale hasta que el usuario aplica de forma manual. */}
+          <div className="mt-4 flex justify-end gap-2 border-t border-slate-100 pt-3">
+            <Button
+              label="Limpiar Filtros"
+              icon="pi pi-eraser"
+              onClick={clearAdvancedFilters}
+              disabled={loading}
+              className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-600 hover:bg-slate-50"
+              pt={{ root: { className: 'border border-slate-200' } }}
+            />
+            <Button
+              label="Aplicar Filtros"
+              icon="pi pi-search"
+              onClick={() => applyFilters()}
+              disabled={loading}
+              className="rounded-lg bg-indigo-600 px-4 py-2 text-xs font-semibold text-white hover:bg-indigo-500"
+              pt={{ root: { className: 'border-0' } }}
+            />
           </div>
         </div>
       )}
@@ -467,6 +583,7 @@ export default function SalesHistoryPage() {
           <Column body={ticketIdTemplate} header="ID Ticket" style={{ width: '100px' }} />
           <Column body={dateTemplate} header="Fecha/Hora" style={{ width: '160px' }} />
           <Column body={vendorTemplate} header="Vendedor" />
+          <Column body={originTemplate} header="Origen" style={{ width: '130px' }} />
           <Column body={paymentTemplate} header="Método de Pago" style={{ width: '140px' }} />
           <Column body={totalTemplate} header="Total" style={{ width: '100px' }} />
           <Column body={(row) => {
@@ -544,6 +661,50 @@ export default function SalesHistoryPage() {
                 </div>
               </div>
 
+              {/* Trazabilidad de comedor: solo en ventas originadas en una mesa */}
+              {detailOrder.table_name_at_sale && (
+                <div className="rounded-lg border border-indigo-200 bg-indigo-50/60 p-3">
+                  <div className="flex items-center gap-2">
+                    <i className="pi pi-users text-indigo-600 text-sm" />
+                    <p className="text-sm font-semibold text-indigo-900">
+                      Consumo en {detailOrder.table_name_at_sale}
+                    </p>
+                    <Tag value="Comedor" severity="info" className="text-[10px]" />
+                  </div>
+                  <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-indigo-800 sm:grid-cols-4">
+                    <div>
+                      <span className="text-indigo-500">Mesero</span>
+                      <p className="font-medium">{detailOrder.waiter_name_at_sale || 'N/D'}</p>
+                    </div>
+                    {detailOrder.table_session?.guests != null && (
+                      <div>
+                        <span className="text-indigo-500">Comensales</span>
+                        <p className="font-medium">{detailOrder.table_session.guests}</p>
+                      </div>
+                    )}
+                    {detailOrder.table_session?.opened_at && (
+                      <div>
+                        <span className="text-indigo-500">Mesa abierta</span>
+                        <p className="font-medium">
+                          {new Date(detailOrder.table_session.opened_at).toLocaleString('es-MX')}
+                        </p>
+                      </div>
+                    )}
+                    {detailOrder.table_session?.closed_by_user?.name && (
+                      <div>
+                        <span className="text-indigo-500">Cobró</span>
+                        <p className="font-medium">{detailOrder.table_session.closed_by_user.name}</p>
+                      </div>
+                    )}
+                  </div>
+                  {detailOrder.table_session?.notes && (
+                    <p className="mt-2 text-xs italic text-indigo-700">
+                      Nota: {detailOrder.table_session.notes}
+                    </p>
+                  )}
+                </div>
+              )}
+
               {detailOrder.status === 'canceled' && (
                 <div className="rounded-lg bg-rose-50 p-3 text-sm">
                   <p className="font-medium text-rose-700">Cancelado por: {detailOrder.canceled_by_user?.name || 'N/A'}</p>
@@ -559,6 +720,9 @@ export default function SalesHistoryPage() {
                   <thead>
                     <tr className="border-b border-slate-200 bg-slate-50">
                       <th className="px-3 py-2 text-left text-xs font-semibold text-slate-600">Producto</th>
+                      {detailOrder.table_name_at_sale && (
+                        <th className="px-3 py-2 text-left text-xs font-semibold text-slate-600">Comandado</th>
+                      )}
                       <th className="px-3 py-2 text-right text-xs font-semibold text-slate-600">Qty</th>
                       <th className="px-3 py-2 text-right text-xs font-semibold text-slate-600">P. Unit.</th>
                       <th className="px-3 py-2 text-right text-xs font-semibold text-slate-600">Desc.</th>
@@ -574,6 +738,13 @@ export default function SalesHistoryPage() {
                             <span className="ml-1 text-xs text-emerald-600">({item.promotion.name})</span>
                           )}
                         </td>
+                        {detailOrder.table_name_at_sale && (
+                          <td className="px-3 py-2 text-xs text-slate-500">
+                            {item.created_at
+                              ? new Date(item.created_at).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' })
+                              : '—'}
+                          </td>
+                        )}
                         <td className="px-3 py-2 text-right text-slate-700">{item.quantity}</td>
                         <td className="px-3 py-2 text-right text-slate-700">{fmt(item.base_price_at_sale)}</td>
                         <td className="px-3 py-2 text-right text-emerald-600">

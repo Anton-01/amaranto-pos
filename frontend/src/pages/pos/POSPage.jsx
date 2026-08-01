@@ -361,8 +361,31 @@ export default function POSPage() {
               <p className="text-xs text-slate-500 capitalize">{formattedDate}</p>
             </div>
           </div>
-          <div className="text-right">
-            <p className="text-lg font-bold tabular-nums text-indigo-600">{formattedTime}</p>
+          {/* Acceso al comedor: estrictamente a la izquierda del reloj */}
+          <div className="ml-auto flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => navigate('/mesas')}
+              title="Plano de Mesas"
+              aria-label="Abrir plano de mesas"
+              className="group flex cursor-pointer items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-600 transition-all hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-700"
+            >
+              <svg
+                className="h-5 w-5 text-slate-400 transition-colors group-hover:text-indigo-600"
+                fill="none"
+                viewBox="0 0 24 24"
+                strokeWidth={1.75}
+                stroke="currentColor"
+              >
+                {/* Mesa redonda con cubiertos */}
+                <path strokeLinecap="round" strokeLinejoin="round" d="M3 9.75h18M4.5 9.75v-.75a7.5 7.5 0 0 1 15 0v.75M8.25 9.75V21m7.5-11.25V21M12 3v-.75" />
+              </svg>
+              <span className="hidden sm:inline">Mesas</span>
+            </button>
+
+            <div className="text-right">
+              <p className="text-lg font-bold tabular-nums text-indigo-600">{formattedTime}</p>
+            </div>
           </div>
           <div className="flex items-center gap-4 rounded-lg bg-slate-50 px-4 py-2">
             <div>

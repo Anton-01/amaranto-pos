@@ -23,6 +23,9 @@ import PaymentMethodsPage from './pages/admin/PaymentMethodsPage';
 import CashRegisterClosingsPage from './pages/admin/CashRegisterClosingsPage';
 import RolesPermissionsPage from './pages/admin/RolesPermissionsPage';
 import MailTemplatesPage from './pages/admin/MailTemplatesPage';
+import TablesFloorPlanPage from './pages/dining/TablesFloorPlanPage';
+import TablesPage from './pages/admin/TablesPage';
+import CashClosingsAuditPage from './pages/admin/CashClosingsAuditPage';
 
 function ProtectedRoute({ children }) {
   const { user, loading } = useAuth();
@@ -88,6 +91,7 @@ export default function App() {
           <Route path="/products/:id/edit" element={<ProtectedRoute><ProductFormPage /></ProtectedRoute>} />
           <Route path="/promotions" element={<ProtectedRoute><PromotionsPage /></ProtectedRoute>} />
           <Route path="/pos" element={<ProtectedRoute><POSPage /></ProtectedRoute>} />
+          <Route path="/mesas" element={<ProtectedRoute><TablesFloorPlanPage /></ProtectedRoute>} />
           <Route path="/petty-cash" element={<ProtectedRoute><PettyCashPage /></ProtectedRoute>} />
           <Route path="/finance" element={<ProtectedRoute><FinanceDashboardPage /></ProtectedRoute>} />
           <Route path="/stock-movements" element={<ProtectedRoute><StockMovementsPage /></ProtectedRoute>} />
@@ -98,9 +102,11 @@ export default function App() {
           <Route path="/admin/configuracion" element={<ProtectedRoute><SystemSettingsPage /></ProtectedRoute>} />
           <Route path="/admin/ventas" element={<ProtectedRoute><SalesHistoryPage /></ProtectedRoute>} />
           <Route path="/admin/metodos-pago" element={<ProtectedRoute><PaymentMethodsPage /></ProtectedRoute>} />
+          <Route path="/admin/mesas" element={<ProtectedRoute><TablesPage /></ProtectedRoute>} />
           <Route path="/admin/papelera" element={<ProtectedRoute><TrashPage /></ProtectedRoute>} />
           <Route path="/admin/roles-permisos" element={<ProtectedRoute><RolesPermissionsPage /></ProtectedRoute>} />
           <Route path="/admin/cierres" element={<ProtectedRoute><CashRegisterClosingsPage /></ProtectedRoute>} />
+          <Route path="/admin/cash-closings-audit" element={<ProtectedRoute><CashClosingsAuditPage /></ProtectedRoute>} />
           <Route path="/admin/notificaciones/plantillas" element={<ProtectedRoute><MailTemplatesPage /></ProtectedRoute>} />
           <Route path="*" element={<Navigate to="/login" replace />} />
         </Routes>

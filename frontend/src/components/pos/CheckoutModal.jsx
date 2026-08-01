@@ -11,11 +11,53 @@ import api from '../../api/axios';
 import TicketPreview from './TicketPreview';
 import { addToOfflineQueue } from '../../hooks/useOnlineStatus';
 
-export default function CheckoutModal({ visible, onHide, cart, taxRate = 0.16, onSuccess, isOnline = true }) {
+/**
+ * Sanitiza el monto recibido en tiempo real (en cada tecla).
+ *
+ * Descarta letras, simbolos y cualquier caracter no numerico antes de que
+ * llegue al estado; acepta coma como separador decimal (teclados numericos
+ * latinos) normalizandola a punto, permite un unico punto decimal y limita
+ * a 2 decimales y 9 enteros.
+ */
+function sanitizeAmount(raw) {
+  let clean = String(raw ?? '').replace(/,/g, '.').replace(/[^0-9.]/g, '');
+
+  // Un solo separador decimal: se conserva el primero y se descartan los demas.
+  const firstDot = clean.indexOf('.');
+  if (firstDot !== -1) {
+    clean = clean.slice(0, firstDot + 1) + clean.slice(firstDot + 1).replace(/\./g, '');
+  }
+
+  let [int = '', dec] = clean.split('.');
+
+  // Ceros a la izquierda ("007" -> "7"), preservando el "0" de "0.50".
+  int = int.replace(/^0+(?=\d)/, '').slice(0, 9);
+
+  if (dec === undefined) return int;
+  return `${int || '0'}.${dec.slice(0, 2)}`;
+}
+
+/** Convierte el texto sanitizado a numero; null si aun no hay monto valido. */
+function parseAmount(value) {
+  if (value === '' || value === '.') return null;
+  const parsed = parseFloat(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+/**
+ * Modal de cobro, compartido por mostrador y comedor.
+ *
+ * `tableSession` conmuta el modo: cuando viene informada, la cuenta ya existe
+ * en el servidor (orden en estado 'open') y el submit va a
+ * POST /tables/{id}/close en lugar de crear una orden nueva. El resto —
+ * descuentos, cupones, efectivo, ticket e impresion — es identico.
+ */
+export default function CheckoutModal({ visible, onHide, cart, taxRate = 0.16, onSuccess, isOnline = true, tableSession = null }) {
+  const isTableMode = tableSession != null;
   const [paymentMethodId, setPaymentMethodId] = useState(null);
   const [paymentMethods, setPaymentMethods] = useState([]);
   const [customLegend, setCustomLegend] = useState('');
-  const [amountReceived, setAmountReceived] = useState(null);
+  const [amountReceivedInput, setAmountReceivedInput] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [ticketConfig, setTicketConfig] = useState(null);
   const ticketRef = useRef(null);
@@ -31,7 +73,7 @@ export default function CheckoutModal({ visible, onHide, cart, taxRate = 0.16, o
   useEffect(() => {
     if (visible) {
       setCustomLegend('');
-      setAmountReceived(null);
+      setAmountReceivedInput('');
       setApplyDiscount(false);
       setDiscountMode('direct');
       setDiscountSubType('fixed');
@@ -90,8 +132,19 @@ export default function CheckoutModal({ visible, onHide, cart, taxRate = 0.16, o
 
   const selectedMethod = paymentMethods.find(pm => pm.id === paymentMethodId);
   const isCash = selectedMethod?.slug === 'cash';
-  const amountChange = isCash && amountReceived != null ? Math.max(0, amountReceived - total) : 0;
-  const cashInsufficient = isCash && (amountReceived == null || amountReceived < total);
+
+  // Todo el calculo de efectivo es sincrono y derivado del texto del input:
+  // se recalcula en el mismo render de cada tecla, sin esperar al blur.
+  const amountReceived = parseAmount(amountReceivedInput);
+  const totalCents = Math.round(total * 100);
+  const receivedCents = amountReceived == null ? null : Math.round(amountReceived * 100);
+  const amountChange = isCash && receivedCents != null
+    ? Math.max(0, receivedCents - totalCents) / 100
+    : 0;
+  const amountMissing = isCash && receivedCents != null
+    ? Math.max(0, totalCents - receivedCents) / 100
+    : 0;
+  const cashInsufficient = isCash && (receivedCents == null || receivedCents < totalCents);
 
   const discountType = useMemo(() => {
     if (!applyDiscount || computedDiscount === 0) return 'none';
@@ -119,14 +172,10 @@ export default function CheckoutModal({ visible, onHide, cart, taxRate = 0.16, o
     amount_received: isCash ? amountReceived : null,
     amount_change: isCash ? amountChange : null,
     payment_method: selectedMethod || { name: 'N/A', slug: '' },
+    table_name_at_sale: tableSession?.table_name ?? null,
+    waiter_name_at_sale: tableSession?.waiter_name ?? null,
     created_at: new Date().toISOString(),
-  }), [cart, subtotal, ivaTotal, total, computedDiscount, amountReceived, amountChange, isCash, selectedMethod]);
-
-  useEffect(() => {
-    if (!isCash) {
-      setAmountReceived(null);
-    }
-  }, [isCash]);
+  }), [cart, subtotal, ivaTotal, total, computedDiscount, amountReceived, amountChange, isCash, selectedMethod, tableSession]);
 
   const searchCoupons = async (e) => {
     try {
@@ -153,17 +202,42 @@ export default function CheckoutModal({ visible, onHide, cart, taxRate = 0.16, o
     const payload = {
       payment_method_id: paymentMethodId,
       custom_legend: customLegend || null,
-      amount_received: isCash ? amountReceived : total,
+      amount_received: isCash ? Math.round(amountReceived * 100) / 100 : total,
       amount_change: isCash ? Math.round(amountChange * 100) / 100 : 0,
       discount_type: discountType,
       discount_value: discountValueForPayload,
       promotion_id: (applyDiscount && discountMode === 'coupon' && selectedCoupon) ? selectedCoupon.id : null,
-      items: cart.map(i => ({
-        product_id: i.product_id,
-        quantity: i.quantity,
-        promotion_id: i.promotion_id,
-      })),
     };
+
+    // En comedor los consumos ya viven en la orden abierta del servidor: el
+    // cobro solo aporta la forma de pago y el descuento final.
+    if (isTableMode) {
+      try {
+        const res = await api.post(`/tables/${tableSession.table_id}/close`, payload);
+        toast.success('Cuenta cobrada. La mesa quedo libre.');
+        onSuccess?.(res.data.data, { printerData: res.data.printer_data, ticketConfig });
+        onHide();
+      } catch (err) {
+        const data = err.response?.data;
+        if (data?.code === 'ERR_POS_CASH_REGISTER_REQUIRED') {
+          toast.error('Caja no abierta', { description: data.message });
+        } else if (data?.code === 'ERR_TABLE_NO_OPEN_SESSION') {
+          toast.error('La mesa ya fue cobrada', { description: data.message });
+          onHide();
+        } else {
+          toast.error(data?.message || 'Error al cobrar la mesa.');
+        }
+      } finally {
+        setSubmitting(false);
+      }
+      return;
+    }
+
+    payload.items = cart.map(i => ({
+      product_id: i.product_id,
+      quantity: i.quantity,
+      promotion_id: i.promotion_id,
+    }));
 
     if (!isOnline) {
       const offlineOrder = {
@@ -254,9 +328,13 @@ export default function CheckoutModal({ visible, onHide, cart, taxRate = 0.16, o
             </svg>
           </div>
           <div>
-            <h3 className="text-lg font-semibold text-slate-900">Confirmar Cobro</h3>
+            <h3 className="text-lg font-semibold text-slate-900">
+              {isTableMode ? `Cobrar ${tableSession.table_name}` : 'Confirmar Cobro'}
+            </h3>
             <p className="text-xs text-slate-500">
-              Revisa la previsualizacion del ticket antes de confirmar.
+              {isTableMode
+                ? `Atendio ${tableSession.waiter_name || 'N/D'} · ${cart.length} producto${cart.length !== 1 ? 's' : ''} en la cuenta`
+                : 'Revisa la previsualizacion del ticket antes de confirmar.'}
             </p>
           </div>
         </div>
@@ -270,7 +348,13 @@ export default function CheckoutModal({ visible, onHide, cart, taxRate = 0.16, o
             <Dropdown
               value={paymentMethodId}
               options={paymentMethodOptions}
-              onChange={(e) => setPaymentMethodId(e.value)}
+              onChange={(e) => {
+                setPaymentMethodId(e.value);
+                // Al salir de efectivo el monto recibido deja de aplicar.
+                if (paymentMethods.find(pm => pm.id === e.value)?.slug !== 'cash') {
+                  setAmountReceivedInput('');
+                }
+              }}
               disabled={submitting}
               className="w-full text-sm"
               pt={{ root: { className: 'w-full' } }}
@@ -283,22 +367,26 @@ export default function CheckoutModal({ visible, onHide, cart, taxRate = 0.16, o
               <label className="mb-1.5 block text-sm font-medium text-slate-700">
                 Dinero Recibido ($) *
               </label>
-              <InputNumber
-                value={amountReceived}
-                onValueChange={(e) => setAmountReceived(e.value)}
-                mode="currency"
-                currency="MXN"
-                locale="es-MX"
-                minFractionDigits={2}
-                maxFractionDigits={2}
-                min={0}
-                disabled={submitting}
-                className="w-full"
-                inputClassName="w-full rounded-lg border-slate-200 px-3 py-2.5 text-lg font-semibold text-center"
-                pt={{ root: { className: 'w-full' } }}
-              />
+              <div className="relative">
+                <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-lg font-semibold text-slate-400">
+                  $
+                </span>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  autoComplete="off"
+                  autoFocus
+                  value={amountReceivedInput}
+                  // Sanitizacion en el propio onChange: el caracter invalido nunca
+                  // llega al estado, y el cambio se recalcula en el mismo render.
+                  onChange={(e) => setAmountReceivedInput(sanitizeAmount(e.target.value))}
+                  placeholder="0.00"
+                  disabled={submitting}
+                  className="w-full rounded-lg border border-slate-200 py-2.5 pl-8 pr-3 text-lg font-semibold text-center text-slate-900 placeholder-slate-300 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 disabled:opacity-50"
+                />
+              </div>
 
-              {amountReceived != null && amountReceived >= total && (
+              {!cashInsufficient && amountReceived != null && (
                 <div className="mt-2 rounded-lg bg-emerald-50 border border-emerald-200 px-3 py-2.5 text-center">
                   <span className="text-xs text-emerald-600 font-medium">Cambio a devolver</span>
                   <p className="text-2xl font-bold text-emerald-700">
@@ -309,7 +397,7 @@ export default function CheckoutModal({ visible, onHide, cart, taxRate = 0.16, o
 
               {cashInsufficient && amountReceived != null && (
                 <div className="mt-2 rounded-lg bg-rose-50 border border-rose-200 px-3 py-2 text-xs text-rose-700 font-medium text-center">
-                  El monto recibido es menor al total. Faltan ${(total - amountReceived).toLocaleString('es-MX', { minimumFractionDigits: 2 })}
+                  El monto recibido es menor al total. Faltan ${amountMissing.toLocaleString('es-MX', { minimumFractionDigits: 2 })}
                 </div>
               )}
             </div>

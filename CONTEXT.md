@@ -6,6 +6,8 @@
 - Base de Datos: Managed PostgreSQL (DigitalOcean)
 - Cache / Colas: Redis 7 Alpine (cache global + queue worker)
 - WebSockets: Laravel Reverb (puerto 8080, tiempo real)
+- Estado del Proyecto: [🟢 FASE 8: SISTEMA ENTERPRISE DE CIERRES AUTOMÁTICOS, NOTIFICACIONES TAGGEADAS, ANALÍTICA FINANCIERA Y AUDITORÍA INMUTABLE COMPLETADO] — Scheduler de cierre de caja 21:00 bajo usuario de sistema, notificaciones estructuradas por tags JSON con modal de plantillas dinámicas, modal de analítica financiera mensual con export CSV, y auditoría forense de cierres admin-only (ver sección 40).
+- Fase previa: [🟢 FASE 7: SISTEMA DE GESTIÓN DE MESAS (DINE-IN) IMPLEMENTADO] — Comedor operativo: plano de mesas, cuentas vivas transaccionales, comandas incrementales y cobro con liberación automática (ver sección 39).
 - Estado de Infraestructura: [🟢 FASE 7: DEPLOY ÁGIL Y DOCKER OPTIMIZADO] — Docker Compose multi-contenedor operativo (4 servicios: backend, frontend, postgres, redis).
 - Despliegue Produccion: [🟢 FASE 7: DEPLOY ÁGIL Y DOCKER OPTIMIZADO] — DigitalOcean Droplet + Managed PostgreSQL, imagenes base pre-compiladas (serversideup/php:8.4-fpm-alpine + nginx:alpine), frontend Vite pre-construido en local (frontend/dist versionado), Nginx proxy inverso HTTPS/WSS, Certbot SSL, deploy.sh automatizado. Tiempo estimado de build en el Droplet: < 2 minutos (antes: ~82 min).
 
@@ -32,7 +34,7 @@
 | Ventas Diarias (Header Modal) | [🟢 Completado] | [🟢 Completado] | Resumen diario con desglose por metodo de pago |
 | Botones Icono DataTables | N/A | [🟢 Completado] | Iconos PrimeReact con tooltips en todas las tablas |
 | Historial de Ventas | [🟢 Completado] | [🟢 Completado] | DataTable con filtros (quick+avanzados), detalle modal, cancelacion con admin password, reimpresion, exportacion CSV |
-| Metodos de Pago Dinamicos | [🟢 Completado] | [🟢 Completado] | CRUD payment_methods, FK restrictOnDelete, seeder base (cash/card/transfer), despliegue dinamico en POS/checkout/historial |
+| Metodos de Pago Dinamicos | [🟢 Completado] | [🟢 Completado] | CRUD payment_methods, FK restrictOnDelete, seeder base (cash/card/transfer), despliegue dinamico en POS/checkout/historial, **catalogo cacheado en Redis (TTL 60 min + invalidacion automatica por eventos del modelo)** — ver seccion 38 |
 | Transformacion SKU Mayusculas | [🟢 Completado] | [🟢 Completado] | Mutadores en modelo Product + onChange uppercase en frontend |
 | Cierre de Caja (Blind Closing) | [🟢 Completado] | [🟢 Completado] | Inmutabilidad DB (booted events), arqueo ciego, desglose por metodo pago JSONB, export PDF/Excel/Email batch, historial forense /admin/cierres |
 | Track Stock (Paquetes/Combos) | [🟢 Completado] | [🟢 Completado] | Columna track_stock en products, InputSwitch en formulario, pipeline ventas omite decremento si false, cancel reversa condicionada |
@@ -46,6 +48,12 @@
 | Estatus Inline (Toggle Switch) | [🟢 COMPLETADO Y OPERATIVO] | [🟢 COMPLETADO Y OPERATIVO] | InputSwitch en DataTables (Productos, Categorías, Promociones, Usuarios), PATCH endpoints, actualización optimista con rollback, Emerald/Slate CSS, etiquetas dinámicas (Activo/Inactivo) bajo cada switch, Toast éxito/error en cada mutación |
 | Selector de Impresoras Locales (QZ Tray) | [🟢 COMPLETADO Y OPERATIVO] | [🟢 COMPLETADO Y OPERATIVO] | Migrado a Cronos POS Agent (ver secciones 34 y 37). PrinterSetupPanel con botón "Detectar Agente Local" (GET /api/health), listado automático de impresoras tras detección, campo de Token de Seguridad, consulta MANUAL de cola (sin polling), persistencia localStorage (cronos_active_printer / cronos_agent_token) |
 | Confirmación de Impresión Post-Venta | N/A | [🟢 COMPLETADO Y OPERATIVO] | PrintConfirmationModal con resumen visual del ticket (folio, fecha, productos, totales, método de pago, agradecimiento), botones "Imprimir Ticket" / "Omitir — No imprimir" (cero peticiones HTTP al agente al omitir) |
+| Cierre Automático de Caja (Scheduler 21:00) | [🟢 FASE 8: COMPLETADO] | [🟢 FASE 8: COMPLETADO] | Comando `cronos:auto-close-registers` diario 21:00 (America/Mexico_City), usuario System Automated Process, ledger insert-only, notificación a admins — ver sección 40 |
+| Notificaciones Estructuradas por Tags JSON | [🟢 FASE 8: COMPLETADO] | [🟢 FASE 8: COMPLETADO] | Tabla `system_notifications` (data JSONB inmutable), campana del header conectada con badge y polling 60s, modal de plantillas dinámicas por `type` — ver sección 40 |
+| Analítica Financiera Mensual (Dashboard) | [🟢 FASE 8: COMPLETADO] | [🟢 FASE 8: COMPLETADO] | Endpoint agregado role:admin,manager (totales, comparativa mensual, métodos de pago, top productos, horas pico, tendencia diaria), modal con skeleton + export CSV — ver sección 40 |
+| Auditoría Histórica de Cierres (Admin Only) | [🟢 FASE 8: COMPLETADO] | [🟢 FASE 8: COMPLETADO] | `/admin/cash-closings-audit` con middleware role:admin, tabla lazy paginada con filtros, radiografía forense de solo lectura, triple candado de inmutabilidad — ver sección 40 |
+| Sistema de Gestión de Mesas (Dine-in) | [🟢 FASE 7: IMPLEMENTADO] | [🟢 FASE 7: IMPLEMENTADO] | Tablas `tables` y `table_sessions`, orden base en estado `open`, 4 endpoints transaccionales con `lockForUpdate` + índice único parcial, botón de mesas a la izquierda del reloj en el header del POS, catálogo en sidebar de Administración, trazabilidad mesa/mesero en histórico y ticket — ver sección 39 |
+| Optimizacion Modal de Cobro (Rendimiento) | [🟢 COMPLETADO Y OPERATIVO] | [🟢 COMPLETADO Y OPERATIVO] | Catálogo de métodos de pago servido desde Redis (`Cache::remember`, TTL 60 min, invalidación automática en alta/edición/baja); input de "Dinero Recibido" con sanitización estricta en `onChange` (sin `onBlur`), cálculo del cambio y habilitación de "Confirmar Cobro" en tiempo real desde la primera tecla |
 
 ## 3. Detalle del Modulo Completado: Migraciones & Modelos Base
 
@@ -2899,4 +2907,517 @@ Flujo pensado para **navegadores nuevos sin configuracion previa en localStorage
 - `src/components/pos/CheckoutModal.jsx` — Eliminada la impresion automatica post-venta; entrega `printerData` y `ticketConfig` via `onSuccess`; removida la prop `cronosAgent`
 - `src/pages/pos/POSPage.jsx` — Estado `pendingPrint` y render de `PrintConfirmationModal` tras cada venta exitosa
 - `src/pages/admin/CashRegisterClosingsPage.jsx` — Impresion de PDF condicionada a impresora configurada en lugar del flag de conexion sondeada
+- `frontend/dist/` — Build de produccion regenerado
+
+## 38. Optimizacion de Rendimiento de la Modal de Cobro (Cache Redis + Input de Efectivo en Tiempo Real) [🟢 COMPLETADO Y OPERATIVO]
+
+Correccion de dos cuellos de botella en el flujo de cobro del POS: la latencia al abrir el `CheckoutModal` (consulta a PostgreSQL por el catalogo de metodos de pago) y la friccion del input de "Dinero Recibido", que solo calculaba el cambio y habilitaba el boton al perder el foco (`onBlur`).
+
+### 38.1 Backend — Cache de Alto Rendimiento para Metodos de Pago
+
+El catalogo de metodos de pago es un dato de baja cardinalidad y muy baja tasa de cambio, pero se consultaba a PostgreSQL en **cada apertura** de la modal de cobro. Ahora se sirve desde Redis (`CACHE_STORE=redis`).
+
+#### Modelo: `PaymentMethod` (Cache de primer nivel)
+| Miembro | Tipo | Descripcion |
+| :--- | :--- | :--- |
+| `CACHE_TTL` | const `3600` | Vigencia de 60 minutos; actua solo como red de seguridad porque la invalidacion real es por evento |
+| `CACHE_PREFIX` | const `payment_methods:list:` | Prefijo de las llaves en Redis |
+| `CACHE_STATUSES` | const `['all','active','inactive']` | Unicas variantes de filtro que acepta el endpoint, y por tanto las unicas llaves cacheadas |
+| `cachedList(string $status)` | static | `Cache::remember()` sobre `payment_methods:list:{status}`. Normaliza cualquier status desconocido a `all` para impedir envenenamiento de llaves con input arbitrario del cliente |
+| `flushCache()` | static | `Cache::forget()` sobre las 3 variantes |
+| `booted()` | protected static | Registra `saved` y `deleted` -> `flushCache()` |
+
+- **Se cachea el arreglo ya serializado** (`->get()->toArray()`), no la coleccion Eloquent: la respuesta del POS no paga hidratacion de modelos ni deserializacion de objetos. El JSON emitido es identico al anterior (los casts se aplican al construir el arreglo), por lo que **no hay cambio de contrato para el frontend**.
+- **Invalidacion automatica por eventos del modelo**: cualquier alta, edicion (incluido el cambio de estatus) o baja hecha desde `PaymentMethodController` — o desde seeders, tinker o cualquier otro punto que use Eloquent — dispara `flushCache()`. No existe ventana de datos rancios tras una mutacion; el TTL de 60 minutos solo cubre escrituras que evadan Eloquent.
+
+#### Controlador: `PaymentMethodController@index`
+```php
+$status = $request->filled('status') ? (string) $request->status : 'all';
+
+return response()->json([
+    'status' => 'success',
+    'data'   => PaymentMethod::cachedList($status),
+]);
+```
+- Eliminada la construccion del query builder en el controlador; toda la logica de lectura vive en el modelo.
+- Los metodos `store()`, `update()` y `destroy()` quedan **sin cambios**: la invalidacion es transparente via los eventos del modelo.
+
+#### Impacto
+| Consumidor | Endpoint | Efecto |
+| :--- | :--- | :--- |
+| `CheckoutModal` (apertura de cobro) | `GET /api/payment-methods?status=active` | Hit de Redis; desaparece la latencia percibida al abrir la modal |
+| `SalesHistoryPage` (filtro) | `GET /api/payment-methods` | Hit de Redis |
+| `PaymentMethodsPage` (admin CRUD) | `GET /api/payment-methods?status=all` | Hit de Redis, invalidado en cada mutacion |
+
+### 38.2 Frontend — Sanitizacion en Tiempo Real y Calculo Sincrono del Cambio
+
+`src/components/pos/CheckoutModal.jsx` — Se **elimino el `InputNumber` de PrimeReact** (modo `currency`), cuyo `onValueChange` no confirmaba el valor hasta perder el foco o pulsar Enter, obligando al cajero a hacer un clic extra para que se calculara el cambio y se habilitara "Confirmar Cobro".
+
+#### Helpers puros (fuera del componente)
+| Funcion | Responsabilidad |
+| :--- | :--- |
+| `sanitizeAmount(raw)` | Filtro estricto ejecutado en cada tecla: normaliza coma a punto (teclados numericos latinos), descarta **todo** caracter que no sea digito o punto, conserva un unico separador decimal, recorta a 2 decimales y 9 enteros, y elimina ceros a la izquierda preservando el `0` de `0.50` |
+| `parseAmount(value)` | Convierte el texto sanitizado a numero; retorna `null` mientras no haya monto valido (`''`, `'.'`) |
+
+#### Nuevo modelo de estado
+- Estado unico: `amountReceivedInput` (string). El numero `amountReceived` es **derivado** en cada render (`parseAmount(amountReceivedInput)`), no un segundo estado — no existe posibilidad de desincronizacion entre lo que se ve y lo que se calcula.
+- El caracter invalido **nunca llega al estado**: la sanitizacion ocurre dentro del propio `onChange`, por lo que si el cajero teclea una letra o un simbolo, el input simplemente no lo refleja.
+
+```jsx
+<input
+  type="text"
+  inputMode="decimal"
+  autoFocus
+  value={amountReceivedInput}
+  onChange={(e) => setAmountReceivedInput(sanitizeAmount(e.target.value))}
+/>
+```
+- `type="text"` + `inputMode="decimal"`: abre el teclado numerico en terminales tactiles sin heredar el comportamiento de `type="number"` (spinners, `valueAsNumber` vacio ante entradas parciales).
+- `autoFocus`: el cajero teclea el monto en cuanto aparece el campo, sin clic previo.
+- El simbolo `$` se renderiza como adorno absoluto (`pointer-events-none`) en lugar de formatear el valor, para no pelear con la escritura en curso.
+
+#### Calculo y habilitacion instantaneos
+Todo se deriva de forma sincrona en el mismo render de cada pulsacion:
+
+| Derivado | Formula |
+| :--- | :--- |
+| `totalCents` / `receivedCents` | `Math.round(x * 100)` — comparacion en enteros para evitar falsos "insuficiente" por error de punto flotante (ej. `116.00` vs `115.999...`) |
+| `amountChange` | `Math.max(0, receivedCents - totalCents) / 100` |
+| `amountMissing` | `Math.max(0, totalCents - receivedCents) / 100` |
+| `cashInsufficient` | `isCash && (receivedCents == null \|\| receivedCents < totalCents)` |
+
+- El boton **"Confirmar Cobro"** conserva su `disabled={... \|\| (isCash && cashInsufficient)}`, pero ahora `cashInsufficient` se recalcula en cada tecla: se habilita/deshabilita en vivo, sin clics adicionales ni perdida de foco.
+- El panel verde "Cambio a devolver" y el banner rojo "Faltan $X" reaccionan desde el primer digito introducido.
+- El `TicketPreview` de la derecha refleja `amount_received` / `amount_change` en tiempo real via `previewOrder`.
+
+#### Otros ajustes
+- Se elimino el `useEffect` que limpiaba el monto al dejar de ser efectivo; ahora la limpieza ocurre en el `onChange` del Dropdown de metodo de pago (evento de origen en lugar de efecto en cascada). Esto tambien resuelve un error de la regla `react-hooks/set-state-in-effect` del linter.
+- El payload envia `amount_received: Math.round(amountReceived * 100) / 100`, alineado con `amount_change`.
+- `InputNumber` sigue en uso para el campo de descuento directo — el cambio esta acotado al input de efectivo.
+
+### Archivos Modificados en esta Fase
+**Backend (modificados):**
+- `app/Models/PaymentMethod.php` — Constantes de cache, `cachedList()`, `flushCache()` y `booted()` con invalidacion automatica en `saved`/`deleted`
+- `app/Http/Controllers/Catalog/PaymentMethodController.php` — `index()` servido desde Redis via `PaymentMethod::cachedList()`
+
+**Frontend (modificados):**
+- `src/components/pos/CheckoutModal.jsx` — Helpers `sanitizeAmount()` / `parseAmount()`, estado `amountReceivedInput` (string) con `amountReceived` derivado, input nativo con sanitizacion en `onChange`, calculo del cambio y validacion de suficiencia en enteros de centavos, limpieza del monto en el Dropdown de metodo de pago
+- `frontend/dist/` — Build de produccion regenerado
+
+## 39. FASE 7: SISTEMA DE GESTIÓN DE MESAS (DINE-IN) [🟢 IMPLEMENTADO Y OPERATIVO]
+
+Incorporacion del flujo de restaurante al POS: una mesa se abre, acumula consumo en rondas sucesivas y se cobra al final, liberandose sola. El modulo es transaccional de extremo a extremo y no altera el flujo de mostrador, que sigue funcionando exactamente igual.
+
+### 39.1 Decision de Arquitectura: la cuenta de mesa ES una orden
+
+En lugar de inventar una tabla paralela de consumos, la cuenta viva de una mesa **es una `order` real en el nuevo estado `open`**. Esto evita duplicar la maquinaria de precios, IVA, promociones, ticket e impresion, y hace que el cobro sea una transicion de estado en lugar de una migracion de datos entre tablas.
+
+La viabilidad se apoya en un hecho verificado del codigo existente: **todas** las agregaciones financieras del sistema (Dashboard, Analytics, Daily Summary, Cierres de Caja) ya filtraban explicitamente `status = 'completed'`, por lo que las cuentas abiertas quedan fuera de los reportes sin tocar una sola consulta.
+
+Los dos unicos puntos que leian ordenes sin filtrar estatus se blindaron con el nuevo scope `Order::settled()`:
+
+| Punto | Antes | Ahora |
+| :--- | :--- | :--- |
+| `OrderController@index` (Historial) | `Order::with(...)` | `Order::settled()->with(...)` |
+| `SalesExportController@export` (Excel) | `Order::with(...)` | `Order::settled()->with(...)` |
+
+Ademas, `OrderController@cancel` rechaza con `ERR_ORDER_STILL_OPEN` la cancelacion de una cuenta de mesa: cancelarla ahi dejaria la mesa ocupada para siempre, porque no liberaria la sesion.
+
+### 39.2 Base de Datos (4 migraciones)
+
+| # | Migracion | Contenido |
+| :--- | :--- | :--- |
+| `2026_07_31_000001` | `add_open_to_order_status_enum` | `ALTER TYPE order_status ADD VALUE 'open'`. Corre con `$withinTransaction = false` (PostgreSQL prohibe `ALTER TYPE ... ADD VALUE` dentro de un bloque transaccional). El `down()` recrea el tipo, ya que PostgreSQL no permite eliminar valores de un ENUM. |
+| `2026_07_31_000002` | `create_tables_table` | ENUM nativo `table_status ('available','occupied','reserved')` + tabla `tables` |
+| `2026_07_31_000003` | `add_dine_in_columns_to_orders_table` | `table_id`, `table_name_at_sale`, `waiter_id`, `waiter_name_at_sale` en `orders`; `payment_method_id` y `cash_register_id` pasan a NULLABLE |
+| `2026_07_31_000004` | `create_table_sessions_table` | ENUM nativo `table_session_status ('open','closed','canceled')` + tabla `table_sessions` + indice unico parcial |
+
+#### Tabla `tables`
+| Columna | Tipo | Notas |
+| :--- | :--- | :--- |
+| `id` | UUID PK | |
+| `name` | VARCHAR(60) UNIQUE | "Mesa 12", "Barra 3" |
+| `capacity` | SMALLINT | Comensales, default 4 |
+| `zone` | VARCHAR(60) NULL | Salón / Terraza / Barra (indexada) |
+| `status` | `table_status` | available / occupied / reserved |
+| `is_active` | BOOLEAN | Baja logica del catalogo sin perder historico |
+
+#### Tabla `table_sessions`
+| Columna | Tipo | Notas |
+| :--- | :--- | :--- |
+| `id` | UUID PK | |
+| `table_id` | UUID FK → tables | `restrict` |
+| `order_id` | UUID FK → orders | `restrict` — la orden base generada en la apertura |
+| `user_id` | UUID FK → users | Mesero que abrio |
+| `closed_by` | UUID FK → users NULL | Quien ejecuto el cobro |
+| `guests`, `notes` | SMALLINT / TEXT | Comensales y nota de servicio |
+| `status` | `table_session_status` | open / closed / canceled |
+| `opened_at`, `closed_at` | TIMESTAMPTZ | Ciclo de vida real de la mesa |
+
+#### Garantia de concurrencia a nivel de motor
+```sql
+CREATE UNIQUE INDEX table_sessions_one_open_per_table
+  ON table_sessions (table_id) WHERE status = 'open';
+```
+Un indice **unico parcial**: una mesa no puede tener dos sesiones abiertas simultaneas aunque dos meseros pulsen "Abrir" en el mismo milisegundo, y a la vez admite cuantas sesiones cerradas historicas haga falta. La defensa aplicativa (`lockForUpdate` + verificacion de estatus) va por delante, pero **la garantia real la da el motor**: el controlador captura la violacion `23505` y la traduce a `ERR_TABLE_ALREADY_OPEN`.
+
+#### Por que `payment_method_id` y `cash_register_id` pasan a NULLABLE
+Una cuenta abierta todavia no tiene forma de pago ni cajon asignado: ambos se resuelven en el cobro. Modelarlos como NULL es mas honesto que sembrar un valor falso en la apertura. El `byPayment` del Daily Summary usa un `INNER JOIN` contra `payment_methods`, de modo que las cuentas abiertas tampoco se cuelan por ahi.
+
+### 39.3 Motor Unico de Calculo: `App\Services\OrderCalculator`
+
+La aritmetica monetaria de `OrderController@store` se **extrajo tal cual** a un servicio compartido por mostrador y comedor. Un centavo de divergencia entre ambos flujos rompe el arqueo de caja, y mantener dos copias de la formula es como se llega a esa divergencia.
+
+| Metodo | Responsabilidad |
+| :--- | :--- |
+| `promotionDiscount(Promotion, float)` | Descuento de una promocion sobre el bruto de la linea (percentage / fixed_amount / freebie_100) |
+| `line(Product, ?Promotion, int)` | Construye la linea cruda de un producto |
+| `linesFromOrderItems(Collection)` | Reconstruye lineas crudas desde items ya persistidos |
+| `compose(lines, taxRate, discountType, discountValue)` | Prorratea el descuento global y despeja subtotal e IVA (tax-inclusive) |
+
+**Invariante que hace posible el comedor:** `line_gross = final_price_at_sale + discount_amount_at_sale`, exacto por construccion de `compose()`. Permite recomponer la cuenta desde los items guardados sin columnas auxiliares, mientras la orden no arrastre un descuento global previo — que es justo la invariante de una cuenta abierta (`discount_type = 'none'` hasta el cobro).
+
+**Verificacion del refactor:** se comparo el algoritmo original contra el extraido sobre **7,200 casos generados** (3 tasas de IVA × 6 configuraciones de descuento × 400 ordenes aleatorias con promociones por linea): **0 divergencias** y **0 fallos de reconstruccion** de `line_gross`.
+
+> Nota de redondeo **preexistente** (identica antes y despues del refactor): al prorratear un descuento global, la suma de los `final_price_at_sale` de los items puede diferir del `total` de la orden hasta en **2 centavos**, en el 0.14% de las ordenes con descuento. El `total` de la orden es el valor autoritativo para el cobro y el arqueo.
+
+### 39.4 Endpoints del Backend (7 rutas)
+
+| Metodo | Ruta | Middleware | Descripcion |
+| :--- | :--- | :--- | :--- |
+| GET | /api/tables | auth, user.active | Plano de mesas con estatus, sesion activa, consumo acumulado y resumen por estatus. Filtros: `zone`, `status`, `include_inactive` |
+| GET | /api/tables/{table} | auth, user.active | Detalle de la mesa con el desglose completo de su cuenta viva |
+| POST | /api/tables/{table}/open | auth, user.active | Abre la mesa, la vincula al mesero y genera la orden base en estado `open` |
+| POST | /api/tables/{table}/items | auth, user.active | Agrega una comanda a la cuenta activa |
+| POST | /api/tables/{table}/close | auth, user.active | Cobra la cuenta, sella la venta y libera la mesa |
+| POST/PUT/DELETE | /api/tables[/{table}] | **role:admin,manager** | Catalogo de mesas (alta, edicion, baja) |
+
+#### `TableSessionController` — las tres operaciones criticas
+Las tres corren dentro de `DB::transaction` con `lockForUpdate()` sobre la fila de la mesa, que actua como **punto unico de serializacion del comedor**: dos meseros que tocan la misma mesa a la vez se forman uno detras del otro en lugar de duplicar sesiones o comandas.
+
+**`open()`** — Valida ticket activo y mesa dada de alta → bloquea la fila → verifica `status = available` → crea la orden base (totales en 0, `discount_type = 'none'`, snapshot de `table_name_at_sale` y `waiter_name_at_sale`) → crea la sesion → marca la mesa `occupied` → `AuditLog: table_session_opened`.
+
+**`addItems()`** — Bloquea mesa, sesion, orden y **cada producto** (`lockForUpdate`) → valida stock disponible (`ERR_POS_INSUFFICIENT_STOCK`) → valida el limite de 1 promocion sobre la cuenta **completa** (existentes + nuevos) → descuenta inventario → inserta los items nuevos y recompone los totales.
+> Los items previos **no se reescriben**: sin descuento global, la aritmetica de cada linea es independiente, asi que su `created_at` queda intacto — y con el, la trazabilidad ronda por ronda.
+
+**`close()`** — Exige caja abierta **del cobrador** (`ERR_POS_CASH_REGISTER_REQUIRED`) → bloquea sesion y orden → rechaza cuentas vacias (`ERR_TABLE_EMPTY_ORDER`) → recompone la cuenta aplicando el descuento global y **actualiza los items en sitio** (via la clave `ref`, sin borrarlos) → sella la orden como `completed` con metodo de pago, cajon del cobrador y ticket vigente → abona `expected_closing_balance` → cierra la sesion → libera la mesa → `AuditLog: table_session_closed` → devuelve `printer_data` para el `PrintConfirmationModal`.
+
+> **Reconocimiento del ingreso:** en el cobro se resella `orders.created_at` con la hora del pago. En todo el resto del sistema `created_at` ES el instante del cobro (las ordenes de mostrador nacen en el checkout); preservar esa invariante mantiene correctos los reportes por fecha y los cortes del dia. La hora de apertura de la mesa queda registrada en `table_sessions.opened_at`.
+
+#### Catalogo de errores del modulo
+| Codigo | HTTP | Situacion |
+| :--- | :--- | :--- |
+| `ERR_TABLE_ALREADY_OPEN` | 422 | La mesa ya tiene cuenta abierta (incluye la carrera perdida contra el indice unico) |
+| `ERR_TABLE_NOT_AVAILABLE` | 422 | La mesa esta reservada |
+| `ERR_TABLE_INACTIVE` | 422 | Mesa dada de baja del catalogo |
+| `ERR_TABLE_NO_OPEN_SESSION` | 422 | Se intento comandar o cobrar una mesa libre |
+| `ERR_TABLE_EMPTY_ORDER` | 422 | Cobro de una mesa sin consumos |
+| `ERR_TABLE_OCCUPIED` | 422 | Cambio de estatus o baja de una mesa con cuenta viva |
+| `ERR_TABLE_HAS_SESSIONS` | 422 | Baja de una mesa con historico (sugiere desactivar) |
+| `ERR_POS_INSUFFICIENT_STOCK` | 422 | Stock insuficiente al agregar la comanda |
+| `ERR_ORDER_STILL_OPEN` | 422 | Cancelacion de una cuenta de mesa desde el historial |
+
+`App\Exceptions\TableConflictException` permite abortar la transaccion desde dentro del closure sin dejar escrituras a medias, traduciendose al catalogo de errores corporativo homogeneo.
+
+### 39.5 Histórico de Auditoría y Trazabilidad
+
+- `orders.table_id` (FK) + `orders.table_name_at_sale` — el **snapshot del nombre** sigue la convencion `_at_sale` de la casa: si la mesa se renombra o se da de baja, el ticket historico conserva el nombre con el que se consumio.
+- `orders.waiter_id` (FK) + `orders.waiter_name_at_sale` — mesero que abrio la cuenta, con snapshot equivalente.
+- `order_items.created_at` — **se sella explicitamente** al insertar (el modelo tiene `$timestamps = false`, por lo que Eloquent no lo hacia y la columna quedaba NULL). Es la hora de comanda de cada producto y sostiene la trazabilidad por rondas. Se le agrego el cast `datetime` y `serializeDate` a zona `America/Mexico_City`.
+- `AuditLog` registra las tres transiciones (`table_session_opened`, `table_items_added`, `table_session_closed`) con mesa, mesero, cobrador, productos, total y minutos de ocupacion.
+
+**Vista de detalle del histórico** — Para ordenes de comedor aparece un panel indigo con: mesa consumida, mesero que atendio, comensales, hora de apertura de la mesa, quien cobró y la nota de servicio. La tabla de productos suma una columna **"Comandado"** con la hora de cada alta, y el DataTable principal suma una columna **"Origen"** que distingue mesa+mesero de "Mostrador". El **Excel** de exportacion suma las columnas **Mesa** y **Mesero** (rango A..K).
+
+**Ticket impreso** — `TicketPreview` imprime las lineas `Mesa:` y `Atendio:` unicamente cuando la venta proviene del comedor.
+
+### 39.6 Interfaz de Usuario (React)
+
+#### Botón de Mesas en el header del POS — a la izquierda del reloj
+En la "Shift Status Card" de `POSPage`, el bloque del reloj se envolvio junto al nuevo boton en un contenedor `ml-auto flex items-center gap-3`, quedando el boton **estrictamente a la izquierda del reloj** y ambos anclados a la derecha de la barra. Icono SVG de mesa con cubiertos, etiqueta "Mesas" (oculta en movil), hover indigo. Navega a `/mesas`.
+
+#### `TablesFloorPlanPage` (`/mesas`) — Plano de Mesas
+- **Codigo de color por estatus** (`components/dining/tableStatus.js`, lenguaje visual unico): verde esmeralda = Disponible, rojo rosa = Ocupada, ambar = Reservada. Punto de color, badge y borde de tarjeta comparten la paleta para que el salon se lea de un vistazo.
+- Tarjeta de mesa: nombre, capacidad, zona, estatus y —si esta ocupada— mesero, comensales, **tiempo transcurrido** ("1h 25m"), numero de productos y **consumo acumulado**.
+- Chips de resumen (disponibles / ocupadas / reservadas), filtro por zona y boton de actualizacion manual.
+- **Sin polling**: se revalida al recuperar el foco de la ventana y tras cada operacion, respetando la decision de la casa de no sondear en bucle.
+- Clic en mesa disponible → modal de apertura (comensales precargados con la capacidad + nota opcional) → al abrir, **encadena directo al detalle** para tomar la orden.
+- Clic en mesa ocupada → detalle de la cuenta.
+
+#### `TableDetailModal` — Consumo al instante
+- Cabecera con mesero, comensales, tiempo de ocupacion y consumo acumulado en grande.
+- Columna izquierda: buscador y catalogo de productos. **Cada clic dispara `POST /tables/{id}/items` al instante** — el endpoint es transaccional, de modo que la comanda queda firme antes de que el mesero levante el dedo, y la respuesta trae la sesion recalculada (sin segunda peticion).
+- Columna derecha: cuenta viva en orden de comanda con **hora de alta por partida**, desglose de subtotal/IVA/total y boton **"Cobrar Cuenta"**.
+
+#### Cobro: `CheckoutModal` reutilizado en modo mesa
+Se agrego la prop opcional `tableSession`. Cuando viene informada, la cuenta ya existe en el servidor y el submit va a `POST /tables/{id}/close` en lugar de crear una orden nueva; el resto —descuentos directos, cupones, efectivo con calculo en tiempo real, preview de ticket e impresion post-venta— es **identico al mostrador**. La cuenta del servidor se traduce a la forma de carrito que el modal ya entendia usando la invariante `line_gross = final + descuento`. La ruta offline queda desactivada en modo mesa: un cobro de mesa exige servidor.
+
+#### `TablesPage` (`/admin/mesas`) — Catálogo en el sidebar
+Entrada **"Mesas"** en el grupo **ADMINISTRACIÓN** del sidebar. DataTable con nombre, capacidad, zona, estatus, cuenta abierta (mesero + consumo), alta y acciones. Alta/edicion en modal; el estatus se oculta y se explica cuando la mesa esta ocupada, porque lo gobierna su sesion. La baja solo procede si la mesa nunca tuvo consumos; en caso contrario se sugiere desactivarla.
+
+### 39.7 Seeder
+`DatabaseSeeder` siembra un plano base de 8 mesas en 3 zonas: Salón (4), Terraza (3) y Barra (1).
+
+### Archivos Creados en esta Fase
+**Backend (nuevos):**
+- `database/migrations/2026_07_31_000001_add_open_to_order_status_enum.php`
+- `database/migrations/2026_07_31_000002_create_tables_table.php`
+- `database/migrations/2026_07_31_000003_add_dine_in_columns_to_orders_table.php`
+- `database/migrations/2026_07_31_000004_create_table_sessions_table.php`
+- `app/Models/Table.php`, `app/Models/TableSession.php`
+- `app/Services/OrderCalculator.php`
+- `app/Exceptions/TableConflictException.php`
+- `app/Http/Controllers/Dining/TableController.php`
+- `app/Http/Controllers/Dining/TableSessionController.php`
+- `app/Http/Requests/Table/StoreTableRequest.php`, `UpdateTableRequest.php`
+- `app/Http/Requests/TableSession/OpenTableRequest.php`, `AddTableItemsRequest.php`, `CloseTableRequest.php`
+
+**Frontend (nuevos):**
+- `src/pages/dining/TablesFloorPlanPage.jsx`
+- `src/pages/admin/TablesPage.jsx`
+- `src/components/dining/TableDetailModal.jsx`
+- `src/components/dining/tableStatus.js`
+
+### Archivos Modificados en esta Fase
+**Backend (modificados):**
+- `app/Models/Order.php` — Constantes de estatus, campos dine-in en fillable, relaciones `table()`/`waiter()`/`tableSession()`, scope `settled()`, `$table` explicito
+- `app/Models/OrderItem.php` — `created_at` en fillable, cast `datetime` y `serializeDate`
+- `app/Http/Controllers/Sales/OrderController.php` — Usa `OrderCalculator`, `settled()` en el historial, eager loading de mesa/mesero, filtros `table_id`/`dine_in_only`, guarda `created_at` en los items, bloqueo de cancelacion de cuentas abiertas
+- `app/Http/Controllers/Sales/SalesExportController.php` — `settled()` y columnas Mesa/Mesero en el Excel
+- `routes/api.php` — 7 rutas nuevas bajo `tables`
+- `database/seeders/DatabaseSeeder.php` — Plano base de 8 mesas
+
+**Frontend (modificados):**
+- `src/pages/pos/POSPage.jsx` — Boton de mesas a la izquierda del reloj en el header
+- `src/components/layout/Sidebar.jsx` — NavLink "Mesas" en ADMINISTRACIÓN
+- `src/components/pos/CheckoutModal.jsx` — Prop `tableSession` y cobro contra `/tables/{id}/close`
+- `src/components/pos/TicketPreview.jsx` — Lineas `Mesa:` y `Atendio:` en ventas de comedor
+- `src/pages/sales/SalesHistoryPage.jsx` — Columna "Origen", panel de trazabilidad de comedor y columna "Comandado" en el detalle
+- `src/App.jsx` — Rutas `/mesas` y `/admin/mesas`
+- `src/hooks/usePageTitle.js` — Titulos de las dos vistas nuevas
+- `frontend/dist/` — Build de produccion regenerado
+
+## 40. FASE 8: SISTEMA ENTERPRISE — CIERRES AUTOMÁTICOS, NOTIFICACIONES TAGGEADAS, ANALÍTICA FINANCIERA Y AUDITORÍA INMUTABLE [🟢 COMPLETADO Y OPERATIVO]
+
+Suite corporativa de cuatro módulos entrelazados: el scheduler cierra las cajas olvidadas a las 21:00 bajo una identidad de sistema, ese cierre dispara una notificación estructurada que la campana del header renderiza con plantilla propia, y todo cierre —humano o automático— queda expuesto en una vista de auditoría forense exclusiva de administradores. La analítica financiera mensual completa la toma de decisiones desde el Dashboard.
+
+### 40.1 Motor de Cierre Automatizado de Caja (Laravel Scheduler)
+
+#### Estructura del Schedule (`routes/console.php`)
+```php
+Schedule::command('cronos:auto-close-registers')
+    ->dailyAt('21:00')
+    ->timezone('America/Mexico_City')
+    ->withoutOverlapping()
+    ->onOneServer();
+```
+El cron de produccion ya invoca `php artisan schedule:run` cada minuto (FASE 7, crontab del Droplet), por lo que el schedule engancha sin cambios de infraestructura. `withoutOverlapping` evita dobles corridas si una ejecucion se alarga; `onOneServer` cubre despliegues multi-contenedor.
+
+#### Comando: `app/Console/Commands/AutoCloseCashRegisters.php`
+- Firma: `cronos:auto-close-registers {--dry-run}` (el flag lista las cajas candidatas sin cerrar nada).
+- **Alcance**: toda caja con `closed_at IS NULL` y sin arqueo (`whereDoesntHave('closing')`) — incluidas las **rezagadas de dias anteriores** que un cajero olvido cerrar, exactamente para evitar inconsistencias por dias sin cierre.
+- **Transaccionalidad**: cada caja se cierra en su **propia** `DB::transaction` con `lockForUpdate` sobre la fila de la caja (dentro de `CashClosingService::close`). Un fallo en una caja no bloquea el cierre de las demas, y la carrera contra un cierre manual simultaneo (cajero cerrando a las 20:59) se resuelve limpiamente: el perdedor recibe `ERR_REGISTER_ALREADY_CLOSED` y el comando la omite sin duplicar.
+- **Identidad**: firma como usuario **System Automated Process** (`User::systemProcess()`).
+- **Convencion contable del cierre automatico**: el sistema no cuenta dinero fisico, por lo que asienta `declared = expected` (diferencia declarada cero) y lo deja explicito en `notes`: *"Montos declarados no verificados fisicamente... Requiere conciliacion del efectivo al siguiente turno"*. La marca `is_automated = true` distingue estos cierres en toda la auditoria.
+- Al terminar, si cerro al menos una caja, emite la notificacion `auto_cash_closing` a todos los administradores activos.
+
+#### Usuario de Sistema (migracion `2026_08_01_000003_create_system_process_user`)
+- `system@cronos.pos` / "System Automated Process". Sembrado por **migracion idempotente** (no seeder) para que exista tambien en las bases de produccion ya desplegadas.
+- Inoperable por diseño: password aleatorio de 64 caracteres que nadie conoce, **sin rol asignado** (el RBAC le niega todo endpoint), sin 2FA. Solo existe como FK de auditoria (`closed_by`).
+- Constantes en el modelo: `User::SYSTEM_EMAIL`, `User::systemProcess()`, `User::isSystemProcess()`.
+- El `down()` de la migracion NO lo elimina: los cierres historicos lo referencian con FK `restrict`.
+
+#### Servicio: `App\Services\CashClosingService` (motor unico del arqueo)
+La aritmetica del arqueo (`Esperado = Fondo + Ventas('completed') − Caja Chica`, breakdown por metodo de pago) se **extrajo** de `CashRegisterClosingController::store` a este servicio, compartido por el cierre manual y el automatico — la misma filosofia que `OrderCalculator` en Fase 7: dos copias de la formula es como se llega a un arqueo que no cuadra.
+- `snapshot(CashRegister)` — radiografia financiera sin efectos secundarios.
+- `close(CashRegister, User $closedBy, ?array $declarations, bool $automated, ?string $notes)` — transaccional con `lockForUpdate`; `declarations = null` activa la convencion del cierre automatico. Lanza `ERR_REGISTER_ALREADY_CLOSED` si pierde la carrera.
+- El controller manual ahora traduce esa excepcion al catalogo corporativo con el mensaje "posiblemente por el cierre automatico de las 21:00".
+
+#### Inmutabilidad tipo Ledger (insert-only)
+`cash_register_closings` ya bloqueaba `updating`/`deleting` a nivel Eloquent con `RuntimeException` (`ERR_CLOSING_IMMUTABLE`). Fase 8 agrega las columnas `is_automated` (boolean, indexada) y `notes` (text, nace con el registro y nunca se edita) via migracion `2026_08_01_000002`.
+
+### 40.2 Sistema de Notificaciones Estructuradas por Tags JSON
+
+#### Tabla `system_notifications` (migracion `2026_08_01_000001`)
+| Columna | Tipo | Notas |
+| :--- | :--- | :--- |
+| `id` | UUID PK | |
+| `user_id` | UUID FK → users | `cascade` |
+| `type` | VARCHAR(60) indexado | **Etiqueta de renderizado**: el frontend la evalua para elegir plantilla |
+| `data` | JSONB | **Snapshot inmutable** del evento; nunca se reconstruye desde tablas vivas |
+| `read_at` | TIMESTAMPTZ NULL | Acuse de lectura — la UNICA columna mutable |
+| `created_at` | TIMESTAMPTZ | |
+
+Indice parcial `system_notifications_unread ON (user_id) WHERE read_at IS NULL`: el badge de no-leidas (la consulta mas frecuente) se sirve sin recorrer el historico leido.
+
+#### Modelo `SystemNotification` — contrato de inmutabilidad
+El guard de `booted()` permite el update **solo si** las columnas dirty ⊆ `{read_at}`; cualquier otro update y todo delete lanzan `ERR_NOTIFICATION_IMMUTABLE`. Helper `notifyAdmins(type, data)` emite a todos los admins activos.
+
+#### Esquema JSON del tag `auto_cash_closing`
+```json
+{
+  "executed_at": "2026-08-01T21:00:03-06:00",
+  "executed_by": "System Automated Process",
+  "registers_closed": 2,
+  "registers_failed": 0,
+  "total_expected": 15230.50,
+  "total_declared": 15230.50,
+  "total_difference": 0,
+  "closings": [
+    {
+      "closing_id": "uuid", "cash_register_id": "uuid",
+      "register_folio": "A1B2C3D4",
+      "operator_id": "uuid", "operator_name": "Juan Perez",
+      "opened_at": "2026-08-01T09:12:00-06:00",
+      "opening_balance": 500.00,
+      "expected_amount": 7615.25, "declared_amount": 7615.25,
+      "difference_amount": 0,
+      "was_stale": false
+    }
+  ]
+}
+```
+`was_stale = true` marca cajas rezagadas de dias anteriores.
+
+#### Endpoints REST
+| Metodo | Ruta | Middleware | Descripcion |
+| :--- | :--- | :--- | :--- |
+| GET | /api/notifications | auth, user.active | `{unread[≤50], recent[≤10 leidas], unread_count}` del usuario autenticado |
+| POST | /api/notifications/{id}/read | auth, user.active | Marca leida; **403 `ERR_NOTIFICATION_FORBIDDEN`** si la notificacion es de otro usuario |
+
+#### Frontend — Campana conectada y Modal de Plantillas Dinamicas
+- **`NotificationBell`** (header): reemplaza el boton muerto. Badge de no-leidas, polling cada 60s (mismo cadence que las quick-stats del header) + refresh al abrir. Panel OverlayPanel con la lista catalogada por tipo y **chips de filtro por tag**.
+- **"Ver Detalles"** marca la notificacion como leida y abre **`NotificationDetailModal`**, que evalua `type` contra el **registro de tipos** (`notificationTypes.js`) e inyecta dinamicamente la plantilla correspondiente.
+- **Registro extensible**: agregar un nuevo tipo = registrar `{label, icon, chip, iconBox, summary(data), Detail}` en `NOTIFICATION_TYPES`; la campana y la modal no se tocan. Tipo desconocido → `DEFAULT_TYPE` con render generico key-value (nunca rompe la campana).
+- Plantilla `auto_cash_closing` (`NotificationDetailTemplates.jsx`): KPIs (cajas cerradas / total esperado / fallidas), tabla por caja (folio, operador, esperado, diferencia, tag "DIA PREVIO" para rezagadas) y banner de advertencia de conciliacion.
+
+### 40.3 Modal de Analitica Financiera Mensual (Dashboard)
+
+#### Backend — `GET /api/dashboard/monthly-analytics` (role:admin,manager)
+Controlador invocable `MonthlyAnalyticsController`. Parametro `month` (`Y-m`, default mes corriente; el dia se ancla explicitamente al 1 para evitar el desborde de `createFromFormat` a fin de mes). Una sola respuesta con todas las agregaciones (PostgreSQL directo, `status='completed'`, hora local `America/Mexico_City`):
+- `totals` — ventas totales, neto sin IVA, IVA, descuentos, ordenes, ticket promedio.
+- `previous` + `comparison` — mismos totales del mes anterior y deltas porcentuales (null si no hay base de comparacion).
+- `by_payment_method` — distribucion por metodo (ordenes + total).
+- `top_products` — top 10 por ingreso.
+- `peak_hours` — 24 horas del dia con ordenes/total (horas pico).
+- `daily_trend` — serie diaria del mes.
+
+#### Frontend — `MonthlyAnalyticsModal`
+- Boton destacado (gradiente indigo→violeta) en la cabecera del Dashboard, **visible solo para admin/manager** (`user.roles`), ademas del candado backend.
+- **Estado de carga robusto**: spinner animado + **esqueleto visual** (4 KPI placeholders + 2 bloques de chart + 1 tabla, `animate-pulse`) para latencias con volumen alto.
+- Navegacion de meses (← →, bloqueado a futuro), KPIs con chips de delta (verde sube / rojo baja), PieChart de metodos de pago, BarChart de horas pico, LineChart de tendencia diaria, tabla top 10 productos.
+- **"Exportar Reporte"**: CSV estructurado generado client-side desde los mismos datos mostrados (lo que exportas es lo que ves), con BOM UTF-8 para Excel. Secciones: metricas + comparativa, distribucion por metodo, top productos, ventas por hora.
+
+### 40.4 Vista de Auditoria Historica de Cierres (Admin Only)
+
+#### Politica de seguridad (doble candado + triple inmutabilidad)
+| Capa | Mecanismo |
+| :--- | :--- |
+| Backend | Rutas `GET /api/admin/cash-closings-audit[/{closing}]` bajo middleware **`role:admin`** (exclusivo: manager NO entra) |
+| Frontend | `/admin/cash-closings-audit` redirige a `/dashboard` a cualquier no-admin; entrada del sidebar con flag `adminOnly` visible solo para admin |
+| Inmutabilidad 1 | El controlador no expone NINGUNA ruta de escritura sobre cierres |
+| Inmutabilidad 2 | El modelo `CashRegisterClosing` lanza `RuntimeException` ante todo update/delete |
+| Inmutabilidad 3 | La UI es de solo lectura: no existe boton de edicion ni borrado; sello visual "REGISTRO INMUTABLE" |
+
+#### Endpoint `audit()` — filtros y resumen
+`date_from`/`date_to`, `type` (`manual`/`automated`), `difference=nonzero`, `search` (nombre/email del operador, ilike). Paginado server-side. `metadata.summary` con conteos globales: automaticos, manuales y con diferencia.
+
+#### Frontend — `CashClosingsAuditPage`
+- DataTable **lazy paginada** con: folio de caja, fecha/hora, operador, "Cerrado por" (humano con email, o **System Job** con icono de engrane y leyenda "Proceso automatizado 21:00"), tag AUTOMÁTICO/MANUAL, esperado, declarado, diferencia coloreada (rojo faltante / verde sobrante).
+- Chips de resumen global y filtros (tipo, rango de fechas, busqueda de operador).
+- Click en fila → **modal de radiografia forense** (solo lectura): dinero calculado vs declarado vs diferencia en tarjetas, desglose completo por metodo de pago desde el JSONB `payment_breakdown`, responsable, y la nota del sistema si fue cierre automatico.
+
+### Sidebar con RBAC visual
+`Sidebar.jsx` ahora filtra items con flag `adminOnly` contra `user.roles` (via `useAuth`). Primera entrada que lo usa: "Auditoría de Cierres" en el grupo LOGÍSTICA.
+
+### Archivos Creados en esta Fase
+**Backend (nuevos):**
+- `app/Console/Commands/AutoCloseCashRegisters.php`
+- `app/Services/CashClosingService.php`
+- `app/Models/SystemNotification.php`
+- `app/Http/Controllers/Notifications/SystemNotificationController.php`
+- `app/Http/Controllers/Dashboard/MonthlyAnalyticsController.php`
+- `database/migrations/2026_08_01_000001_create_system_notifications_table.php`
+- `database/migrations/2026_08_01_000002_add_automation_columns_to_cash_register_closings.php`
+- `database/migrations/2026_08_01_000003_create_system_process_user.php`
+
+**Frontend (nuevos):**
+- `src/components/notifications/NotificationBell.jsx`
+- `src/components/notifications/NotificationDetailModal.jsx`
+- `src/components/notifications/NotificationDetailTemplates.jsx`
+- `src/components/notifications/notificationTypes.js`
+- `src/components/dashboard/MonthlyAnalyticsModal.jsx`
+- `src/pages/admin/CashClosingsAuditPage.jsx`
+
+### Archivos Modificados en esta Fase
+**Backend (modificados):**
+- `routes/console.php` — Schedule del cierre automatico (21:00, timezone, withoutOverlapping, onOneServer)
+- `routes/api.php` — Rutas de notificaciones, analitica mensual (role:admin,manager) y auditoria (role:admin)
+- `app/Models/User.php` — `SYSTEM_EMAIL`, `systemProcess()`, `isSystemProcess()`
+- `app/Models/CashRegisterClosing.php` — `is_automated` y `notes` en fillable/casts
+- `app/Http/Controllers/Finance/CashRegisterClosingController.php` — `store()` delegado a `CashClosingService` (con manejo de `ERR_REGISTER_ALREADY_CLOSED`), nuevos `audit()` y `auditShow()`
+
+**Frontend (modificados):**
+- `src/components/layout/AppHeader.jsx` — Boton muerto reemplazado por `NotificationBell`; titulos de rutas nuevas
+- `src/components/layout/Sidebar.jsx` — Filtrado `adminOnly` por rol + entrada "Auditoría de Cierres"
+- `src/pages/DashboardPage.jsx` — Boton destacado "Analítica Financiera" (gate admin/manager) + montaje de la modal
+- `src/App.jsx` — Ruta `/admin/cash-closings-audit`
+- `src/hooks/usePageTitle.js` — Titulo de la vista de auditoria
+- `frontend/dist/` — Build de produccion regenerado
+
+## 41. Correccion de Peticiones Infinitas en Historico de Ventas & Auditoria Global de Red [🟢 COMPLETADO]
+
+### 41.1 Causa Raiz del Bug (SalesHistoryPage.jsx)
+
+El componente cargaba las ordenes con un efecto **reactivo a la identidad de un callback**:
+
+```js
+const getDateParams = useCallback(..., [quickFilter, dateRange]);
+const fetchOrders  = useCallback(..., [getDateParams, perPage, selectedPaymentMethod,
+                                       selectedUser, totalMin, totalMax, selectedStatus]);
+useEffect(() => { setPage(0); fetchOrders(0); }, [fetchOrders]);
+```
+
+Ese patron encadena la peticion HTTP a la identidad de `fetchOrders`, que a su vez depende transitivamente de **8 estados**. Dos consecuencias:
+
+1. **Ciclo descontrolado**: la propia peticion provoca renders (`setLoading` → `setOrders` → `setLoading`). Basta con que UNA dependencia de la cadena se recree en cualquiera de esos renders (contexto de autenticacion resolviendo el usuario, doble montaje de StrictMode, cualquier estado intermedio) para cerrar el bucle *fetch → render → nueva identidad del callback → el efecto vuelve a disparar el fetch*. La peticion no tenia un dueño explicito: se disparaba como efecto colateral de la identidad de una funcion.
+2. **Peticion por tecla**: los `InputNumber` de monto actualizaban `totalMin` en cada digito; cada digito recreaba `fetchOrders` y el efecto lanzaba una consulta al backend. Escribir "$1,500" costaba 4+ peticiones; seleccionar un rango de fechas disparaba con la primera fecha y otra vez con la segunda. No existia ninguna accion de "aplicar".
+
+### 41.2 Solucion Aplicada (ciclo de vida explicito)
+
+Se elimino por completo el acoplamiento reactivo. La carga de ordenes ahora tiene **duenos explicitos** y ningun `useEffect` depende de la identidad de un callback:
+
+| Momento | Mecanismo |
+| :--- | :--- |
+| Montaje de la vista | Efecto con deps `[]` + guard `useRef` (`didInitialFetch`): **estrictamente 1 peticion**, blindada contra el doble montaje de StrictMode y contra cualquier re-render posterior |
+| Filtro rapido (Hoy/Semana/Mes) | Click deliberado → `applyFilters({quickFilter})` en el propio `onChange` (la deseleccion del SelectButton se ignora para no lanzar consultas sin acotar) |
+| Filtros avanzados | Los inputs **solo actualizan estado local**; la peticion sale unicamente con los nuevos botones **"Aplicar Filtros"** / **"Limpiar Filtros"** |
+| Paginacion | `onPageChange` → `fetchOrders(pagina)` |
+| Post-cancelacion de orden | `fetchOrders(page)` explicito |
+
+- `buildParams(overrides)` y `fetchOrders(page, overrides)` son **funciones normales, no useCallback**: su identidad no participa en ningun efecto, asi que recrearlas por render es inocuo. `overrides` resuelve el clasico desfase de los setters de React dentro del mismo evento (el handler pasa el valor recien elegido sin esperar al re-render).
+- El export a Excel reutiliza `buildParams()`: el archivo exporta exactamente lo que la tabla filtra.
+- De paso se agrego el campo **Monto Maximo** al panel avanzado (el estado `totalMax` existia y el backend ya soportaba `total_max`, pero el input nunca se habia montado).
+
+### 41.3 Auditoria Global de Llamadas de Red (todo el frontend)
+
+Barrido transversal de `pages/`, `components/`, `hooks/` y `context/`: **83 `useEffect` auditados**.
+
+**Resultado sano (sin accion):**
+- **0 efectos sin array de dependencias** (ninguno corre en cada render).
+- Todos los `setInterval` tienen `clearInterval` en el cleanup y son sondeos acotados y deliberados: quick-stats del header (60s), campana de notificaciones (60s), reloj del POS (1s).
+- Todos los `addEventListener` tienen `removeEventListener`: `useOnlineStatus` (online/offline) y el revalidado por foco del plano de mesas.
+- Los `setTimeout` restantes son one-shot dentro de handlers (impresion 350ms, seleccion en plantillas de correo, perfil) — sin fugas.
+- Efectos `[callback]` verificados con cadenas de identidad **estables** (deps `[]` o solo estados que cambian por click deliberado): POSPage, TablesFloorPlanPage, TablesPage, UsersPage (3 dropdowns), CashRegisterClosingsPage (calendario/quick filter), NotificationPreferencesPage, ProductFormPage, MonthlyAnalyticsModal, TableDetailModal, NotificationBell.
+
+**Anomalias encontradas y corregidas:**
+
+| Componente | Anomalia | Correccion |
+| :--- | :--- | :--- |
+| `pages/admin/TrashPage.jsx` | El buscador lanzaba **una peticion HTTP por cada tecla** (`search` en las deps de `fetchItems`, que era dependencia del efecto) | **Debounce de 400ms** con `setTimeout` + cleanup: el input actualiza `search` al teclear, pero la peticion usa `debouncedSearch` y solo sale al dejar de escribir |
+| `pages/admin/CashClosingsAuditPage.jsx` | Mismo anti-patron que el Historico (introducido en Fase 8): `fetchClosings` con `search` en deps + efecto `[isAdmin, fetchClosings]` → peticion por tecla del buscador | Migrado al patron explicito de 41.2: funcion normal + carga inicial unica con guard `useRef` al confirmar rol admin + dropdown/calendario disparan `fetchClosings(0, overrides)` en su `onChange`; la busqueda ya solo dispara con Enter o el boton |
+
+### Archivos Modificados en esta Fase
+- `src/pages/sales/SalesHistoryPage.jsx` — Refactor completo del ciclo de carga (41.2) + campo Monto Maximo + botones Aplicar/Limpiar
+- `src/pages/admin/TrashPage.jsx` — Debounce de busqueda (400ms)
+- `src/pages/admin/CashClosingsAuditPage.jsx` — Patron de carga explicito con guard de montaje
 - `frontend/dist/` — Build de produccion regenerado

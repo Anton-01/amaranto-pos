@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
 import AppLayout from '../components/layout/AppLayout';
+import MonthlyAnalyticsModal from '../components/dashboard/MonthlyAnalyticsModal';
 import { toast } from 'sonner';
 import api from '../api/axios';
 import {
@@ -18,6 +19,9 @@ export default function DashboardPage() {
   const [hourly, setHourly] = useState([]);
   const [topProducts, setTopProducts] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [showAnalytics, setShowAnalytics] = useState(false);
+
+  const canSeeAnalytics = user?.roles?.some(r => ['admin', 'manager'].includes(r));
 
   const fetchDashboard = useCallback(async () => {
     setLoading(true);
@@ -66,11 +70,28 @@ export default function DashboardPage() {
 
   return (
     <AppLayout>
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-slate-900">Dashboard</h1>
-        <p className="text-sm text-slate-500">
-          Bienvenido, {user?.name}. Resumen ejecutivo del negocio.
-        </p>
+      <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-900">Dashboard</h1>
+          <p className="text-sm text-slate-500">
+            Bienvenido, {user?.name}. Resumen ejecutivo del negocio.
+          </p>
+        </div>
+
+        {/* Analitica financiera completa: exclusiva de admin/manager, el
+            backend la protege con role:admin,manager ademas de este gate. */}
+        {canSeeAnalytics && (
+          <button
+            onClick={() => setShowAnalytics(true)}
+            className="group flex cursor-pointer items-center gap-2.5 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-4 py-2.5 text-sm font-semibold text-white shadow-md shadow-indigo-200 transition-all hover:shadow-lg hover:shadow-indigo-300"
+          >
+            <i className="pi pi-chart-line" />
+            Analítica Financiera
+            <span className="rounded bg-white/20 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide">
+              Mensual
+            </span>
+          </button>
+        )}
       </div>
 
       <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -159,6 +180,8 @@ export default function DashboardPage() {
           )}
         </div>
       </div>
+      <MonthlyAnalyticsModal visible={showAnalytics} onHide={() => setShowAnalytics(false)} />
+
     </AppLayout>
   );
 }

@@ -87,6 +87,9 @@ const TicketPreview = forwardRef(function TicketPreview({ order, ticketConfig, c
     : (paymentMethod || 'N/A').toUpperCase();
   const legend = customLegend ?? order?.custom_legend ?? '';
   const orderId = order?.id || '';
+  // Solo presentes en ventas de comedor; en mostrador quedan fuera del ticket.
+  const tableName = order?.table_name_at_sale || order?.table?.name || '';
+  const waiterName = order?.waiter_name_at_sale || order?.waiter?.name || '';
   const createdAt = order?.created_at ? new Date(order.created_at) : new Date();
 
   const dateStr = createdAt.toLocaleString('es-MX', {
@@ -160,6 +163,18 @@ const TicketPreview = forwardRef(function TicketPreview({ order, ticketConfig, c
             <span>Pago:</span>
             <span style={{ fontWeight: 700 }}>{paymentLabel}</span>
           </div>
+          {tableName && (
+            <div style={rowStyle}>
+              <span>Mesa:</span>
+              <span style={{ fontWeight: 700 }}>{tableName.toUpperCase()}</span>
+            </div>
+          )}
+          {waiterName && (
+            <div style={rowStyle}>
+              <span>Atendio:</span>
+              <span>{waiterName}</span>
+            </div>
+          )}
         </div>
 
         <hr style={hrDashed} />

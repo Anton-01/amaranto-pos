@@ -11,15 +11,12 @@ class PaymentMethodController extends Controller
 {
     public function index(Request $request): JsonResponse
     {
-        $query = PaymentMethod::orderBy('name');
-
-        if ($request->filled('status') && $request->status !== 'all') {
-            $query->where('status', $request->status);
-        }
+        // Servido desde Redis: la modal de cobro del POS abre sin esperar a PostgreSQL.
+        $status = $request->filled('status') ? (string) $request->status : 'all';
 
         return response()->json([
             'status' => 'success',
-            'data' => $query->get(),
+            'data' => PaymentMethod::cachedList($status),
         ]);
     }
 
