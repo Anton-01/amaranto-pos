@@ -16,6 +16,23 @@ echo "=========================================="
 echo "Compilando frontend (Vite) en local..."
 echo "=========================================="
 
+# --------------------------------------------------------------
+# Fase 9 — Guardia del escudo anti-bots.
+# La site key de Turnstile se incrusta en el bundle en tiempo de
+# build. Si el backend de produccion tiene TURNSTILE_SECRET_KEY
+# pero este bundle sale sin site key, el frontend no enviara token
+# y el backend rechazara TODOS los logins (ERR_AUTH_CAPTCHA_REQUIRED).
+# --------------------------------------------------------------
+if [ -z "${VITE_TURNSTILE_SITE_KEY:-}" ] && ! grep -rqs '^VITE_TURNSTILE_SITE_KEY=.\+' .env .env.local .env.production .env.production.local; then
+    echo ""
+    echo "  AVISO: VITE_TURNSTILE_SITE_KEY no esta definida."
+    echo "  El bundle saldra SIN escudo Turnstile."
+    echo "  Si el backend destino tiene TURNSTILE_SECRET_KEY configurada,"
+    echo "  ningun cajero podra iniciar sesion con este build."
+    echo "  Ver frontend/.env.example para configurarla."
+    echo ""
+fi
+
 npm ci
 npm run build
 

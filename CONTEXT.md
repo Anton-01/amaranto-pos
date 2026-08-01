@@ -6,8 +6,9 @@
 - Base de Datos: Managed PostgreSQL (DigitalOcean)
 - Cache / Colas: Redis 7 Alpine (cache global + queue worker)
 - WebSockets: Laravel Reverb (puerto 8080, tiempo real)
-- Estado del Proyecto: [🟢 FASE 8: SISTEMA ENTERPRISE DE CIERRES AUTOMÁTICOS, NOTIFICACIONES TAGGEADAS, ANALÍTICA FINANCIERA Y AUDITORÍA INMUTABLE COMPLETADO] — Scheduler de cierre de caja 21:00 bajo usuario de sistema, notificaciones estructuradas por tags JSON con modal de plantillas dinámicas, modal de analítica financiera mensual con export CSV, y auditoría forense de cierres admin-only (ver sección 40).
-- Fase previa: [🟢 FASE 7: SISTEMA DE GESTIÓN DE MESAS (DINE-IN) IMPLEMENTADO] — Comedor operativo: plano de mesas, cuentas vivas transaccionales, comandas incrementales y cobro con liberación automática (ver sección 39).
+- Estado del Proyecto: [🟢 FASE 9: ESCUDO DE SEGURIDAD Y THROTTLING COMPLETADO] — Blindaje perimetral en cuatro capas: candado anti fuerza bruta en el login (5 fallos/min por email+IP → bloqueo de 15 min con `Retry-After`), cupo global de API (100 req/min por usuario/IP), middleware global de cabeceras de seguridad con CSP calibrada, y Cloudflare Turnstile invisible validado server-side antes de las credenciales (ver sección 42).
+- Fase previa: [🟢 FASE 8: SISTEMA ENTERPRISE DE CIERRES AUTOMÁTICOS, NOTIFICACIONES TAGGEADAS, ANALÍTICA FINANCIERA Y AUDITORÍA INMUTABLE COMPLETADO] — Scheduler de cierre de caja 21:00 bajo usuario de sistema, notificaciones estructuradas por tags JSON con modal de plantillas dinámicas, modal de analítica financiera mensual con export CSV, y auditoría forense de cierres admin-only (ver sección 40).
+- Fase 7: [🟢 SISTEMA DE GESTIÓN DE MESAS (DINE-IN) IMPLEMENTADO] — Comedor operativo: plano de mesas, cuentas vivas transaccionales, comandas incrementales y cobro con liberación automática (ver sección 39).
 - Estado de Infraestructura: [🟢 FASE 7: DEPLOY ÁGIL Y DOCKER OPTIMIZADO] — Docker Compose multi-contenedor operativo (4 servicios: backend, frontend, postgres, redis).
 - Despliegue Produccion: [🟢 FASE 7: DEPLOY ÁGIL Y DOCKER OPTIMIZADO] — DigitalOcean Droplet + Managed PostgreSQL, imagenes base pre-compiladas (serversideup/php:8.4-fpm-alpine + nginx:alpine), frontend Vite pre-construido en local (frontend/dist versionado), Nginx proxy inverso HTTPS/WSS, Certbot SSL, deploy.sh automatizado. Tiempo estimado de build en el Droplet: < 2 minutos (antes: ~82 min).
 
@@ -53,6 +54,7 @@
 | Analítica Financiera Mensual (Dashboard) | [🟢 FASE 8: COMPLETADO] | [🟢 FASE 8: COMPLETADO] | Endpoint agregado role:admin,manager (totales, comparativa mensual, métodos de pago, top productos, horas pico, tendencia diaria), modal con skeleton + export CSV — ver sección 40 |
 | Auditoría Histórica de Cierres (Admin Only) | [🟢 FASE 8: COMPLETADO] | [🟢 FASE 8: COMPLETADO] | `/admin/cash-closings-audit` con middleware role:admin, tabla lazy paginada con filtros, radiografía forense de solo lectura, triple candado de inmutabilidad — ver sección 40 |
 | Sistema de Gestión de Mesas (Dine-in) | [🟢 FASE 7: IMPLEMENTADO] | [🟢 FASE 7: IMPLEMENTADO] | Tablas `tables` y `table_sessions`, orden base en estado `open`, 4 endpoints transaccionales con `lockForUpdate` + índice único parcial, botón de mesas a la izquierda del reloj en el header del POS, catálogo en sidebar de Administración, trazabilidad mesa/mesero en histórico y ticket — ver sección 39 |
+| Escudo de Seguridad y Throttling | [🟢 FASE 9: COMPLETADO] | [🟢 FASE 9: COMPLETADO] | Candado de login 5 fallos/min por email+IP → bloqueo 15 min con `Retry-After`; cupo global 100 req/min (guard sanctum explícito + `trustProxies`); middleware global `SecurityHeaders` (XFO DENY, nosniff, HSTS, CSP calibrada para Turnstile / agente local 9100 / Reverb WSS); Cloudflare Turnstile invisible validado server-side antes de las credenciales; interceptor Axios 429 + alerta de bloqueo con cuenta regresiva en LoginPage; 18 pruebas en verde — ver sección 42 |
 | Optimizacion Modal de Cobro (Rendimiento) | [🟢 COMPLETADO Y OPERATIVO] | [🟢 COMPLETADO Y OPERATIVO] | Catálogo de métodos de pago servido desde Redis (`Cache::remember`, TTL 60 min, invalidación automática en alta/edición/baja); input de "Dinero Recibido" con sanitización estricta en `onChange` (sin `onBlur`), cálculo del cambio y habilitación de "Confirmar Cobro" en tiempo real desde la primera tecla |
 
 ## 3. Detalle del Modulo Completado: Migraciones & Modelos Base
@@ -3420,4 +3422,256 @@ Barrido transversal de `pages/`, `components/`, `hooks/` y `context/`: **83 `use
 - `src/pages/sales/SalesHistoryPage.jsx` — Refactor completo del ciclo de carga (41.2) + campo Monto Maximo + botones Aplicar/Limpiar
 - `src/pages/admin/TrashPage.jsx` — Debounce de busqueda (400ms)
 - `src/pages/admin/CashClosingsAuditPage.jsx` — Patron de carga explicito con guard de montaje
+- `frontend/dist/` — Build de produccion regenerado
+
+## 42. FASE 9: ESCUDO DE SEGURIDAD Y THROTTLING [🟢 COMPLETADO Y OPERATIVO]
+
+Blindaje perimetral del POS contra fuerza bruta, bots automatizados y saturacion
+del servidor. Cuatro capas independientes: **candado de login**, **cupo global de
+API**, **cabeceras HTTP endurecidas** y **escudo anti-bots invisible**.
+
+### 42.1 Rate Limiting Especifico de Login (Fuerza Bruta)
+
+**Componente:** `app/Support/LoginThrottle.php` (sobre `Illuminate\Support\Facades\RateLimiter`, respaldado en Redis).
+
+Politica de **dos niveles** sobre la clave compuesta `sha1(email_minusculas + '|' + $request->ip())`:
+
+| Nivel | Clave Redis | Politica | Efecto |
+| :--- | :--- | :--- | :--- |
+| 1 — Ventana de conteo | `auth:login:attempts:{sig}` | **5 intentos FALLIDOS / 60 s** | Solo cuenta; cada 401 incrementa |
+| 2 — Candado | `auth:login:lock:{sig}` | **900 s (15 min)** | Al desbordar el nivel 1 se arma; mientras dure, ninguna credencial se compara contra PostgreSQL |
+
+**Por que email + IP y no uno solo:** por IP pura, un cajero torpe bloquearia a
+toda la sucursal detras del mismo NAT. Por email puro, un atacante podria
+bloquear a voluntad la cuenta del administrador (DoS de cuenta) y el rociado de
+credenciales desde botnet quedaria impune. La combinacion cierra ambos flancos.
+
+**Respuesta HTTP 429** (`ERR_AUTH_TOO_MANY_ATTEMPTS`):
+
+```
+HTTP/1.1 429 Too Many Requests
+Retry-After: 900
+
+{
+  "status": "error",
+  "code": "ERR_AUTH_TOO_MANY_ATTEMPTS",
+  "message": "Por seguridad, tu acceso ha sido bloqueado temporalmente. Intenta nuevamente en 15 minutos.",
+  "errors": [],
+  "metadata": { "retry_after_seconds": 900, "retry_after_minutes": 15, "max_attempts": 5 }
+}
+```
+
+**Detalles operativos:**
+- Un login con credenciales **correctas** libera contador y candado — aunque el flujo continue hacia el reto 2FA.
+- Cada 401 devuelve `metadata.remaining_attempts` para que el cajero vea cuantos intentos le restan antes del bloqueo.
+- El intento bloqueado se registra en el log con nivel `warning` (email, IP, segundos restantes) para auditoria forense.
+- **`POST /api/auth/2fa/verify` lleva `throttle:6,1`**: un TOTP son 6 digitos y el token temporal vive 5 minutos — sin freno el espacio de claves es agotable.
+
+### 42.2 Rate Limiting Global de la API (Anti-Saturacion)
+
+**Componente:** `AppServiceProvider::configureRateLimiting()` + `bootstrap/app.php`.
+
+```php
+// bootstrap/app.php — prepend al grupo `api`
+$middleware->api(prepend: [ThrottleRequests::class.':api']);
+```
+
+| Parametro | Valor | Nota |
+| :--- | :--- | :--- |
+| Limite | **100 peticiones / minuto** | `THROTTLE_API_MAX_ATTEMPTS` |
+| Identidad | `$request->user('sanctum')?->id` ?: `$request->ip()` | Guard **explicito** |
+| Respuesta | 429 `ERR_API_RATE_LIMIT_EXCEEDED` + `Retry-After` | Catalogo corporativo |
+
+**Trampa evitada — el guard explicito:** el middleware de throttle corre *antes*
+del `auth:sanctum` de la ruta. Con `$request->user()` a secas se consultaria el
+guard por defecto (`web`, basado en sesion), que devuelve `null` para peticiones
+con Bearer token: todo el trafico autenticado habria colapsado silenciosamente
+en un unico cubo por IP, y una sucursal con 5 cajas se habria auto-bloqueado.
+
+**Trampa evitada — proxies de confianza:** se activo
+`$middleware->trustProxies(at: '*')`. La API solo es alcanzable a traves del
+Nginx del host (`127.0.0.1:8000`); sin confiar en ese proxy, `$request->ip()`
+devolveria siempre la IP del proxy y **todo** el throttling por IP —login
+incluido— habria degenerado en un unico cubo global. De paso, `X-Forwarded-Proto`
+permite que `$request->isSecure()` detecte TLS y emita HSTS.
+
+### 42.3 Middleware de Cabeceras de Seguridad
+
+**Componente:** `app/Http/Middleware/SecurityHeaders.php`, registrado como
+middleware **global** (`$middleware->append(...)`) — se aplica a toda respuesta:
+API, `/storage`, previews de correo y health check.
+
+| Cabecera | Valor | Proposito |
+| :--- | :--- | :--- |
+| `X-Frame-Options` | `DENY` | Anti clickjacking |
+| `X-XSS-Protection` | `1; mode=block` | Filtro XSS legado |
+| `X-Content-Type-Options` | `nosniff` | Prohibe adivinar el MIME |
+| `Strict-Transport-Security` | `max-age=31536000; includeSubDomains` | Fuerza HTTPS 1 año |
+| `Referrer-Policy` | `strict-origin-when-cross-origin` | Fuga de URLs |
+| `Permissions-Policy` | `camera=(), microphone=(), geolocation=(), payment=(), usb=()` | Desactiva APIs sensibles |
+| `X-Permitted-Cross-Domain-Policies` | `none` | Bloquea policies Flash/PDF |
+| `Content-Security-Policy` | ver abajo | Anti XSS / inyeccion |
+
+**HSTS solo se emite sobre TLS** (`$request->isSecure()`), o forzado con
+`SECURITY_HSTS_FORCE=true`. Anunciarlo en `http://` no tiene efecto y en
+desarrollo local llegaria a dejar el dominio inaccesible por http.
+
+**Content Security Policy** — calibrada contra las necesidades reales del stack:
+
+```
+default-src 'self'; base-uri 'self'; form-action 'self';
+frame-ancestors 'none'; object-src 'none';
+script-src 'self' https://challenges.cloudflare.com;
+style-src 'self' 'unsafe-inline';
+img-src 'self' data: blob:;
+font-src 'self' data:;
+connect-src 'self' https://challenges.cloudflare.com
+            http://127.0.0.1:9100 http://localhost:9100
+            wss://<dominio>;
+frame-src 'self' https://challenges.cloudflare.com;
+worker-src 'self' blob:; manifest-src 'self'
+```
+
+| Directiva | Por que asi |
+| :--- | :--- |
+| `style-src 'unsafe-inline'` | **Inevitable**: Tailwind v4 y PrimeReact escriben estilos en linea en runtime |
+| `script-src` SIN `'unsafe-inline'` | El bundle de Vite es externo; no hay excusa para relajarlo |
+| `connect-src http://127.0.0.1:9100` | **Cronos POS Agent** — impresion ESC/POS en el equipo del cajero |
+| `connect-src wss://<dominio>` | Laravel Reverb. El host se deriva de `REVERB_HOST`, y si vale `0.0.0.0` (direccion de *bind*, no publica) cae a `APP_URL` |
+| `frame-src 'self'` | iframe `srcDoc` del visor de plantillas de correo |
+| `frame-ancestors 'none'` | Equivalente moderno de `X-Frame-Options: DENY` |
+
+**Reparto de responsabilidad en Nginx (fuente unica de verdad):** la CSP de
+Laravel viaja en respuestas **JSON**; quien protege al navegador es la del
+**documento HTML**. Por eso:
+
+- `frontend/nginx.conf` (contenedor de la SPA) → cabeceras + CSP del documento.
+- `App\Http\Middleware\SecurityHeaders` → `/api`, `/sanctum`, `/storage`.
+- `infrastructure/cronos-pos.conf` (Nginx del host) → **se le retiro el bloque
+  `add_header` a nivel `server`**. Duplicaba cada cabecera sobre la respuesta del
+  upstream: el navegador recibia dos `Content-Security-Policy` y aplicaba la
+  **interseccion** de ambas, lo que habria roto Turnstile o el agente local en
+  cuanto las dos politicas divergieran. Tambien se corrigio `X-Frame-Options`,
+  que estaba en `SAMEORIGIN` en lugar de `DENY`.
+
+> Nota de Nginx: un `add_header` dentro de un `location` **descarta** todos los
+> heredados del nivel `server`. Por eso el bloque de seguridad se repite integro
+> dentro del `location` de assets estaticos.
+
+### 42.4 Escudo Anti-Bots: Cloudflare Turnstile
+
+Invisible para el cajero: **cero puzzles**. El widget se monta en modo
+`appearance: 'interaction-only'` y resuelve el reto en segundo plano; solo se
+hace visible si Cloudflare exige interaccion humana explicita.
+
+**Backend** — `app/Services/Security/TurnstileVerifier.php`:
+- `POST https://challenges.cloudflare.com/turnstile/v0/siteverify` con `secret`, `response` (token) y `remoteip`.
+- Se valida **antes** de consultar credenciales en la base de datos.
+- **Activacion automatica**: el escudo solo opera si `TURNSTILE_SECRET_KEY` esta configurada. Sin llaves, el login sigue protegido por el resto de capas — asi el entorno local y los tests no requieren cuenta de Cloudflare.
+- **Falla cerrado** si Cloudflare no responde (`TURNSTILE_FAIL_OPEN=false`): es un POS financiero y un atacante podria provocar el corte de red a proposito. Invertible para sucursales con conectividad inestable.
+
+| Escenario | HTTP | Codigo |
+| :--- | :--- | :--- |
+| Token ausente | 422 | `ERR_AUTH_CAPTCHA_REQUIRED` |
+| Token rechazado por Cloudflare | 403 | `ERR_AUTH_CAPTCHA_FAILED` |
+| Cloudflare inalcanzable (fail-closed) | 503 | `ERR_AUTH_CAPTCHA_UNAVAILABLE` |
+
+**Frontend** — `src/lib/turnstile.js` + `src/components/auth/TurnstileWidget.jsx`:
+- Carga `api.js?render=explicit` **una sola vez por documento** (promesa memoizada a nivel de modulo: React StrictMode duplica los efectos en desarrollo).
+- El token viaja en el payload del login como `cf_turnstile_token`.
+- **Los tokens son de un solo uso**: tras cada intento fallido `resetSignal` fuerza uno nuevo, o el backend rechazaria el reenvio como token ya consumido.
+- Los callbacks se guardan en `ref` para que el widget no se re-monte en cada tecla del formulario.
+- Si `VITE_TURNSTILE_SITE_KEY` esta vacia el componente no renderiza nada y el escudo queda inactivo.
+
+> **Guardia de despliegue** (`build-frontend.sh`): el build avisa si
+> `VITE_TURNSTILE_SITE_KEY` no esta definida. Un bundle sin site key contra un
+> backend **con** secreto configurado rechazaria **todos** los logins con
+> `ERR_AUTH_CAPTCHA_REQUIRED`. Ver `frontend/.env.example`.
+
+### 42.5 Manejo Elegante del 429 en el Frontend
+
+**Interceptor global** (`src/api/axios.js`):
+- El 429 se resuelve **antes** que el resto de estados: nunca debe interpretarse como sesion invalida ni arrastrar al cajero a `/login` perdiendo su trabajo.
+- `parseRetryAfter(error)` soporta las **dos** formas del RFC para `Retry-After` (entero de segundos y fecha HTTP) y cae a `metadata.retry_after_seconds`.
+- Emite el evento global `cronos:rate-limited` y adjunta `error.retryAfter`.
+- Muestra toast en cualquier ruta **salvo** `/auth/login`, que pinta su propia alerta.
+
+**Hook** `src/hooks/useRateLimitLockout.js`: temporizador regresivo sobre una
+**marca de tiempo absoluta**, no un contador decreciente — los navegadores
+estrangulan `setInterval` en pestañas de fondo y un contador ingenuo se
+desincronizaria del `Retry-After` real mientras el cajero mira otra ventana.
+Expone `locked`, `countdown` (`14:52`), `humanized` (`15 minutos`), `start`, `clear`.
+
+**LoginPage** (`src/pages/auth/LoginPage.jsx`) al recibir 429:
+- Alerta rose con icono de candado, `role="alert"` + `aria-live="assertive"`:
+  *"Por seguridad, tu acceso ha sido bloqueado temporalmente. Intenta nuevamente en 15 minutos."*
+- Cuenta regresiva en monoespaciada tabular (`14:52`).
+- **Boton desactivado** con etiqueta `Acceso bloqueado — 14:52`; email y password tambien se bloquean y el password se limpia.
+- Al llegar a `00:00` la alerta desaparece y el formulario se rehabilita solo.
+
+### 42.6 Configuracion (`config/security.php`)
+
+Punto unico de verdad, todo parametrizable por entorno para que el hardening de
+produccion no rompa el desarrollo local:
+
+| Variable | Default | Descripcion |
+| :--- | :--- | :--- |
+| `THROTTLE_API_MAX_ATTEMPTS` | 100 | Peticiones/min por usuario o IP |
+| `THROTTLE_LOGIN_MAX_ATTEMPTS` | 5 | Fallos tolerados por ventana |
+| `THROTTLE_LOGIN_WINDOW` | 60 | Ventana de conteo (s) |
+| `THROTTLE_LOGIN_LOCKOUT` | 900 | Candado al desbordar (s) |
+| `SECURITY_HEADERS_ENABLED` | true | Interruptor maestro de cabeceras |
+| `SECURITY_CSP_ENABLED` | true | Interruptor de la CSP |
+| `SECURITY_CSP_REPORT_ONLY` | false | Reporta sin bloquear (calibracion) |
+| `SECURITY_HSTS_MAX_AGE` | 31536000 | 1 año |
+| `SECURITY_HSTS_FORCE` | false | Emitir HSTS tambien sobre http |
+| `SECURITY_CSP_EXTRA_{SCRIPT,CONNECT,IMG}_SRC` | — | Origenes extra separados por espacio |
+| `TURNSTILE_ENABLED` | true | Interruptor del escudo anti-bots |
+| `TURNSTILE_SITE_KEY` / `VITE_TURNSTILE_SITE_KEY` | — | Llave publica (debe coincidir) |
+| `TURNSTILE_SECRET_KEY` | — | Llave privada; **sin ella el escudo no opera** |
+| `TURNSTILE_FAIL_OPEN` | false | Que hacer si Cloudflare no responde |
+
+### 42.7 Cobertura de Pruebas
+
+`backend/tests/Feature/Security/` — **18 pruebas, 77 aserciones, en verde**.
+Ninguna requiere PostgreSQL: las capas verificadas se resuelven *antes* de tocar
+la base de datos, que es justamente el diseño que se valida.
+
+| Archivo | Cubre |
+| :--- | :--- |
+| `SecurityHeadersTest.php` | Cabeceras obligatorias; HSTS omitido en http y emitido en https; CSP habilita Turnstile y el agente local; `script-src` sin `'unsafe-inline'`; modo report-only |
+| `ApiRateLimitTest.php` | Corte al superar el cupo; `Retry-After` presente y positivo; el 429 conserva las cabeceras de seguridad |
+| `LoginThrottleTest.php` | 5 fallos tolerados y candado de 900 s al sexto; persistencia del candado; aislamiento por email **e** IP; normalizacion a minusculas; liberacion tras exito; `remaining_attempts` |
+| `LoginShieldTest.php` | Contrato HTTP del 429 de login; Turnstile inactivo sin secreto; rechazo sin token y con token invalido; fail-closed 503; **el candado se evalua antes que el captcha** (un atacante bloqueado no gasta cuota de Cloudflare) |
+
+### Archivos Creados en esta Fase
+**Backend:**
+- `config/security.php` — Politicas de throttling y cabeceras
+- `app/Http/Middleware/SecurityHeaders.php` — Escudo de cabeceras global
+- `app/Support/LoginThrottle.php` — Candado de fuerza bruta de dos niveles
+- `app/Services/Security/TurnstileVerifier.php` — Verificacion server-side de Turnstile
+- `tests/Feature/Security/{SecurityHeadersTest,ApiRateLimitTest,LoginThrottleTest,LoginShieldTest}.php`
+
+**Frontend:**
+- `src/lib/turnstile.js` — Carga memoizada del script de Cloudflare
+- `src/components/auth/TurnstileWidget.jsx` — Widget invisible (render explicito)
+- `src/hooks/useRateLimitLockout.js` — Temporizador regresivo de bloqueo
+- `frontend/.env.example` — Variables de build documentadas
+
+### Archivos Modificados en esta Fase
+**Backend:**
+- `bootstrap/app.php` — `trustProxies`, `SecurityHeaders` global, `throttle:api` en el grupo api, render JSON de `ThrottleRequestsException`
+- `app/Providers/AppServiceProvider.php` — `RateLimiter::for('api', ...)` con guard sanctum explicito
+- `app/Http/Controllers/Auth/AuthController.php` — Candado + Turnstile antes de las credenciales, `remaining_attempts` en el 401
+- `config/services.php` — Bloque `turnstile`
+- `routes/api.php` — `throttle:6,1` en `/auth/2fa/verify`
+- `.env.example` — Bloque Fase 9
+
+**Frontend / Infra:**
+- `src/api/axios.js` — Rama 429 prioritaria, `parseRetryAfter`, `formatRetryAfter`, evento `cronos:rate-limited`
+- `src/pages/auth/LoginPage.jsx` — Widget Turnstile, alerta de bloqueo con cuenta regresiva, boton desactivado
+- `frontend/nginx.conf` — Cabeceras + CSP del documento HTML de la SPA
+- `infrastructure/cronos-pos.conf` — Retirado el `add_header` duplicado a nivel server
+- `build-frontend.sh` — Guardia de `VITE_TURNSTILE_SITE_KEY`
+- `.env.production.example` — Bloque Fase 9
 - `frontend/dist/` — Build de produccion regenerado

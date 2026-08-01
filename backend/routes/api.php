@@ -37,7 +37,10 @@ Route::prefix('auth')->group(function () {
     Route::post('/login', [AuthController::class, 'login']);
 
     Route::middleware('auth:sanctum')->group(function () {
-        Route::post('/2fa/verify', [AuthController::class, 'verify2fa']);
+        // Un TOTP son 6 digitos: sin freno, un script agota el espacio de
+        // claves durante la vigencia del token temporal de 5 minutos.
+        Route::post('/2fa/verify', [AuthController::class, 'verify2fa'])
+            ->middleware('throttle:6,1');
     });
 
     Route::middleware(['auth:sanctum', 'user.active'])->group(function () {
