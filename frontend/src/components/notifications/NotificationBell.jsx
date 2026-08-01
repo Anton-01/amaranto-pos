@@ -1,8 +1,13 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { OverlayPanel } from 'primereact/overlaypanel';
 import api from '../../api/axios';
+import { cachedGet, isStale } from '../../api/readCache';
+import useRefreshOnVisible from '../../hooks/useRefreshOnVisible';
 import NotificationDetailModal from './NotificationDetailModal';
 import { typeMeta } from './notificationTypes';
+
+const CACHE_KEY = 'notifications';
+const CACHE_TTL = 60000;
 
 const timeAgo = (iso) => {
   const mins = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
@@ -16,10 +21,17 @@ const timeAgo = (iso) => {
 /**
  * Campana de notificaciones del header.
  *
- * Sondea el endpoint cada 60s (mismo cadence que las quick-stats del header) y
- * al abrir el panel. La lista cataloga visualmente por tipo con chips
- * filtrables; "Ver Detalles" marca la notificacion como leida y abre la modal
- * de plantilla dinamica.
+ * La bandeja se lee en tres momentos, todos acotados y sin temporizadores:
+ *   1. Al montar el header (servido desde cache si otra vista ya lo pidio).
+ *   2. Al ABRIR el panel (lectura forzada: el usuario quiere el dato al dia).
+ *   3. Al volver a la pestana, y solo si el dato cacheado ya vencio.
+ *
+ * Antes habia un `setInterval` de 60s que, junto con el del contador de ventas
+ * del header, generaba trafico de fondo indefinido en TODAS las rutas: dos GET
+ * intercalados por minuto y por pestana abierta, para siempre.
+ *
+ * La lista cataloga visualmente por tipo con chips filtrables; "Ver Detalles"
+ * marca la notificacion como leida y abre la modal de plantilla dinamica.
  */
 export default function NotificationBell() {
   const [unread, setUnread] = useState([]);
@@ -29,22 +41,35 @@ export default function NotificationBell() {
   const [detail, setDetail] = useState(null);
   const panelRef = useRef(null);
 
-  const fetchNotifications = useCallback(async () => {
+  /**
+   * Identidad estable (deps vacias): no participa en ninguna cadena de
+   * re-renders y puede usarse como dependencia de efectos sin reactivarlos.
+   */
+  const fetchNotifications = useCallback(async ({ force = false } = {}) => {
     try {
-      const res = await api.get('/notifications');
-      setUnread(res.data.data.unread);
-      setRecent(res.data.data.recent);
-      setUnreadCount(res.data.data.unread_count);
+      const data = await cachedGet(
+        CACHE_KEY,
+        () => api.get('/notifications').then((res) => res.data.data),
+        { ttl: CACHE_TTL, force }
+      );
+      setUnread(data.unread);
+      setRecent(data.recent);
+      setUnreadCount(data.unread_count);
     } catch {
       // Silencioso: la campana no debe romper el header si el endpoint falla.
     }
   }, []);
 
+  // Carga unica al montar el header. Sin intervalos: nada vuelve a pedirse
+  // salvo por una accion explicita del usuario.
   useEffect(() => {
     fetchNotifications();
-    const interval = setInterval(fetchNotifications, 60000);
-    return () => clearInterval(interval);
   }, [fetchNotifications]);
+
+  // Al regresar a la pestana refrescamos, pero solo si el dato ya vencio.
+  useRefreshOnVisible(() => {
+    if (isStale(CACHE_KEY, CACHE_TTL)) fetchNotifications({ force: true });
+  });
 
   const allItems = useMemo(() => {
     const items = [
@@ -67,7 +92,7 @@ export default function NotificationBell() {
     if (!notification.read_at) {
       try {
         await api.post(`/notifications/${notification.id}/read`);
-        fetchNotifications();
+        fetchNotifications({ force: true });
       } catch {
         // El acuse fallido se reintenta en el siguiente poll.
       }
@@ -77,7 +102,7 @@ export default function NotificationBell() {
   return (
     <>
       <button
-        onClick={(e) => { panelRef.current?.toggle(e); fetchNotifications(); }}
+        onClick={(e) => panelRef.current?.toggle(e)}
         className="relative flex h-9 w-9 cursor-pointer items-center justify-center rounded-lg text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700"
         title="Notificaciones"
       >
@@ -93,6 +118,9 @@ export default function NotificationBell() {
 
       <OverlayPanel
         ref={panelRef}
+        // Lectura fresca SOLO al abrir (no al cerrar): una peticion por
+        // apertura deliberada del usuario, nunca en segundo plano.
+        onShow={() => fetchNotifications({ force: true })}
         pt={{
           root: { className: 'rounded-2xl border border-slate-200 shadow-2xl mt-2 w-96 max-w-[calc(100vw-2rem)]' },
           content: { className: 'p-0' },

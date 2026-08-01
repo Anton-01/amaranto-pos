@@ -8,6 +8,7 @@ import { RadioButton } from 'primereact/radiobutton';
 import { AutoComplete } from 'primereact/autocomplete';
 import { toast } from 'sonner';
 import api from '../../api/axios';
+import { invalidate } from '../../api/readCache';
 import TicketPreview from './TicketPreview';
 import { addToOfflineQueue } from '../../hooks/useOnlineStatus';
 
@@ -265,6 +266,11 @@ export default function CheckoutModal({ visible, onHide, cart, taxRate = 0.16, o
       const printerData = res.data.printer_data;
 
       toast.success('Venta procesada con exito!');
+
+      // El contador de "ventas hoy" del header ya no sondea: se invalida su
+      // cache aqui para que la proxima lectura (navegacion o vuelta a la
+      // pestana) refleje esta venta.
+      invalidate('header-today-sales');
 
       // Sin impresion automatica: la decision de imprimir se delega al
       // PrintConfirmationModal que POSPage abre con estos datos.

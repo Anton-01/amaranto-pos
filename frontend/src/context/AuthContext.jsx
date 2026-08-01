@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
 import api from '../api/axios';
 
 const AuthContext = createContext(null);
@@ -30,12 +30,12 @@ export function AuthProvider({ children }) {
     fetchUser();
   }, [fetchUser]);
 
-  const login = (token, userData) => {
+  const login = useCallback((token, userData) => {
     localStorage.setItem('auth_token', token);
     setUser(userData);
-  };
+  }, []);
 
-  const logout = async () => {
+  const logout = useCallback(async () => {
     try {
       await api.post('/auth/logout');
     } catch {
@@ -43,10 +43,21 @@ export function AuthProvider({ children }) {
     }
     localStorage.removeItem('auth_token');
     setUser(null);
-  };
+  }, []);
+
+  /**
+   * Identidad estable del contexto: sin este useMemo, cada render del provider
+   * creaba un objeto nuevo y re-renderizaba a TODOS los consumidores (header,
+   * sidebar, paginas), invalidando de paso cualquier memoizacion aguas abajo.
+   * Solo cambia cuando cambia el usuario o el estado de carga.
+   */
+  const value = useMemo(
+    () => ({ user, loading, login, logout, fetchUser }),
+    [user, loading, login, logout, fetchUser]
+  );
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout, fetchUser }}>
+    <AuthContext.Provider value={value}>
       {children}
     </AuthContext.Provider>
   );
