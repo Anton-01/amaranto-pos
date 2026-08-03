@@ -29,6 +29,15 @@ class SystemNotification extends Model
     /** Cierre automatico de cajas ejecutado por el scheduler de las 21:00. */
     public const TYPE_AUTO_CASH_CLOSING = 'auto_cash_closing';
 
+    /** Punto de restauracion generado y depositado en la boveda (Fase 10). */
+    public const TYPE_BACKUP_COMPLETED = 'backup_completed';
+
+    /** Fallo la generacion de un respaldo: el sistema quedo sin cobertura. */
+    public const TYPE_BACKUP_FAILED = 'backup_failed';
+
+    /** Rollback de emergencia ejecutado sobre la base de datos (Fase 10). */
+    public const TYPE_BACKUP_RESTORED = 'backup_restored';
+
     protected $fillable = [
         'user_id',
         'type',

@@ -24,6 +24,19 @@ USER root
 # Nivel Enterprise: Inyectar extensiones nativas para localización/ticketera (intl) y reportes (gd)
 RUN install-php-extensions intl gd
 
+# FASE 10 — Herramientas del ecosistema de respaldo y rollback.
+#   postgresql-client -> pg_dump y psql. Sin ellos, BackupService no puede
+#                        generar snapshots NI restaurarlos: la recuperacion
+#                        ante desastres seria inexistente en produccion.
+#   openssl           -> cifrado AES-256 en streaming del artefacto. Se usa el
+#                        binario y no openssl_encrypt() de PHP porque este
+#                        exige cargar el dump entero en memoria.
+#   tar / gzip        -> empaquetado del snapshot (busybox no trae GNU tar).
+#
+# La version del cliente debe ser >= la del servidor administrado: pg_dump se
+# niega a volcar una base mas nueva que el propio cliente.
+RUN apk add --no-cache postgresql16-client openssl tar gzip
+
 COPY backend/opcache.ini /usr/local/etc/php/conf.d/opcache.ini
 
 WORKDIR /var/www/html

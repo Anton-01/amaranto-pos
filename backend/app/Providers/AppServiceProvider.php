@@ -2,8 +2,7 @@
 
 namespace App\Providers;
 
-use App\Events\PettyCashTransactionRegistered;
-use App\Listeners\NotifyPettyCashWithdrawal;
+use App\Listeners\JobTelemetrySubscriber;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Event;
@@ -16,10 +15,18 @@ class AppServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
-        Event::listen(
-            PettyCashTransactionRegistered::class,
-            NotifyPettyCashWithdrawal::class
-        );
+        /*
+         * NotifyPettyCashWithdrawal ya queda registrado por el descubrimiento
+         * automatico de listeners (su metodo `handle` declara el evento en la
+         * firma). El `Event::listen` explicito que habia aqui lo registraba una
+         * SEGUNDA vez, y cada retiro de caja chica notificaba dos veces a los
+         * administradores. Se elimina el registro manual; el descubrimiento
+         * basta.
+         */
+
+        // Telemetria de jobs (Fase 10): se engancha a los eventos nativos de
+        // la cola, asi que ningun job necesita instrumentarse a mano.
+        Event::subscribe(JobTelemetrySubscriber::class);
 
         $this->configureRateLimiting();
     }

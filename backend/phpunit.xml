@@ -23,8 +23,23 @@
         <env name="BCRYPT_ROUNDS" value="4"/>
         <env name="BROADCAST_CONNECTION" value="null"/>
         <env name="CACHE_STORE" value="array"/>
-        <env name="DB_CONNECTION" value="sqlite"/>
-        <env name="DB_DATABASE" value=":memory:"/>
+        <!--
+            El esquema del POS es PostgreSQL puro (ENUMs nativos, JSONB, ilike,
+            agregados con FILTER): sqlite en memoria jamas pudo ejecutar estas
+            migraciones. La suite apunta a una base de pruebas dedicada del
+            mismo servicio de PostgreSQL que levanta docker-compose.
+
+            Estas variables NO se fuerzan, asi que un `DB_HOST=... vendor/bin/phpunit`
+            desde la terminal o desde CI las sobrescribe sin tocar el archivo.
+            Los tests que requieren base de datos se saltan con un mensaje claro
+            si el servicio no esta disponible (trait RequiresPostgres).
+        -->
+        <env name="DB_CONNECTION" value="pgsql"/>
+        <env name="DB_DATABASE" value="cronos_pos_test"/>
+        <env name="DB_HOST" value="127.0.0.1"/>
+        <env name="DB_PORT" value="5432"/>
+        <env name="DB_USERNAME" value="cronos"/>
+        <env name="DB_PASSWORD" value="cronos_secret"/>
         <env name="DB_URL" value=""/>
         <env name="MAIL_MAILER" value="array"/>
         <env name="QUEUE_CONNECTION" value="sync"/>

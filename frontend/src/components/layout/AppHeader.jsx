@@ -37,6 +37,7 @@ const pageNames = {
   '/admin/mesas': 'Catálogo de Mesas',
   '/admin/cierres': 'Cierres de Caja',
   '/admin/cash-closings-audit': 'Auditoría de Cierres',
+  '/admin/jobs-monitor': 'Monitor de Jobs y Respaldos',
 };
 
 const fmt = (v) => `$${Number(v).toLocaleString('es-MX', { minimumFractionDigits: 2 })}`;
