@@ -6,12 +6,18 @@ import { Dropdown } from 'primereact/dropdown';
 import { Button } from 'primereact/button';
 import { toast } from 'sonner';
 import api from '../../api/axios';
-import AppLayout from '../../components/layout/AppLayout';
+import { RESOURCE, fetcherOf, staleTimeOf, invalidateAfterSale } from '../../api/resources';
+import useCachedResource from '../../hooks/useCachedResource';
 import CheckoutModal from '../../components/pos/CheckoutModal';
 import PrintConfirmationModal from '../../components/pos/PrintConfirmationModal';
 import TableDetailModal from '../../components/dining/TableDetailModal';
 import { tableStatusMeta, fmtCurrency, fmtElapsed } from '../../components/dining/tableStatus';
 import useCronosAgent from '../../hooks/useCronosAgent';
+
+/** Referencias estables para el estado aun sin cargar: evitan romper useMemo. */
+const EMPTY = Object.freeze([]);
+const EMPTY_SUMMARY = Object.freeze({ total: 0, available: 0, occupied: 0, reserved: 0 });
+const DEFAULT_TAX_RATE = 0.16;
 
 /**
  * Plano de mesas (Floor Plan).
@@ -19,16 +25,14 @@ import useCronosAgent from '../../hooks/useCronosAgent';
  * Es una vista compartida entre varios meseros, por lo que se refresca al
  * recuperar el foco de la ventana y tras cada operacion, en lugar de sondear en
  * bucle: la casa evita el polling por diseno.
+ *
+ * El shell (sidebar + header) lo aporta la ruta padre `PersistentShell`, que
+ * NO se desmonta al alternar con el POS (Fase 11).
  */
 export default function TablesFloorPlanPage() {
   const cronosAgent = useCronosAgent();
 
-  const [tables, setTables] = useState([]);
-  const [summary, setSummary] = useState({ total: 0, available: 0, occupied: 0, reserved: 0 });
-  const [zones, setZones] = useState([]);
   const [zoneFilter, setZoneFilter] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [taxRate, setTaxRate] = useState(0.16);
 
   const [openTarget, setOpenTarget] = useState(null);
   const [guests, setGuests] = useState(null);
@@ -39,24 +43,35 @@ export default function TablesFloorPlanPage() {
   const [chargeSession, setChargeSession] = useState(null);
   const [pendingPrint, setPendingPrint] = useState(null);
 
-  const fetchTables = useCallback(async () => {
-    try {
-      const res = await api.get('/tables');
-      setTables(res.data.data);
-      setSummary(res.data.metadata.summary);
-      setZones(res.data.metadata.zones ?? []);
-    } catch {
-      toast.error('Error al cargar el plano de mesas.');
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  /*
+   * El plano sale de la cache compartida (Fase 11). Al volver desde el POS, la
+   * ventana de frescura de 10 s hace que la vista se pinte en el primer frame
+   * con las mesas ya conocidas y la revalidacion ocurra en segundo plano: el
+   * salon nunca aparece vacio ni con un spinner intermedio.
+   */
+  const tablesQuery = useCachedResource(RESOURCE.DINING_TABLES, fetcherOf(RESOURCE.DINING_TABLES), {
+    staleTime: staleTimeOf(RESOURCE.DINING_TABLES),
+  });
+  const taxRateQuery = useCachedResource(RESOURCE.TAX_RATE, fetcherOf(RESOURCE.TAX_RATE), {
+    staleTime: staleTimeOf(RESOURCE.TAX_RATE),
+  });
 
-  useEffect(() => { fetchTables(); }, [fetchTables]);
+  const tables = tablesQuery.data?.tables ?? EMPTY;
+  const summary = tablesQuery.data?.summary ?? EMPTY_SUMMARY;
+  const zones = tablesQuery.data?.zones ?? EMPTY;
+  const taxRate = taxRateQuery.data ?? DEFAULT_TAX_RATE;
+  const loading = tablesQuery.isLoading;
+
+  /** Revalidacion forzada: se usa tras cada operacion sobre una mesa. */
+  const fetchTables = useCallback(() => tablesQuery.refresh(), [tablesQuery]);
 
   useEffect(() => {
-    api.get('/tax-rate').then(res => setTaxRate(res.data.data.rate)).catch(() => {});
-  }, []);
+    if (tablesQuery.error) {
+      toast.error('No se pudo actualizar el plano de mesas.', {
+        description: 'Se muestra el ultimo estado conocido del salon.',
+      });
+    }
+  }, [tablesQuery.error]);
 
   // El salon cambia bajo los pies: al volver a la pestana, revalidar.
   useEffect(() => {
@@ -149,7 +164,7 @@ export default function TablesFloorPlanPage() {
   ];
 
   return (
-    <AppLayout>
+    <>
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-xl font-semibold text-slate-900">Plano de Mesas</h1>
@@ -333,6 +348,9 @@ export default function TablesFloorPlanPage() {
         tableSession={chargeSession}
         onSuccess={(order, meta) => {
           setChargeSession(null);
+          // El cobro libero la mesa y movio stock: el catalogo que vera el POS
+          // al volver ya no es valido, aunque su ventana siga vigente.
+          invalidateAfterSale();
           fetchTables();
           setPendingPrint({
             order,
@@ -351,6 +369,6 @@ export default function TablesFloorPlanPage() {
         cronosAgent={cronosAgent}
         onClose={() => setPendingPrint(null)}
       />
-    </AppLayout>
+    </>
   );
 }

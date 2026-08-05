@@ -1,5 +1,7 @@
 <?php
 
+use App\Http\Controllers\Admin\BackupController;
+use App\Http\Controllers\Admin\JobMonitorController;
 use App\Http\Controllers\Admin\MailPreviewController;
 use App\Http\Controllers\Admin\PrintTicketController;
 use App\Http\Controllers\Admin\QzSecurityController;
@@ -31,13 +33,17 @@ use App\Http\Controllers\Sales\DailySummaryController;
 use App\Http\Controllers\Sales\OrderController;
 use App\Http\Controllers\Sales\SalesExportController;
 use App\Http\Controllers\Sales\TicketConfigController;
+use App\Models\GlobalSetting;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('auth')->group(function () {
     Route::post('/login', [AuthController::class, 'login']);
 
     Route::middleware('auth:sanctum')->group(function () {
-        Route::post('/2fa/verify', [AuthController::class, 'verify2fa']);
+        // Un TOTP son 6 digitos: sin freno, un script agota el espacio de
+        // claves durante la vigencia del token temporal de 5 minutos.
+        Route::post('/2fa/verify', [AuthController::class, 'verify2fa'])
+            ->middleware('throttle:6,1');
     });
 
     Route::middleware(['auth:sanctum', 'user.active'])->group(function () {
@@ -94,9 +100,10 @@ Route::middleware(['auth:sanctum', 'user.active'])->group(function () {
     Route::get('printer/certificate', [QzSecurityController::class, 'certificate']);
 
     Route::get('tax-rate', function () {
-        $setting = \App\Models\GlobalSetting::where('key', 'tax_rate')->first();
+        $setting = GlobalSetting::where('key', 'tax_rate')->first();
         $rate = $setting ? (float) ($setting->value['rate'] ?? 0.16) : 0.16;
         $label = $setting ? ($setting->value['label'] ?? 'IVA 16%') : 'IVA 16%';
+
         return response()->json(['status' => 'success', 'data' => ['rate' => $rate, 'label' => $label]]);
     });
 
@@ -148,6 +155,37 @@ Route::middleware(['auth:sanctum', 'user.active'])->group(function () {
     Route::middleware('role:admin')->group(function () {
         Route::get('admin/cash-closings-audit', [CashRegisterClosingController::class, 'audit']);
         Route::get('admin/cash-closings-audit/{closing}', [CashRegisterClosingController::class, 'auditShow']);
+    });
+
+    /*
+    |--------------------------------------------------------------------------
+    | FASE 10 — Telemetria de Jobs y Ecosistema de Rollback (admin only)
+    |--------------------------------------------------------------------------
+    |
+    | Observabilidad de la cola y recuperacion ante desastres. Ambas familias
+    | son EXCLUSIVAS de administradores: la primera expone trazas tecnicas con
+    | detalles internos del sistema, y la segunda puede reescribir la base de
+    | datos completa.
+    |
+    */
+    Route::middleware('role:admin')->prefix('admin')->group(function () {
+
+        // Telemetria de jobs en segundo plano.
+        Route::prefix('jobs')->group(function () {
+            Route::get('/', [JobMonitorController::class, 'index']);
+            // `history` va ANTES de `{job}` o el router lo tomaria por un UUID.
+            Route::get('/history', [JobMonitorController::class, 'history']);
+            Route::get('/{job}', [JobMonitorController::class, 'show']);
+            Route::post('/{job}/retry', [JobMonitorController::class, 'retry']);
+        });
+
+        // Boveda de respaldos y rollback manual.
+        Route::prefix('backups')->group(function () {
+            Route::get('/', [BackupController::class, 'index']);
+            Route::post('/', [BackupController::class, 'store']);
+            Route::get('/{snapshot}/verify', [BackupController::class, 'verify']);
+            Route::post('/{snapshot}/restore', [BackupController::class, 'restore']);
+        });
     });
 
     Route::prefix('stock-movements')->group(function () {

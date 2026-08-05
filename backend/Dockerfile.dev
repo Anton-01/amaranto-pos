@@ -27,6 +27,11 @@ RUN apk add --no-cache \
     && apk del $PHPIZE_DEPS linux-headers \
     && rm -rf /tmp/pear
 
+# FASE 10 — pg_dump / psql / openssl / tar para el ecosistema de respaldo y
+# rollback. Se instalan tambien en desarrollo para que `cronos:backup-run` y
+# `cronos:backup-restore` se puedan probar antes de llegar a produccion.
+RUN apk add --no-cache postgresql16-client openssl tar gzip
+
 # Install Composer from official image
 COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 

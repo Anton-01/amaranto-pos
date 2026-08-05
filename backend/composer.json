@@ -3,7 +3,10 @@
     "name": "laravel/laravel",
     "type": "project",
     "description": "The skeleton application for the Laravel framework.",
-    "keywords": ["laravel", "framework"],
+    "keywords": [
+        "laravel",
+        "framework"
+    ],
     "license": "MIT",
     "require": {
         "php": "^8.3",
@@ -25,6 +28,9 @@
         "mockery/mockery": "^1.6",
         "nunomaduro/collision": "^8.6",
         "phpunit/phpunit": "^12.5.12"
+    },
+    "suggest": {
+        "league/flysystem-google-cloud-storage": "Fase 10 — Requerido para la boveda AISLADA de respaldos en el disco \"gcs_backups\". Sin el, BackupService opera sobre el disco local. Instalar con: composer require league/flysystem-google-cloud-storage:^3.0"
     },
     "autoload": {
         "psr-4": {

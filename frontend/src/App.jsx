@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Toaster } from 'sonner';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import usePageTitle from './hooks/usePageTitle';
+import AppLayout from './components/layout/AppLayout';
 import LoginPage from './pages/auth/LoginPage';
 import DashboardPage from './pages/DashboardPage';
 import CategoriesPage from './pages/catalog/CategoriesPage';
@@ -26,6 +27,7 @@ import MailTemplatesPage from './pages/admin/MailTemplatesPage';
 import TablesFloorPlanPage from './pages/dining/TablesFloorPlanPage';
 import TablesPage from './pages/admin/TablesPage';
 import CashClosingsAuditPage from './pages/admin/CashClosingsAuditPage';
+import JobsMonitorPage from './pages/admin/JobsMonitorPage';
 
 function ProtectedRoute({ children }) {
   const { user, loading } = useAuth();
@@ -68,6 +70,27 @@ function PageTitleManager() {
   return null;
 }
 
+/**
+ * Shell PERSISTENTE de las dos vistas de alta rotacion (Fase 11).
+ *
+ * El resto del sistema monta `<AppLayout>` dentro de cada pagina, de modo que
+ * navegar desmonta y vuelve a montar sidebar, header, reloj, campana y
+ * contador de ventas. Entre POS y Mesas —donde el cajero alterna decenas de
+ * veces por turno— ese derribo del chrome ES el parpadeo en blanco.
+ *
+ * Al colgar ambas rutas de un layout route comun, React Router conserva el
+ * arbol del shell y solo intercambia el contenido del <Outlet/>: no hay
+ * teardown de DOM, ni remonte de los widgets del header, ni reinicio del
+ * estado del sidebar.
+ */
+function PersistentShell() {
+  return (
+    <ProtectedRoute>
+      <AppLayout />
+    </ProtectedRoute>
+  );
+}
+
 export default function App() {
   return (
     <BrowserRouter>
@@ -90,8 +113,15 @@ export default function App() {
           <Route path="/products/create" element={<ProtectedRoute><ProductFormPage /></ProtectedRoute>} />
           <Route path="/products/:id/edit" element={<ProtectedRoute><ProductFormPage /></ProtectedRoute>} />
           <Route path="/promotions" element={<ProtectedRoute><PromotionsPage /></ProtectedRoute>} />
-          <Route path="/pos" element={<ProtectedRoute><POSPage /></ProtectedRoute>} />
-          <Route path="/mesas" element={<ProtectedRoute><TablesFloorPlanPage /></ProtectedRoute>} />
+          {/*
+            POS y Mesas comparten un shell que NO se desmonta al alternar
+            entre ellas. Ambas paginas, en consecuencia, ya no renderizan su
+            propio <AppLayout>: lo aporta la ruta padre.
+          */}
+          <Route element={<PersistentShell />}>
+            <Route path="/pos" element={<POSPage />} />
+            <Route path="/mesas" element={<TablesFloorPlanPage />} />
+          </Route>
           <Route path="/petty-cash" element={<ProtectedRoute><PettyCashPage /></ProtectedRoute>} />
           <Route path="/finance" element={<ProtectedRoute><FinanceDashboardPage /></ProtectedRoute>} />
           <Route path="/stock-movements" element={<ProtectedRoute><StockMovementsPage /></ProtectedRoute>} />
@@ -107,6 +137,7 @@ export default function App() {
           <Route path="/admin/roles-permisos" element={<ProtectedRoute><RolesPermissionsPage /></ProtectedRoute>} />
           <Route path="/admin/cierres" element={<ProtectedRoute><CashRegisterClosingsPage /></ProtectedRoute>} />
           <Route path="/admin/cash-closings-audit" element={<ProtectedRoute><CashClosingsAuditPage /></ProtectedRoute>} />
+          <Route path="/admin/jobs-monitor" element={<ProtectedRoute><JobsMonitorPage /></ProtectedRoute>} />
           <Route path="/admin/notificaciones/plantillas" element={<ProtectedRoute><MailTemplatesPage /></ProtectedRoute>} />
           <Route path="*" element={<Navigate to="/login" replace />} />
         </Routes>

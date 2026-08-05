@@ -35,4 +35,24 @@ return [
         ],
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | Cloudflare Turnstile (Escudo anti-bots del login — Fase 9)
+    |--------------------------------------------------------------------------
+    |
+    | site_key   -> publico, consumido por el frontend (VITE_TURNSTILE_SITE_KEY).
+    | secret_key -> privado, jamas sale del backend. Sin el, el escudo queda
+    |               inactivo y el login opera con las demas capas (throttling).
+    | fail_open  -> que hacer si Cloudflare no responde. Por defecto se cierra.
+    |
+    */
+
+    'turnstile' => [
+        'enabled' => (bool) env('TURNSTILE_ENABLED', true),
+        'site_key' => env('TURNSTILE_SITE_KEY'),
+        'secret_key' => env('TURNSTILE_SECRET_KEY'),
+        'timeout' => (int) env('TURNSTILE_TIMEOUT', 5),
+        'fail_open' => (bool) env('TURNSTILE_FAIL_OPEN', false),
+    ],
+
 ];

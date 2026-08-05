@@ -6,8 +6,11 @@
 - Base de Datos: Managed PostgreSQL (DigitalOcean)
 - Cache / Colas: Redis 7 Alpine (cache global + queue worker)
 - WebSockets: Laravel Reverb (puerto 8080, tiempo real)
-- Estado del Proyecto: [🟢 FASE 8: SISTEMA ENTERPRISE DE CIERRES AUTOMÁTICOS, NOTIFICACIONES TAGGEADAS, ANALÍTICA FINANCIERA Y AUDITORÍA INMUTABLE COMPLETADO] — Scheduler de cierre de caja 21:00 bajo usuario de sistema, notificaciones estructuradas por tags JSON con modal de plantillas dinámicas, modal de analítica financiera mensual con export CSV, y auditoría forense de cierres admin-only (ver sección 40).
-- Fase previa: [🟢 FASE 7: SISTEMA DE GESTIÓN DE MESAS (DINE-IN) IMPLEMENTADO] — Comedor operativo: plano de mesas, cuentas vivas transaccionales, comandas incrementales y cobro con liberación automática (ver sección 39).
+- Estado del Proyecto: [🟢 FASE 11: TRANSICIONES INSTANTÁNEAS POS ↔ MESAS COMPLETADO] — Caché SWR suscribible con render inmediato desde memoria y revalidación silenciosa, shell persistente que deja de desmontar sidebar y header, cascada serial del POS eliminada (4 lecturas en paralelo) y prefetch por intención en hover/focus. Medido con Playwright sobre el bundle de producción: parpadeo eliminado (7-8 → 0 frames con spinner), Mesas→POS de 241 ms a ~110 ms y 24 → 1 peticiones HTTP en cuatro idas y vueltas (ver sección 44).
+- Fase previa: [🟢 FASE 10: TELEMETRÍA DE JOBS, HISTÓRICO DE EJECUCIÓN Y ECOSISTEMA DE ROLLBACK/BACKUPS AISLADOS EN GCP COMPLETADO] — Bitácora forense `job_execution_logs` alimentada por los eventos nativos de la cola (un renglón por intento, con traza y disparador), panel admin `/admin/jobs-monitor` con catálogo, histórico y reintento manual; y bóveda de respaldos cifrada AES-256 en Google Cloud Storage —aislada de la infraestructura primaria en DigitalOcean— con rollback transaccional validado por checksum SHA-256 (ver sección 43).
+- Fase 9: [🟢 ESCUDO DE SEGURIDAD Y THROTTLING COMPLETADO] — Blindaje perimetral en cuatro capas: candado anti fuerza bruta en el login (5 fallos/min por email+IP → bloqueo de 15 min con `Retry-After`), cupo global de API (100 req/min por usuario/IP), middleware global de cabeceras de seguridad con CSP calibrada, y Cloudflare Turnstile invisible validado server-side antes de las credenciales (ver sección 42).
+- Fase 8: [🟢 SISTEMA ENTERPRISE DE CIERRES AUTOMÁTICOS, NOTIFICACIONES TAGGEADAS, ANALÍTICA FINANCIERA Y AUDITORÍA INMUTABLE COMPLETADO] — Scheduler de cierre de caja 21:00 bajo usuario de sistema, notificaciones estructuradas por tags JSON con modal de plantillas dinámicas, modal de analítica financiera mensual con export CSV, y auditoría forense de cierres admin-only (ver sección 40).
+- Fase 7: [🟢 SISTEMA DE GESTIÓN DE MESAS (DINE-IN) IMPLEMENTADO] — Comedor operativo: plano de mesas, cuentas vivas transaccionales, comandas incrementales y cobro con liberación automática (ver sección 39).
 - Estado de Infraestructura: [🟢 FASE 7: DEPLOY ÁGIL Y DOCKER OPTIMIZADO] — Docker Compose multi-contenedor operativo (4 servicios: backend, frontend, postgres, redis).
 - Despliegue Produccion: [🟢 FASE 7: DEPLOY ÁGIL Y DOCKER OPTIMIZADO] — DigitalOcean Droplet + Managed PostgreSQL, imagenes base pre-compiladas (serversideup/php:8.4-fpm-alpine + nginx:alpine), frontend Vite pre-construido en local (frontend/dist versionado), Nginx proxy inverso HTTPS/WSS, Certbot SSL, deploy.sh automatizado. Tiempo estimado de build en el Droplet: < 2 minutos (antes: ~82 min).
 
@@ -53,6 +56,9 @@
 | Analítica Financiera Mensual (Dashboard) | [🟢 FASE 8: COMPLETADO] | [🟢 FASE 8: COMPLETADO] | Endpoint agregado role:admin,manager (totales, comparativa mensual, métodos de pago, top productos, horas pico, tendencia diaria), modal con skeleton + export CSV — ver sección 40 |
 | Auditoría Histórica de Cierres (Admin Only) | [🟢 FASE 8: COMPLETADO] | [🟢 FASE 8: COMPLETADO] | `/admin/cash-closings-audit` con middleware role:admin, tabla lazy paginada con filtros, radiografía forense de solo lectura, triple candado de inmutabilidad — ver sección 40 |
 | Sistema de Gestión de Mesas (Dine-in) | [🟢 FASE 7: IMPLEMENTADO] | [🟢 FASE 7: IMPLEMENTADO] | Tablas `tables` y `table_sessions`, orden base en estado `open`, 4 endpoints transaccionales con `lockForUpdate` + índice único parcial, botón de mesas a la izquierda del reloj en el header del POS, catálogo en sidebar de Administración, trazabilidad mesa/mesero en histórico y ticket — ver sección 39 |
+| Transiciones Instantáneas POS ↔ Mesas | N/A | [🟢 FASE 11: COMPLETADO] | Caché SWR (`readCache` + `useCachedResource` sobre `useSyncExternalStore`) con `staleTime` por volatilidad real del dato; `PersistentShell` como layout route que evita el derribo de sidebar/header; cascada serial del POS eliminada; prefetch `onMouseEnter`/`onFocus`; carrito que sobrevive a la navegación. Medido: spinner 7-8 → 0 frames, Mesas→POS 241 → ~110 ms, 24 → 1 peticiones — ver sección 44 |
+| Telemetría de Jobs y Rollback/Backups GCP | [🟢 FASE 10: COMPLETADO] | [🟢 FASE 10: COMPLETADO] | Tabla `job_execution_logs` (una fila por intento) alimentada por JobQueued/JobProcessing/JobProcessed/JobFailed sin instrumentar ningún job; 3 endpoints admin + reintento vía `queue:retry`; vista `/admin/jobs-monitor` con catálogo, histórico forense, modal de traza y panel de puntos de restauración; bóveda `gcs_backups` cifrada AES-256+PBKDF2 aislada en GCP, rollback transaccional (`--single-transaction` + `ON_ERROR_STOP`) con checksum SHA-256 y respaldo de seguridad previo; scheduler 03:30 respaldo / 04:15 poda; 30 pruebas en verde — ver sección 43 |
+| Escudo de Seguridad y Throttling | [🟢 FASE 9: COMPLETADO] | [🟢 FASE 9: COMPLETADO] | Candado de login 5 fallos/min por email+IP → bloqueo 15 min con `Retry-After`; cupo global 100 req/min (guard sanctum explícito + `trustProxies`); middleware global `SecurityHeaders` (XFO DENY, nosniff, HSTS, CSP calibrada para Turnstile / agente local 9100 / Reverb WSS); Cloudflare Turnstile invisible validado server-side antes de las credenciales; interceptor Axios 429 + alerta de bloqueo con cuenta regresiva en LoginPage; 18 pruebas en verde — ver sección 42 |
 | Optimizacion Modal de Cobro (Rendimiento) | [🟢 COMPLETADO Y OPERATIVO] | [🟢 COMPLETADO Y OPERATIVO] | Catálogo de métodos de pago servido desde Redis (`Cache::remember`, TTL 60 min, invalidación automática en alta/edición/baja); input de "Dinero Recibido" con sanitización estricta en `onChange` (sin `onBlur`), cálculo del cambio y habilitación de "Confirmar Cobro" en tiempo real desde la primera tecla |
 
 ## 3. Detalle del Modulo Completado: Migraciones & Modelos Base
@@ -3421,3 +3427,730 @@ Barrido transversal de `pages/`, `components/`, `hooks/` y `context/`: **83 `use
 - `src/pages/admin/TrashPage.jsx` — Debounce de busqueda (400ms)
 - `src/pages/admin/CashClosingsAuditPage.jsx` — Patron de carga explicito con guard de montaje
 - `frontend/dist/` — Build de produccion regenerado
+
+## 42. FASE 9: ESCUDO DE SEGURIDAD Y THROTTLING [🟢 COMPLETADO Y OPERATIVO]
+
+Blindaje perimetral del POS contra fuerza bruta, bots automatizados y saturacion
+del servidor. Cuatro capas independientes: **candado de login**, **cupo global de
+API**, **cabeceras HTTP endurecidas** y **escudo anti-bots invisible**.
+
+### 42.1 Rate Limiting Especifico de Login (Fuerza Bruta)
+
+**Componente:** `app/Support/LoginThrottle.php` (sobre `Illuminate\Support\Facades\RateLimiter`, respaldado en Redis).
+
+Politica de **dos niveles** sobre la clave compuesta `sha1(email_minusculas + '|' + $request->ip())`:
+
+| Nivel | Clave Redis | Politica | Efecto |
+| :--- | :--- | :--- | :--- |
+| 1 — Ventana de conteo | `auth:login:attempts:{sig}` | **5 intentos FALLIDOS / 60 s** | Solo cuenta; cada 401 incrementa |
+| 2 — Candado | `auth:login:lock:{sig}` | **900 s (15 min)** | Al desbordar el nivel 1 se arma; mientras dure, ninguna credencial se compara contra PostgreSQL |
+
+**Por que email + IP y no uno solo:** por IP pura, un cajero torpe bloquearia a
+toda la sucursal detras del mismo NAT. Por email puro, un atacante podria
+bloquear a voluntad la cuenta del administrador (DoS de cuenta) y el rociado de
+credenciales desde botnet quedaria impune. La combinacion cierra ambos flancos.
+
+**Respuesta HTTP 429** (`ERR_AUTH_TOO_MANY_ATTEMPTS`):
+
+```
+HTTP/1.1 429 Too Many Requests
+Retry-After: 900
+
+{
+  "status": "error",
+  "code": "ERR_AUTH_TOO_MANY_ATTEMPTS",
+  "message": "Por seguridad, tu acceso ha sido bloqueado temporalmente. Intenta nuevamente en 15 minutos.",
+  "errors": [],
+  "metadata": { "retry_after_seconds": 900, "retry_after_minutes": 15, "max_attempts": 5 }
+}
+```
+
+**Detalles operativos:**
+- Un login con credenciales **correctas** libera contador y candado — aunque el flujo continue hacia el reto 2FA.
+- Cada 401 devuelve `metadata.remaining_attempts` para que el cajero vea cuantos intentos le restan antes del bloqueo.
+- El intento bloqueado se registra en el log con nivel `warning` (email, IP, segundos restantes) para auditoria forense.
+- **`POST /api/auth/2fa/verify` lleva `throttle:6,1`**: un TOTP son 6 digitos y el token temporal vive 5 minutos — sin freno el espacio de claves es agotable.
+
+### 42.2 Rate Limiting Global de la API (Anti-Saturacion)
+
+**Componente:** `AppServiceProvider::configureRateLimiting()` + `bootstrap/app.php`.
+
+```php
+// bootstrap/app.php — prepend al grupo `api`
+$middleware->api(prepend: [ThrottleRequests::class.':api']);
+```
+
+| Parametro | Valor | Nota |
+| :--- | :--- | :--- |
+| Limite | **100 peticiones / minuto** | `THROTTLE_API_MAX_ATTEMPTS` |
+| Identidad | `$request->user('sanctum')?->id` ?: `$request->ip()` | Guard **explicito** |
+| Respuesta | 429 `ERR_API_RATE_LIMIT_EXCEEDED` + `Retry-After` | Catalogo corporativo |
+
+**Trampa evitada — el guard explicito:** el middleware de throttle corre *antes*
+del `auth:sanctum` de la ruta. Con `$request->user()` a secas se consultaria el
+guard por defecto (`web`, basado en sesion), que devuelve `null` para peticiones
+con Bearer token: todo el trafico autenticado habria colapsado silenciosamente
+en un unico cubo por IP, y una sucursal con 5 cajas se habria auto-bloqueado.
+
+**Trampa evitada — proxies de confianza:** se activo
+`$middleware->trustProxies(at: '*')`. La API solo es alcanzable a traves del
+Nginx del host (`127.0.0.1:8000`); sin confiar en ese proxy, `$request->ip()`
+devolveria siempre la IP del proxy y **todo** el throttling por IP —login
+incluido— habria degenerado en un unico cubo global. De paso, `X-Forwarded-Proto`
+permite que `$request->isSecure()` detecte TLS y emita HSTS.
+
+### 42.3 Middleware de Cabeceras de Seguridad
+
+**Componente:** `app/Http/Middleware/SecurityHeaders.php`, registrado como
+middleware **global** (`$middleware->append(...)`) — se aplica a toda respuesta:
+API, `/storage`, previews de correo y health check.
+
+| Cabecera | Valor | Proposito |
+| :--- | :--- | :--- |
+| `X-Frame-Options` | `DENY` | Anti clickjacking |
+| `X-XSS-Protection` | `1; mode=block` | Filtro XSS legado |
+| `X-Content-Type-Options` | `nosniff` | Prohibe adivinar el MIME |
+| `Strict-Transport-Security` | `max-age=31536000; includeSubDomains` | Fuerza HTTPS 1 año |
+| `Referrer-Policy` | `strict-origin-when-cross-origin` | Fuga de URLs |
+| `Permissions-Policy` | `camera=(), microphone=(), geolocation=(), payment=(), usb=()` | Desactiva APIs sensibles |
+| `X-Permitted-Cross-Domain-Policies` | `none` | Bloquea policies Flash/PDF |
+| `Content-Security-Policy` | ver abajo | Anti XSS / inyeccion |
+
+**HSTS solo se emite sobre TLS** (`$request->isSecure()`), o forzado con
+`SECURITY_HSTS_FORCE=true`. Anunciarlo en `http://` no tiene efecto y en
+desarrollo local llegaria a dejar el dominio inaccesible por http.
+
+**Content Security Policy** — calibrada contra las necesidades reales del stack:
+
+```
+default-src 'self'; base-uri 'self'; form-action 'self';
+frame-ancestors 'none'; object-src 'none';
+script-src 'self' https://challenges.cloudflare.com;
+style-src 'self' 'unsafe-inline';
+img-src 'self' data: blob:;
+font-src 'self' data:;
+connect-src 'self' https://challenges.cloudflare.com
+            http://127.0.0.1:9100 http://localhost:9100
+            wss://<dominio>;
+frame-src 'self' https://challenges.cloudflare.com;
+worker-src 'self' blob:; manifest-src 'self'
+```
+
+| Directiva | Por que asi |
+| :--- | :--- |
+| `style-src 'unsafe-inline'` | **Inevitable**: Tailwind v4 y PrimeReact escriben estilos en linea en runtime |
+| `script-src` SIN `'unsafe-inline'` | El bundle de Vite es externo; no hay excusa para relajarlo |
+| `connect-src http://127.0.0.1:9100` | **Cronos POS Agent** — impresion ESC/POS en el equipo del cajero |
+| `connect-src wss://<dominio>` | Laravel Reverb. El host se deriva de `REVERB_HOST`, y si vale `0.0.0.0` (direccion de *bind*, no publica) cae a `APP_URL` |
+| `frame-src 'self'` | iframe `srcDoc` del visor de plantillas de correo |
+| `frame-ancestors 'none'` | Equivalente moderno de `X-Frame-Options: DENY` |
+
+**Reparto de responsabilidad en Nginx (fuente unica de verdad):** la CSP de
+Laravel viaja en respuestas **JSON**; quien protege al navegador es la del
+**documento HTML**. Por eso:
+
+- `frontend/nginx.conf` (contenedor de la SPA) → cabeceras + CSP del documento.
+- `App\Http\Middleware\SecurityHeaders` → `/api`, `/sanctum`, `/storage`.
+- `infrastructure/cronos-pos.conf` (Nginx del host) → **se le retiro el bloque
+  `add_header` a nivel `server`**. Duplicaba cada cabecera sobre la respuesta del
+  upstream: el navegador recibia dos `Content-Security-Policy` y aplicaba la
+  **interseccion** de ambas, lo que habria roto Turnstile o el agente local en
+  cuanto las dos politicas divergieran. Tambien se corrigio `X-Frame-Options`,
+  que estaba en `SAMEORIGIN` en lugar de `DENY`.
+
+> Nota de Nginx: un `add_header` dentro de un `location` **descarta** todos los
+> heredados del nivel `server`. Por eso el bloque de seguridad se repite integro
+> dentro del `location` de assets estaticos.
+
+### 42.4 Escudo Anti-Bots: Cloudflare Turnstile
+
+Invisible para el cajero: **cero puzzles**. El widget se monta en modo
+`appearance: 'interaction-only'` y resuelve el reto en segundo plano; solo se
+hace visible si Cloudflare exige interaccion humana explicita.
+
+**Backend** — `app/Services/Security/TurnstileVerifier.php`:
+- `POST https://challenges.cloudflare.com/turnstile/v0/siteverify` con `secret`, `response` (token) y `remoteip`.
+- Se valida **antes** de consultar credenciales en la base de datos.
+- **Activacion automatica**: el escudo solo opera si `TURNSTILE_SECRET_KEY` esta configurada. Sin llaves, el login sigue protegido por el resto de capas — asi el entorno local y los tests no requieren cuenta de Cloudflare.
+- **Falla cerrado** si Cloudflare no responde (`TURNSTILE_FAIL_OPEN=false`): es un POS financiero y un atacante podria provocar el corte de red a proposito. Invertible para sucursales con conectividad inestable.
+
+| Escenario | HTTP | Codigo |
+| :--- | :--- | :--- |
+| Token ausente | 422 | `ERR_AUTH_CAPTCHA_REQUIRED` |
+| Token rechazado por Cloudflare | 403 | `ERR_AUTH_CAPTCHA_FAILED` |
+| Cloudflare inalcanzable (fail-closed) | 503 | `ERR_AUTH_CAPTCHA_UNAVAILABLE` |
+
+**Frontend** — `src/lib/turnstile.js` + `src/components/auth/TurnstileWidget.jsx`:
+- Carga `api.js?render=explicit` **una sola vez por documento** (promesa memoizada a nivel de modulo: React StrictMode duplica los efectos en desarrollo).
+- El token viaja en el payload del login como `cf_turnstile_token`.
+- **Los tokens son de un solo uso**: tras cada intento fallido `resetSignal` fuerza uno nuevo, o el backend rechazaria el reenvio como token ya consumido.
+- Los callbacks se guardan en `ref` para que el widget no se re-monte en cada tecla del formulario.
+- Si `VITE_TURNSTILE_SITE_KEY` esta vacia el componente no renderiza nada y el escudo queda inactivo.
+
+> **Guardia de despliegue** (`build-frontend.sh`): el build avisa si
+> `VITE_TURNSTILE_SITE_KEY` no esta definida. Un bundle sin site key contra un
+> backend **con** secreto configurado rechazaria **todos** los logins con
+> `ERR_AUTH_CAPTCHA_REQUIRED`. Ver `frontend/.env.example`.
+
+### 42.5 Manejo Elegante del 429 en el Frontend
+
+**Interceptor global** (`src/api/axios.js`):
+- El 429 se resuelve **antes** que el resto de estados: nunca debe interpretarse como sesion invalida ni arrastrar al cajero a `/login` perdiendo su trabajo.
+- `parseRetryAfter(error)` soporta las **dos** formas del RFC para `Retry-After` (entero de segundos y fecha HTTP) y cae a `metadata.retry_after_seconds`.
+- Emite el evento global `cronos:rate-limited` y adjunta `error.retryAfter`.
+- Muestra toast en cualquier ruta **salvo** `/auth/login`, que pinta su propia alerta.
+
+**Hook** `src/hooks/useRateLimitLockout.js`: temporizador regresivo sobre una
+**marca de tiempo absoluta**, no un contador decreciente — los navegadores
+estrangulan `setInterval` en pestañas de fondo y un contador ingenuo se
+desincronizaria del `Retry-After` real mientras el cajero mira otra ventana.
+Expone `locked`, `countdown` (`14:52`), `humanized` (`15 minutos`), `start`, `clear`.
+
+**LoginPage** (`src/pages/auth/LoginPage.jsx`) al recibir 429:
+- Alerta rose con icono de candado, `role="alert"` + `aria-live="assertive"`:
+  *"Por seguridad, tu acceso ha sido bloqueado temporalmente. Intenta nuevamente en 15 minutos."*
+- Cuenta regresiva en monoespaciada tabular (`14:52`).
+- **Boton desactivado** con etiqueta `Acceso bloqueado — 14:52`; email y password tambien se bloquean y el password se limpia.
+- Al llegar a `00:00` la alerta desaparece y el formulario se rehabilita solo.
+
+### 42.6 Configuracion (`config/security.php`)
+
+Punto unico de verdad, todo parametrizable por entorno para que el hardening de
+produccion no rompa el desarrollo local:
+
+| Variable | Default | Descripcion |
+| :--- | :--- | :--- |
+| `THROTTLE_API_MAX_ATTEMPTS` | 100 | Peticiones/min por usuario o IP |
+| `THROTTLE_LOGIN_MAX_ATTEMPTS` | 5 | Fallos tolerados por ventana |
+| `THROTTLE_LOGIN_WINDOW` | 60 | Ventana de conteo (s) |
+| `THROTTLE_LOGIN_LOCKOUT` | 900 | Candado al desbordar (s) |
+| `SECURITY_HEADERS_ENABLED` | true | Interruptor maestro de cabeceras |
+| `SECURITY_CSP_ENABLED` | true | Interruptor de la CSP |
+| `SECURITY_CSP_REPORT_ONLY` | false | Reporta sin bloquear (calibracion) |
+| `SECURITY_HSTS_MAX_AGE` | 31536000 | 1 año |
+| `SECURITY_HSTS_FORCE` | false | Emitir HSTS tambien sobre http |
+| `SECURITY_CSP_EXTRA_{SCRIPT,CONNECT,IMG}_SRC` | — | Origenes extra separados por espacio |
+| `TURNSTILE_ENABLED` | true | Interruptor del escudo anti-bots |
+| `TURNSTILE_SITE_KEY` / `VITE_TURNSTILE_SITE_KEY` | — | Llave publica (debe coincidir) |
+| `TURNSTILE_SECRET_KEY` | — | Llave privada; **sin ella el escudo no opera** |
+| `TURNSTILE_FAIL_OPEN` | false | Que hacer si Cloudflare no responde |
+
+### 42.7 Cobertura de Pruebas
+
+`backend/tests/Feature/Security/` — **18 pruebas, 77 aserciones, en verde**.
+Ninguna requiere PostgreSQL: las capas verificadas se resuelven *antes* de tocar
+la base de datos, que es justamente el diseño que se valida.
+
+| Archivo | Cubre |
+| :--- | :--- |
+| `SecurityHeadersTest.php` | Cabeceras obligatorias; HSTS omitido en http y emitido en https; CSP habilita Turnstile y el agente local; `script-src` sin `'unsafe-inline'`; modo report-only |
+| `ApiRateLimitTest.php` | Corte al superar el cupo; `Retry-After` presente y positivo; el 429 conserva las cabeceras de seguridad |
+| `LoginThrottleTest.php` | 5 fallos tolerados y candado de 900 s al sexto; persistencia del candado; aislamiento por email **e** IP; normalizacion a minusculas; liberacion tras exito; `remaining_attempts` |
+| `LoginShieldTest.php` | Contrato HTTP del 429 de login; Turnstile inactivo sin secreto; rechazo sin token y con token invalido; fail-closed 503; **el candado se evalua antes que el captcha** (un atacante bloqueado no gasta cuota de Cloudflare) |
+
+### Archivos Creados en esta Fase
+**Backend:**
+- `config/security.php` — Politicas de throttling y cabeceras
+- `app/Http/Middleware/SecurityHeaders.php` — Escudo de cabeceras global
+- `app/Support/LoginThrottle.php` — Candado de fuerza bruta de dos niveles
+- `app/Services/Security/TurnstileVerifier.php` — Verificacion server-side de Turnstile
+- `tests/Feature/Security/{SecurityHeadersTest,ApiRateLimitTest,LoginThrottleTest,LoginShieldTest}.php`
+
+**Frontend:**
+- `src/lib/turnstile.js` — Carga memoizada del script de Cloudflare
+- `src/components/auth/TurnstileWidget.jsx` — Widget invisible (render explicito)
+- `src/hooks/useRateLimitLockout.js` — Temporizador regresivo de bloqueo
+- `frontend/.env.example` — Variables de build documentadas
+
+### Archivos Modificados en esta Fase
+**Backend:**
+- `bootstrap/app.php` — `trustProxies`, `SecurityHeaders` global, `throttle:api` en el grupo api, render JSON de `ThrottleRequestsException`
+- `app/Providers/AppServiceProvider.php` — `RateLimiter::for('api', ...)` con guard sanctum explicito
+- `app/Http/Controllers/Auth/AuthController.php` — Candado + Turnstile antes de las credenciales, `remaining_attempts` en el 401
+- `config/services.php` — Bloque `turnstile`
+- `routes/api.php` — `throttle:6,1` en `/auth/2fa/verify`
+- `.env.example` — Bloque Fase 9
+
+**Frontend / Infra:**
+- `src/api/axios.js` — Rama 429 prioritaria, `parseRetryAfter`, `formatRetryAfter`, evento `cronos:rate-limited`
+- `src/pages/auth/LoginPage.jsx` — Widget Turnstile, alerta de bloqueo con cuenta regresiva, boton desactivado
+- `frontend/nginx.conf` — Cabeceras + CSP del documento HTML de la SPA
+- `infrastructure/cronos-pos.conf` — Retirado el `add_header` duplicado a nivel server
+- `build-frontend.sh` — Guardia de `VITE_TURNSTILE_SITE_KEY`
+- `.env.production.example` — Bloque Fase 9
+- `frontend/dist/` — Build de produccion regenerado
+
+## 43. FASE 10: TELEMETRÍA DE JOBS, HISTÓRICO DE EJECUCIÓN Y ECOSISTEMA DE ROLLBACK/BACKUPS AISLADOS EN GCP [🟢 COMPLETADO Y OPERATIVO]
+
+Dos subsistemas corporativos que se observan mutuamente: la **telemetría** audita
+todo lo que corre en segundo plano —incluidos los respaldos—, y el **ecosistema de
+rollback** deposita los snapshots en una bóveda cifrada y aislada en otra nube.
+
+> **Nota de arquitectura.** La infraestructura primaria es DigitalOcean (Droplet +
+> Managed PostgreSQL). Google Cloud Storage entra *exclusivamente* como bóveda de
+> respaldos, y esa asimetría es el punto: un incidente que comprometa el Droplet,
+> la cuenta de DigitalOcean o el clúster de PostgreSQL **no alcanza** los
+> respaldos. Aislamiento inter-proveedor, no multi-cloud.
+
+### 43.1 Tabla de Auditoría: `job_execution_logs`
+
+Una fila por **INTENTO**, no por job: si la cola reintenta tres veces, quedan tres
+filas y el histórico conserva por qué falló cada pasada.
+
+| Columna | Tipo | Descripción |
+| :--- | :--- | :--- |
+| `id` | uuid PK | Identificador de la fila |
+| `job_uuid` | uuid | UUID que Laravel asigna al payload. **Llave de correlación** entre eventos emitidos en procesos distintos |
+| `job_name` | varchar(255) | FQCN del job |
+| `display_name` | varchar(255) | Nombre legible del payload |
+| `connection` / `queue` | varchar(60) | Conexión y cola de origen |
+| `attempt` | smallint | `0` = encolado sin ejecutar; `1..n` = número de intento real |
+| `status` | **enum nativo** `job_execution_status` | `pending` \| `running` \| `success` \| `failed` |
+| `queued_at` / `started_at` / `finished_at` | timestamptz | Hitos del ciclo de vida |
+| `duration_ms` | integer | Duración medida con cronómetro monotónico (ver 43.3) |
+| `exception_class` | varchar(255) | Clase de la excepción |
+| `exception_message` | text | Mensaje, recortado a 2 000 caracteres |
+| `exception_trace` | text | Traza, recortada a `JOB_TELEMETRY_MAX_TRACE` (20 KB) |
+| `context` | jsonb | Contexto libre (delay, id de cola) |
+| `triggered_by` | uuid FK→users | Usuario disparador (`ON DELETE SET NULL`) |
+| `trigger_source` | varchar(20) | `user` \| `system` \| `console` \| `scheduler` |
+
+**Índices:** único `(job_uuid, attempt)` para la correlación evento→fila;
+`(status, created_at DESC)` y `(job_name, status)` para el panel; `(job_name, created_at)`
+y `(created_at)` para el histórico paginado.
+
+### 43.2 Captura Automática vía Eventos Nativos
+
+`App\Listeners\JobTelemetrySubscriber`, registrado con `Event::subscribe` en
+`AppServiceProvider`. **Ningún job se instrumenta a mano**: cualquier clase con
+`ShouldQueue` —incluidos Mailables y Notifications— queda auditada.
+
+| Evento | Efecto |
+| :--- | :--- |
+| `JobQueued` | INSERT `pending`, `attempt=0`, captura `Auth::id()` y el origen |
+| `JobProcessing` | UPDATE `running`, fija `attempt` real y arranca el cronómetro |
+| `JobProcessed` | UPDATE `success` + `duration_ms` |
+| `JobFailed` | UPDATE `failed` + clase, mensaje y traza |
+
+`JobQueued` corre en el proceso que despacha (una petición HTTP con sesión), el
+resto en el worker: por eso el usuario disparador solo puede capturarse en el
+primero y los siguientes se correlacionan por UUID.
+
+**Regla de oro:** la telemetría observa, nunca interfiere. Todo handler va
+envuelto en `try/catch`; si la escritura falla, se registra en el log de la
+aplicación y el job sigue su curso.
+
+### 43.3 Tres Trampas Resueltas (documentadas para no repetirlas)
+
+**1. Doble registro por auto-descubrimiento.** Laravel auto-descubre en
+`app/Listeners` **todo método que empiece por `handle`** y lo registra contra el
+evento de su firma. Con `handleQueued`, `handleProcessing`… el suscriptor quedaba
+registrado dos veces —una por descubrimiento, otra por `subscribe()`— y **cada job
+escribía su telemetría por duplicado**. Los métodos se llaman `recordQueued`,
+`recordProcessing`, etc. Hay una prueba de regresión que cuenta los listeners.
+
+> El mismo defecto existía **desde antes** en `NotifyPettyCashWithdrawal`: su
+> método `handle` lo auto-descubría Laravel *y* un `Event::listen` explícito lo
+> registraba de nuevo, de modo que **cada retiro de caja chica notificaba dos
+> veces a los administradores**. Se eliminó el registro manual redundante.
+
+**2. Sesgo de 6 horas en `duration_ms`.** Al escribir un `timestamptz`, Laravel
+serializa el reloj de pared local (America/Mexico_City) y PostgreSQL lo almacena
+como si fuera UTC. Restar `started_at` releído producía **exactamente 21 600 000 ms**
+de sesgo. La duración se mide ahora con un cronómetro monotónico
+(`microtime(true)`) en un mapa **estático** —Laravel resuelve una instancia nueva
+del suscriptor por evento—, con respaldo al valor **crudo** de la columna (que sí
+conserva el offset) si el worker se reinició a media ejecución.
+
+**3. El rollback borraba su propia evidencia.** El dump **sobrescribe
+`audit_logs`**: las entradas `restore.started` y `backup.created` escritas durante
+la operación desaparecían con el resto del estado. Ahora la traza se acumula en
+memoria y se **reinyecta** sobre la base ya restaurada (marcada con
+`replayed_after_restore`), y toda entrada se escribe además al log de aplicación,
+que vive en el sistema de archivos y ningún rollback puede tocar.
+
+### 43.4 Endpoints de Telemetría (`role:admin`)
+
+| Método | Ruta | Descripción |
+| :--- | :--- | :--- |
+| GET | `/api/admin/jobs` | Catálogo agregado por tipo de job: ejecuciones, éxitos/fallos, tasa de éxito, duración media y máxima, último estado. Incluye `summary` (24 h) |
+| GET | `/api/admin/jobs/history` | Histórico paginado. Filtros: `status`, `job_name`, `trigger_source`, `date_from`, `date_to`, `search`, `per_page` |
+| GET | `/api/admin/jobs/{job}` | Detalle de un intento con la traza completa |
+| POST | `/api/admin/jobs/{job}/retry` | Reintento manual de un intento fallido |
+
+El catálogo se agrega **sobre el histórico**, no sobre un registro estático: refleja
+lo que el sistema realmente ejecuta. `DISTINCT ON` de PostgreSQL resuelve el último
+estatus por job en una sola pasada indexada.
+
+**El reintento delega en `queue:retry`**, que reconstruye el payload desde
+`failed_jobs`. No se reconstruye el job a mano: el payload serializado es la única
+copia fiel de sus argumentos. Errores tipados: `ERR_JOB_NOT_FAILED` (422),
+`ERR_JOB_ALREADY_RETRIED` (409), `ERR_JOB_PAYLOAD_UNAVAILABLE` (410, el payload fue
+purgado con `queue:flush`).
+
+**`/api/admin/jobs/history` se declara ANTES de `/{job}`** o el router tomaría
+"history" por un UUID.
+
+### 43.5 Adaptador de Google Cloud Storage
+
+Laravel no trae driver para GCS. `App\Providers\CloudStorageServiceProvider` lo
+registra con `Storage::extend('gcs', …)` sobre
+`league/flysystem-google-cloud-storage`. A partir de ahí **el resto del código habla
+solo con la fachada `Storage`** y desconoce el proveedor: eso mantiene el motor
+testeable con `Storage::fake()` y portable si algún día se migra la bóveda.
+
+```php
+// config/filesystems.php
+'gcs_backups' => [
+    'driver' => 'gcs',
+    'project_id'    => env('GCP_PROJECT_ID'),
+    'key_file_path' => env('GCP_KEY_FILE_PATH'),   // preferida
+    'key_file_json' => env('GCP_KEY_FILE_JSON'),   // contenedores efímeros
+    'bucket'        => env('GCP_BACKUPS_BUCKET', 'cronos-pos-backups-isolation'),
+    'path_prefix'   => env('GCP_BACKUPS_PREFIX', 'snapshots'),
+    'visibility'    => 'private',
+    'throw'         => true,   // en DR, un fallo silencioso es peor que una excepción
+],
+```
+
+Se prefiere `key_file_path` sobre `key_file_json`: la ruta evita que el JSON
+completo quede volcado en la tabla de procesos o en un `docker inspect`. Sin
+credenciales explícitas se delega en Application Default Credentials.
+
+> ⚠️ **El paquete NO está instalado en el repositorio.** El proxy de egress de la
+> sesión de desarrollo bloquea `repo.packagist.org`, y un `composer.lock`
+> desincronizado rompería el build de Docker. Se declaró en la sección `suggest`
+> de `composer.json` (no vinculante, no toca el lock). Para activar la bóveda:
+> ```
+> composer require league/flysystem-google-cloud-storage:^3.0
+> ```
+> Sin el paquete el sistema **no se rompe**: `BackupService` degrada al disco
+> local y `CloudStorageServiceProvider` lanza un `RuntimeException` con el
+> comando exacto solo si alguien usa el disco `gcs_backups`.
+
+### 43.6 Motor de Respaldos Cifrados
+
+`App\Services\Backup\BackupService`. Un snapshot son **dos objetos**:
+
+```
+<nombre>.tar.gz.enc      Artefacto: dump de PostgreSQL + configuración
+<nombre>.manifest.json   Ficha con checksum SHA-256, tamaño, cifrado, autor
+```
+
+El manifiesto viaja **en claro a propósito**: hay que poder listar y auditar los
+puntos de restauración sin descifrar nada.
+
+**Secuencia de generación:**
+1. `pg_dump --format=plain --no-owner --no-privileges --clean --if-exists` (dump idempotente).
+2. Copia de `config/` y `database/migrations/`. El `.env` real queda **fuera** por defecto (`BACKUP_INCLUDE_ENV=false`): contiene secretos y un respaldo es, por definición, una copia que viaja.
+3. `metadata.json` con entorno, versiones y autor.
+4. `tar -czf`.
+5. **Cifrado AES-256-CBC** con PBKDF2 (100 000 iteraciones) y sal aleatoria, vía el binario `openssl` — `openssl_encrypt()` de PHP exigiría cargar el dump entero en memoria. La llave viaja por entorno (`pass env:`), nunca como argumento.
+6. `hash_file('sha256')` sobre el artefacto final.
+7. Subida en **streaming** (`writeStream`). El manifiesto se escribe **después** del artefacto: si la subida falla, el snapshot no aparece en el catálogo y nadie intentará restaurar desde un punto incompleto.
+8. Auditoría + limpieza del workspace **y** del artefacto local (un `finally` incondicional: el dump viaja en claro y su copia local llenaría el disco del Droplet en silencio).
+
+**La llave de cifrado NO es `APP_KEY`.** Rotar `APP_KEY` es rutinario y dejaría
+ilegibles todos los respaldos históricos de golpe; `BACKUP_ENCRYPTION_KEY` tiene
+ciclo de vida propio y debe custodiarse **fuera del servidor**.
+
+### 43.7 Rollback Manual (Disaster Recovery)
+
+**Secuencia, cada paso condicionado al anterior:**
+
+1. **Frase de confirmación** comparada con `hash_equals`.
+2. **Snapshot de seguridad del estado actual** (`pre-restore`). Si falla, se aborta: sin él, un rollback a un punto equivocado sería irreversible.
+3. Descarga del artefacto.
+4. **Validación de integridad por checksum.** Si no coincide → aborta **antes de tocar la base**, con `backup.restore.integrity_failed` en auditoría.
+5. Descifrado y extracción.
+6. **Restauración TRANSACCIONAL:** `psql --single-transaction -v ON_ERROR_STOP=1`. Todo-o-nada: si algo falla, PostgreSQL revierte y la base queda exactamente como estaba.
+7. Reinyección de la traza de auditoría (43.3) y notificación a administradores.
+
+**Comandos protegidos:**
+
+| Comando | Función |
+| :--- | :--- |
+| `cronos:backup-run [--trigger=] [--user=] [--queue]` | Genera un snapshot. Avisa si la bóveda no está aislada o el cifrado está apagado |
+| `cronos:backup-list [--verify] [--json]` | Catálogo de puntos de restauración; `--verify` recalcula cada checksum |
+| `cronos:backup-restore {snapshot} --user= [--phrase=] [--verify-only]` | Rollback |
+| `cronos:telemetry-prune [--days=] [--backups] [--dry-run]` | Poda histórico y snapshots vencidos |
+
+`cronos:backup-restore` exige **cuatro candados**: usuario con rol `admin`, frase
+tecleada completa, confirmación interactiva adicional en producción, y checksum
+válido. Avisa además si el snapshot proviene de otro entorno.
+
+**Endpoints (`role:admin` — un manager puede purgar la papelera, pero no reescribir la base):**
+
+| Método | Ruta | Descripción |
+| :--- | :--- | :--- |
+| GET | `/api/admin/backups` | Catálogo + diagnóstico de la bóveda. **503** `ERR_BACKUP_VAULT_UNREACHABLE` si es inalcanzable (una lista vacía se leería como "todo en orden") |
+| POST | `/api/admin/backups` | Encola un respaldo (**202**). Un `pg_dump` agotaría el timeout de Nginx |
+| GET | `/api/admin/backups/{snapshot}/verify` | Valida el checksum sin restaurar. **422** si está comprometido |
+| POST | `/api/admin/backups/{snapshot}/restore` | Rollback. Requiere `confirmation_phrase` |
+
+### 43.8 Scheduler
+
+| Hora | Comando | Razón |
+| :--- | :--- | :--- |
+| 21:00 | `cronos:auto-close-registers` | (Fase 8) |
+| **03:30** | `cronos:backup-run --trigger=scheduled` | POS cerrado y después del cierre automático: el snapshot captura la jornada completa, arqueos incluidos. `runInBackground` + `withoutOverlapping` |
+| **04:15** | `cronos:telemetry-prune --backups` | Después del respaldo: primero se asegura la copia del día, luego se purgan las vencidas |
+
+### 43.9 Vista React: `/admin/jobs-monitor` (admin only)
+
+Doble candado: gate de frontend que redirige a cualquier no-admin y `role:admin`
+en el backend. Tres pestañas:
+
+- **Catálogo de Jobs** — un renglón por tipo: último estado con badge, ejecuciones, éxito/fallo, tasa de éxito coloreada por umbral (≥95 % verde, ≥75 % ámbar, resto rojo), duración media, última ejecución. Botón que filtra el histórico por ese job.
+- **Histórico Forense** — tabla lazy paginada con filtros (estatus, job, rango de fechas, búsqueda por Enter/botón — nunca por tecla). Las filas fallidas van resaltadas. Acciones: ver detalle y reintentar.
+- **Puntos de Restauración** — banner de diagnóstico de la bóveda (verde si aislada y cifrada, ámbar si degradada, con el motivo), botón para generar respaldo, y por snapshot: verificar integridad y ejecutar rollback.
+
+**Modal de traza técnica:** hitos del ciclo de vida, clase y UUID, bloque de
+excepción y la traza en `<pre>` monoespaciado sobre fondo oscuro con
+`overflow-auto` propio —la traza nunca debe empujar el ancho del modal.
+
+**Modal de rollback:** advertencia en rojo, ficha del snapshot y campo donde hay
+que teclear `RESTAURAR PRODUCCION`. El botón permanece deshabilitado hasta que se
+escribe algo, y el modal no se puede cerrar mientras la restauración corre.
+
+### 43.10 Cobertura de Pruebas
+
+**`backend/tests/Feature/` — 30 pruebas nuevas, 99 aserciones, en verde.**
+La suite pasó de sqlite en memoria a **PostgreSQL real** (`cronos_pos_test`): el
+esquema usa ENUMs nativos, JSONB, `ilike` y agregados con `FILTER (WHERE …)`, así
+que sqlite nunca pudo ejecutar estas migraciones. El trait `RequiresPostgres` salta
+las pruebas con un mensaje accionable si el servicio no está arriba.
+
+| Archivo | Cubre |
+| :--- | :--- |
+| `Telemetry/JobTelemetryTest.php` (12) | Registro único de listeners (regresión del doble descubrimiento); ciclo pending→success con duración **sin el sesgo de 6 h**; captura de traza; una fila por reintento; recorte de traza; lista de exclusión; catálogo agregado y admin-only; filtros del histórico; los tres errores tipados del reintento y un reintento real con payload serializado auténtico |
+| `Backup/BackupVaultTest.php` (18) | Generación con artefacto+manifiesto+checksum; correspondencia checksum↔bytes subidos; **cero residuos en disco local**; auditoría; orden del catálogo; manifiesto corrupto que no oculta los sanos; verify positivo y negativo; frase incorrecta; **checksum alterado que bloquea el rollback sin tocar la base**; **rollback real que revierte datos**; supervivencia de la traza forense; admin-only; diagnóstico degradado; poda por retención |
+
+Detalles no obvios de la suite: `BackupVaultTest` usa `DatabaseMigrations` y **no**
+`RefreshDatabase`, porque la transacción envolvente de esta última bloquea con
+`ACCESS EXCLUSIVE` los `DROP TABLE` que `psql` ejecuta desde otra conexión y la
+suite se cuelga hasta agotar el timeout. Ambas clases activan `$dropTypes = true`:
+`migrate:fresh` no borra los ENUM nativos de PostgreSQL.
+
+### 43.11 Imágenes Docker
+
+`Dockerfile.prod` y `Dockerfile.dev` incorporan `postgresql16-client openssl tar gzip`.
+**Sin `pg_dump`/`psql` la recuperación ante desastres sería inexistente en
+producción**: la imagen base `serversideup/php:8.4-fpm-alpine` no los trae. La
+versión del cliente debe ser ≥ la del servidor administrado.
+
+### Archivos Creados en esta Fase
+**Backend:**
+- `database/migrations/2026_08_03_000001_create_job_execution_logs_table.php`
+- `app/Models/JobExecutionLog.php`
+- `app/Listeners/JobTelemetrySubscriber.php`
+- `app/Http/Controllers/Admin/JobMonitorController.php`
+- `app/Http/Controllers/Admin/BackupController.php`
+- `app/Providers/CloudStorageServiceProvider.php`
+- `app/Services/Backup/BackupService.php`, `app/Services/Backup/BackupManifest.php`
+- `app/Jobs/CreateDatabaseBackup.php`
+- `app/Console/Commands/{BackupRun,BackupList,BackupRestore,PruneTelemetry}.php`
+- `config/telemetry.php`, `config/backup.php`
+- `tests/Concerns/RequiresPostgres.php`
+- `tests/Feature/Telemetry/JobTelemetryTest.php`, `tests/Feature/Backup/BackupVaultTest.php`
+
+**Frontend:**
+- `src/pages/admin/JobsMonitorPage.jsx`
+
+### Archivos Modificados en esta Fase
+**Backend:**
+- `app/Providers/AppServiceProvider.php` — `Event::subscribe` de telemetría; eliminado el `Event::listen` duplicado de caja chica
+- `app/Models/SystemNotification.php` — tags `backup_completed`, `backup_failed`, `backup_restored`
+- `bootstrap/providers.php` — `CloudStorageServiceProvider`
+- `config/filesystems.php` — discos `gcs_backups` y `backups_local`
+- `routes/api.php` — 8 rutas nuevas bajo `role:admin`
+- `routes/console.php` — respaldo diario 03:30 y poda 04:15
+- `composer.json` — `suggest` del adaptador de GCS
+- `phpunit.xml` — suite sobre PostgreSQL real
+- `Dockerfile.prod`, `Dockerfile.dev` — `postgresql16-client openssl tar gzip`
+- `.env.example` — bloque Fase 10
+
+**Frontend / Infra:**
+- `src/App.jsx` — ruta `/admin/jobs-monitor`
+- `src/components/layout/Sidebar.jsx` — enlace "Monitor de Jobs" (adminOnly)
+- `src/components/layout/AppHeader.jsx` — título de la ruta
+- `.env.production.example` — bloque Fase 10
+- `frontend/dist/` — build regenerado
+
+## 44. FASE 11: TRANSICIONES INSTANTÁNEAS POS ↔ MESAS (CACHÉ SWR, SHELL PERSISTENTE Y PREFETCH) [🟢 COMPLETADO Y OPERATIVO]
+
+Alternar entre el POS y el plano de Mesas parpadeaba en blanco y tardaba en
+reconstruirse. La causa no era una sola: eran **tres defectos apilados**, y cada
+uno exigía su propia corrección.
+
+### 44.1 Diagnóstico: por qué parpadeaba
+
+| # | Causa | Efecto |
+| :--- | :--- | :--- |
+| 1 | **Derribo del shell.** Cada una de las 24 páginas renderiza su propio `<AppLayout>`. Navegar desmontaba sidebar, header, reloj, campana y contador de ventas para volver a montarlos idénticos | El chrome completo se repintaba: eso *es* el parpadeo |
+| 2 | **Cascada serial en el POS.** `useEffect` #1 pedía `/cash-registers/active`; solo cuando resolvía, el `useEffect` #2 disparaba `/products/grouped` + `/promotions/active` | Dos viajes de ida y vuelta ENCADENADOS antes de poder pintar nada |
+| 3 | **Cero caché de vista.** Cada montaje arrancaba con `productGroups=[]` y `loading=true`, y volvía a pedir todo | Área de contenido en blanco con spinner en cada navegación |
+
+A esto se sumaba que `/tax-rate` —configuración que cambia una vez al año— se
+pedía en cada montaje de ambas vistas.
+
+### 44.2 Estrategia de caché: por qué NO se agregó TanStack Query
+
+El proyecto ya tenía `src/api/readCache.js`: una caché de proceso con TTL y
+deduplicación de peticiones en vuelo, escrita en la Fase 8 para el header y
+consumida por tres módulos. Tenía exactamente la semántica necesaria y le
+faltaban tres piezas. Extenderla costó ~60 líneas; sustituirla por React Query
+habría significado una dependencia nueva, reescribir la capa de datos de ambas
+vistas y migrar a los tres consumidores existentes — más superficie de
+regresión para el mismo resultado.
+
+Piezas añadidas a `readCache`:
+
+| API | Función |
+| :--- | :--- |
+| `subscribe(key, fn)` | Los componentes se enteran de los cambios sin sondear. Base de `useCachedResource` |
+| `peek(key)` | Instantánea **síncrona**, sin disparar red. Permite que el primer render ya pinte datos |
+| `prefetch(key, fetcher)` | Calienta una clave que nadie consume aún. Idempotente y silenciosa |
+| `mutate(key, data)` | Siembra un dato ya conocido (respuesta de un POST) |
+| `invalidatePrefix(p)` | Invalidación por familia de claves |
+
+**Invariante crítica:** las entradas son inmutables; toda modificación reemplaza
+el objeto entero. `useSyncExternalStore` compara la instantánea por identidad y
+entraría en un bucle infinito de render si se mutara en sitio.
+
+**Degradación ante fallo:** si una revalidación falla sobre un dato ya cargado,
+la caché **conserva el dato viejo** y anota el error. En un POS, un catálogo de
+hace un minuto es infinitamente más útil que una pantalla vacía por un blip de
+red; la vista avisa con un toast y sigue operando.
+
+### 44.3 `useCachedResource`: el hook que elimina el parpadeo
+
+`src/hooks/useCachedResource.js`. El contrato es una sola frase: **si la clave
+ya tiene dato, el primer render lo devuelve** —síncronamente, antes de cualquier
+efecto— y la revalidación ocurre después, en segundo plano.
+
+Se apoya en `useSyncExternalStore` y no en `useState` + `useEffect` porque es la
+única forma de que React lea el valor externo *durante* el render. Con
+`useState`, el primer render sería `undefined` y habría un frame en blanco:
+justo lo que se quiere eliminar.
+
+```js
+isLoading: enabled && !hasData && !error   // sólo cuando no hay NADA que pintar
+isValidating: !!entry.promise              // revalidación silenciosa en curso
+```
+
+Con caché caliente `isLoading` nace en `false`, y de ahí la transición
+instantánea.
+
+### 44.4 Registro central de recursos y ventanas de frescura
+
+`src/api/resources.js` concentra claves, fetchers y `staleTime`. Con las
+peticiones dispersas por los componentes, un `staleTime` distinto en cada sitio
+reintroduce el problema que esta fase vino a resolver.
+
+| Recurso | `staleTime` | Criterio |
+| :--- | :--- | :--- |
+| `pos:catalog` | 60 s | Cambia por una edición deliberada en administración |
+| `pos:promotions` | 60 s | Idem |
+| `pos:cash-register` | 20 s | Gobierna el bloqueo del POS: ventana corta |
+| `dining:tables` | **10 s** | Varios meseros lo mueven a la vez; además revalida al recuperar el foco |
+| `config:tax-rate` | 600 s | Configuración global; cambiarlo es un evento anual |
+
+**Bug corregido de paso:** `/cash-registers/active` responde `200` con
+`data: null` cuando no hay turno abierto, pero el código hacía
+`catch { setCashRegister(null) }` — un fallo de red se leía como "no hay caja" y
+mandaba al cajero a la pantalla de apertura. Ahora el error se propaga y la
+caché conserva el estado previo.
+
+`invalidateAfterSale()` descarta catálogo y mesas tras cobrar: el stock y el
+estado del salón acaban de cambiar en el servidor, así que la siguiente lectura
+va a la red aunque la ventana siga vigente.
+
+### 44.5 Shell persistente (`PersistentShell`)
+
+`/pos` y `/mesas` cuelgan ahora de un *layout route* común que renderiza
+`<AppLayout/>` con `<Outlet/>`. React Router conserva el árbol del shell y sólo
+intercambia el contenido: **no hay teardown de DOM, ni remonte de los widgets
+del header, ni reinicio del estado del sidebar**.
+
+`AppLayout` admite las dos formas de uso que conviven: `children` (el patrón
+histórico de las otras 22 páginas, intacto) y `<Outlet/>` como layout route.
+
+**Alcance deliberado:** sólo se migraron las dos vistas de alta rotación. Migrar
+las 24 páginas es un refactor mayor con superficie de regresión desproporcionada
+frente al beneficio — el cajero no alterna entre Papelera y Auditoría decenas de
+veces por turno.
+
+### 44.6 Carrito que sobrevive a la navegación
+
+`src/pages/pos/cartStore.js`. El carrito vivía sólo en el `useState` de POSPage:
+bastaba ir a Mesas a consultar una cuenta y volver para que la venta en curso se
+evaporara — un cajero perdiendo un ticket a medio armar delante del cliente.
+
+Un store de módulo lo resuelve sin arrastrar el estado a un contexto global. **No
+se persiste en localStorage a propósito**: un carrito resucitado tras cerrar el
+navegador o al día siguiente sería una fuente de errores de cobro, no una
+comodidad.
+
+### 44.7 Prefetch por intención
+
+`prefetchRoute(path)` colgado de `onMouseEnter` y `onFocus`:
+
+- **Sidebar** (`NavLink`) — cubre Mesas → POS.
+- **Botón "Mesas" del header del POS** — cubre POS → Mesas (el plano no está en
+  el sidebar; se llega por ese botón).
+
+Entre que el usuario apunta y suelta el clic pasan 200-400 ms: tiempo de sobra
+para que la petición vuelva. Es idempotente y silenciosa — sobre cualquier ruta
+no crítica, o si el dato ya está fresco, no hace absolutamente nada; y si falla,
+no molesta a nadie porque el usuario ni siquiera ha navegado.
+
+### 44.8 Medición real (Chromium + Playwright, mismo equipo y datos)
+
+Cuatro ciclos completos POS → Mesas → POS, contra el bundle de producción
+servido por `vite preview` y la API Laravel real. `framesConSpinner` cuenta los
+frames en que `.animate-spin` está presente tras la navegación: es el proxy
+directo de "pantalla en blanco".
+
+| Métrica (4 ciclos) | ANTES | DESPUÉS |
+| :--- | ---: | ---: |
+| Mesas → POS, promedio | **241 ms** | **104-116 ms** |
+| Mesas → POS, frames con spinner | **7-8 por transición** | **0** |
+| POS → Mesas, promedio | 107 ms | 106 ms |
+| POS → Mesas, frames con spinner | 0 | 0 |
+| **Peticiones HTTP totales** | **24** | **1** |
+
+- **Parpadeo eliminado:** el spinner desapareció por completo (7-8 → 0 frames).
+- **Latencia Mesas → POS: −52 %**, y la petición única que queda es la
+  revalidación de mesas cuando su ventana de 10 s vence.
+- **Tráfico: −96 %** (24 → 1 peticiones en cuatro idas y vueltas).
+
+> Estas cifras son **conservadoras**: se midieron en localhost con RTT ≈ 1 ms.
+> En producción sobre internet (RTT 50-150 ms) la cascada serial del POS costaba
+> dos RTT encadenados y el camino cacheado cuesta **cero**, así que la mejora
+> real es sensiblemente mayor que el 52 % medido aquí.
+
+**Verificación funcional adicional (Playwright, sin errores de consola):**
+- Carrito con dos productos (total `$57.00`) → ir a Mesas → volver: total
+  intacto en `$57.00`.
+- Sidebar colapsado a 72 px: conserva la anchura al cambiar de vista (antes se
+  reiniciaba a expandido).
+- Identidad del nodo `<aside>` preservada entre navegaciones: prueba directa de
+  que el shell no se desmonta.
+- Hover sobre el botón de Mesas con la ventana vencida dispara `/api/tables`; el
+  clic posterior resuelve en 85 ms **sin ninguna petición**.
+
+### Archivos Creados en esta Fase
+- `src/api/resources.js` — Registro de recursos, `staleTime` y `prefetchRoute`
+- `src/hooks/useCachedResource.js` — Hook SWR sobre `useSyncExternalStore`
+- `src/pages/pos/cartStore.js` — Carrito que sobrevive a la navegación
+
+### Archivos Modificados en esta Fase
+- `src/api/readCache.js` — `subscribe`, `peek`, `prefetch`, `mutate`, `invalidatePrefix`; conservación del dato ante fallo de revalidación
+- `src/App.jsx` — `PersistentShell` como layout route de `/pos` y `/mesas`
+- `src/components/layout/AppLayout.jsx` — Soporte dual `children` / `<Outlet/>`
+- `src/components/layout/Sidebar.jsx` — Prefetch en `onMouseEnter` / `onFocus`
+- `src/pages/pos/POSPage.jsx` — Cascada serial eliminada (4 lecturas en paralelo desde caché), carrito persistente, prefetch en el botón de Mesas, invalidación post-venta
+- `src/pages/dining/TablesFloorPlanPage.jsx` — Plano servido desde caché con revalidación silenciosa
+- `vite.config.js` — Proxy `/api` también en `vite preview`, para validar el bundle compilado contra la API real
+- `frontend/dist/` — Build de producción regenerado
