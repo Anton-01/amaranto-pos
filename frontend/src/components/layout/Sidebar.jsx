@@ -1,5 +1,6 @@
 import { NavLink } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
+import { prefetchRoute } from '../../api/resources';
 
 const navGroups = [
   {
@@ -93,6 +94,20 @@ export default function Sidebar({ collapsed, onToggle }) {
                   <NavLink
                     to={item.path}
                     title={collapsed ? item.label : undefined}
+                    /*
+                     * PREFETCH POR INTENCION (Fase 11).
+                     *
+                     * Apuntar el mouse a un enlace precede al clic en 200-400 ms:
+                     * tiempo de sobra para traer el payload de la ruta y que el
+                     * cambio de vista sea instantaneo. `onFocus` da la misma
+                     * ventaja a quien navega con teclado.
+                     *
+                     * `prefetchRoute` solo conoce las rutas criticas (/pos y
+                     * /mesas) y es idempotente: sobre cualquier otro enlace, o
+                     * si el dato ya esta fresco, no hace absolutamente nada.
+                     */
+                    onMouseEnter={() => prefetchRoute(item.path)}
+                    onFocus={() => prefetchRoute(item.path)}
                     className={({ isActive }) =>
                       `group flex items-center gap-3 rounded-lg px-3 py-2.5 text-[13px] font-medium transition-all duration-150 ${
                         isActive

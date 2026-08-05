@@ -1,7 +1,23 @@
 import { useState } from 'react';
+import { Outlet } from 'react-router-dom';
 import Sidebar from './Sidebar';
 import AppHeader from './AppHeader';
 
+/**
+ * Chrome de la aplicacion (sidebar + header + area de contenido).
+ *
+ * Admite las DOS formas de uso que conviven hoy:
+ *
+ *  - `<AppLayout><Pagina/></AppLayout>` — cada pagina monta su propio shell.
+ *    Es el patron historico del resto del sistema.
+ *  - Como *layout route* de React Router, sin hijos: renderiza `<Outlet/>`.
+ *    Asi lo usa `PersistentShell` para /pos y /mesas (Fase 11), de modo que el
+ *    sidebar y el header NO se desmontan al alternar entre esas dos vistas.
+ *
+ * El estado `collapsed` vive aqui: bajo el shell persistente eso significa que
+ * el sidebar conserva su anchura al cambiar de vista en lugar de reiniciarse a
+ * "expandido" en cada navegacion.
+ */
 export default function AppLayout({ children }) {
   const [collapsed, setCollapsed] = useState(false);
 
@@ -17,7 +33,7 @@ export default function AppLayout({ children }) {
         <AppHeader collapsed={collapsed} onToggleSidebar={() => setCollapsed((v) => !v)} />
 
         <main className="flex-1 p-6">
-          {children}
+          {children ?? <Outlet />}
         </main>
       </div>
     </div>

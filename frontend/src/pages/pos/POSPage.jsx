@@ -6,11 +6,18 @@ import { Dropdown } from 'primereact/dropdown';
 import { Button } from 'primereact/button';
 import { toast } from 'sonner';
 import api from '../../api/axios';
-import AppLayout from '../../components/layout/AppLayout';
+import { mutate } from '../../api/readCache';
+import { RESOURCE, fetcherOf, staleTimeOf, prefetchRoute, invalidateAfterSale } from '../../api/resources';
+import useCachedResource from '../../hooks/useCachedResource';
 import CheckoutModal from '../../components/pos/CheckoutModal';
 import PrintConfirmationModal from '../../components/pos/PrintConfirmationModal';
 import useOnlineStatus, { getOfflineQueue, clearOfflineQueue } from '../../hooks/useOnlineStatus';
 import useCronosAgent from '../../hooks/useCronosAgent';
+import { readCart, writeCart, clearCart } from './cartStore';
+
+/** Referencia estable para las listas aun sin cargar (ver nota mas abajo). */
+const EMPTY = Object.freeze([]);
+const DEFAULT_TAX_RATE = 0.16;
 
 export default function POSPage() {
   const navigate = useNavigate();
@@ -18,50 +25,77 @@ export default function POSPage() {
   const cronosAgent = useCronosAgent();
   const syncingRef = useRef(false);
 
-  const [productGroups, setProductGroups] = useState([]);
-  const [promotions, setPromotions] = useState([]);
-  const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
 
-  const [cart, setCart] = useState([]);
+  /*
+   * El carrito sobrevive a la navegacion (Fase 11). Antes vivia solo en este
+   * useState: ir a Mesas a consultar algo y volver borraba la venta en curso.
+   * Ahora se rehidrata desde un store de modulo y se sincroniza en cada cambio.
+   */
+  const [cart, setCart] = useState(readCart);
+  useEffect(() => { writeCart(cart); }, [cart]);
+
   const [showCheckout, setShowCheckout] = useState(false);
   const [pendingPrint, setPendingPrint] = useState(null);
 
-  const [cashRegister, setCashRegister] = useState(undefined);
   const [openingBalance, setOpeningBalance] = useState(0);
   const [openingCash, setOpeningCash] = useState(false);
-  const [taxRate, setTaxRate] = useState(0.16);
 
-  const checkCashRegister = useCallback(async () => {
-    try {
-      const res = await api.get('/cash-registers/active');
-      setCashRegister(res.data.data);
-    } catch {
-      setCashRegister(null);
-    }
-  }, []);
+  /*
+   * Las cuatro lecturas del POS salen de la cache compartida y se lanzan EN
+   * PARALELO. Antes habia una cascada serial: `/cash-registers/active` tenia
+   * que resolverse para que el efecto siguiente disparara `/products/grouped`
+   * y `/promotions/active` — dos viajes de ida y vuelta encadenados antes de
+   * poder pintar nada. Ahora los cuatro recursos parten a la vez y, si la
+   * cache esta caliente, ninguno toca la red.
+   */
+  const cashRegisterQuery = useCachedResource(
+    RESOURCE.POS_CASH_REGISTER,
+    fetcherOf(RESOURCE.POS_CASH_REGISTER),
+    { staleTime: staleTimeOf(RESOURCE.POS_CASH_REGISTER) }
+  );
+  const catalogQuery = useCachedResource(RESOURCE.POS_CATALOG, fetcherOf(RESOURCE.POS_CATALOG), {
+    staleTime: staleTimeOf(RESOURCE.POS_CATALOG),
+  });
+  const promotionsQuery = useCachedResource(RESOURCE.POS_PROMOTIONS, fetcherOf(RESOURCE.POS_PROMOTIONS), {
+    staleTime: staleTimeOf(RESOURCE.POS_PROMOTIONS),
+  });
+  const taxRateQuery = useCachedResource(RESOURCE.TAX_RATE, fetcherOf(RESOURCE.TAX_RATE), {
+    staleTime: staleTimeOf(RESOURCE.TAX_RATE),
+  });
 
-  const fetchData = useCallback(async () => {
-    setLoading(true);
-    try {
-      const [groupRes, promoRes] = await Promise.all([
-        api.get('/products/grouped'),
-        api.get('/promotions/active'),
-      ]);
-      setProductGroups(groupRes.data.data);
-      setPromotions(promoRes.data.data);
-    } catch {
-      toast.error('Error al cargar datos del POS.');
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  /*
+   * EMPTY es una constante de modulo, no un `?? []` en linea: un literal aqui
+   * crearia un array nuevo en cada render y romperia la memoizacion de todos
+   * los useMemo que dependen de `productGroups` — justo el trabajo que esta
+   * fase pretende ahorrar.
+   */
+  const productGroups = catalogQuery.data ?? EMPTY;
+  const promotions = promotionsQuery.data ?? EMPTY;
+  const taxRate = taxRateQuery.data ?? DEFAULT_TAX_RATE;
 
-  useEffect(() => { checkCashRegister(); }, [checkCashRegister]);
-  useEffect(() => { if (cashRegister) fetchData(); }, [cashRegister, fetchData]);
+  // `undefined` = aun no se sabe; `null` = confirmado sin turno abierto.
+  const cashRegister = cashRegisterQuery.data;
+  const setCashRegister = useCallback((value) => mutate(RESOURCE.POS_CASH_REGISTER, value), []);
+
+  // Solo bloquea el render la PRIMERA carga en frio. Con cache caliente todas
+  // estas banderas nacen en false y la vista se pinta en el primer frame.
+  const loading = catalogQuery.isLoading || promotionsQuery.isLoading;
+
+  const fetchData = useCallback(() => {
+    catalogQuery.refresh();
+    promotionsQuery.refresh();
+  }, [catalogQuery, promotionsQuery]);
+
+  // Un fallo de revalidacion no vacia la pantalla (la cache conserva el dato
+  // previo), pero el cajero debe enterarse de que esta viendo datos de antes.
   useEffect(() => {
-    api.get('/tax-rate').then(res => setTaxRate(res.data.data.rate)).catch(() => {});
-  }, []);
+    if (catalogQuery.error || promotionsQuery.error) {
+      toast.error('No se pudo actualizar el catalogo.', {
+        description: 'Se muestran los ultimos datos disponibles.',
+      });
+    }
+  }, [catalogQuery.error, promotionsQuery.error]);
 
   useEffect(() => {
     if (!isOnline || syncingRef.current) return;
@@ -243,6 +277,12 @@ export default function POSPage() {
   const handleCheckoutSuccess = (order, meta = {}) => {
     setShowCheckout(false);
     setCart([]);
+    clearCart();
+
+    // La venta movio stock (y pudo liberar una mesa): se descarta el catalogo
+    // cacheado para que la siguiente lectura —aqui o en Mesas— vaya a la red
+    // aunque la ventana de frescura no haya vencido.
+    invalidateAfterSale();
     fetchData();
 
     if (order && !order._offline) {
@@ -254,19 +294,18 @@ export default function POSPage() {
     }
   };
 
+  // Primera carga en frio: aun no se sabe si el cajero tiene turno abierto.
+  // Al volver desde Mesas este estado no se atraviesa — el dato ya esta en cache.
   if (cashRegister === undefined) {
     return (
-      <AppLayout>
-        <div className="flex h-64 items-center justify-center">
-          <div className="h-8 w-8 animate-spin rounded-full border-4 border-indigo-600 border-t-transparent" />
-        </div>
-      </AppLayout>
+      <div className="flex h-64 items-center justify-center">
+        <div className="h-8 w-8 animate-spin rounded-full border-4 border-indigo-600 border-t-transparent" />
+      </div>
     );
   }
 
   if (!cashRegister) {
     return (
-      <AppLayout>
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-md">
           <div className="w-full max-w-md rounded-2xl bg-white p-8 shadow-2xl ring-1 ring-slate-200">
             <div className="mb-6 flex flex-col items-center text-center">
@@ -327,17 +366,14 @@ export default function POSPage() {
             </div>
           </div>
         </div>
-      </AppLayout>
     );
   }
 
   if (loading) {
     return (
-      <AppLayout>
-        <div className="flex h-64 items-center justify-center">
-          <div className="h-8 w-8 animate-spin rounded-full border-4 border-indigo-600 border-t-transparent" />
-        </div>
-      </AppLayout>
+      <div className="flex h-64 items-center justify-center">
+        <div className="h-8 w-8 animate-spin rounded-full border-4 border-indigo-600 border-t-transparent" />
+      </div>
     );
   }
 
@@ -348,7 +384,7 @@ export default function POSPage() {
   const formattedOpeningBalance = parseFloat(cashRegister?.opening_balance || 0).toLocaleString('es-MX', { style: 'currency', currency: 'MXN' });
 
   return (
-    <AppLayout>
+    <>
       {/* Shift Status Card */}
       <div className="mb-5 rounded-xl bg-white px-5 py-3.5 shadow-sm ring-1 ring-slate-200">
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -366,6 +402,14 @@ export default function POSPage() {
             <button
               type="button"
               onClick={() => navigate('/mesas')}
+              /*
+               * Prefetch por intencion: entre que el cajero apunta al boton y
+               * suelta el clic pasan 200-400 ms, de sobra para que el plano de
+               * mesas ya este en cache y la vista aparezca sin latencia.
+               * `onFocus` cubre el mismo camino por teclado.
+               */
+              onMouseEnter={() => prefetchRoute('/mesas')}
+              onFocus={() => prefetchRoute('/mesas')}
               title="Plano de Mesas"
               aria-label="Abrir plano de mesas"
               className="group flex cursor-pointer items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-600 transition-all hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-700"
@@ -607,6 +651,6 @@ export default function POSPage() {
         onClose={() => setPendingPrint(null)}
       />
 
-    </AppLayout>
+    </>
   );
 }

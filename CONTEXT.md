@@ -6,8 +6,9 @@
 - Base de Datos: Managed PostgreSQL (DigitalOcean)
 - Cache / Colas: Redis 7 Alpine (cache global + queue worker)
 - WebSockets: Laravel Reverb (puerto 8080, tiempo real)
-- Estado del Proyecto: [🟢 FASE 10: TELEMETRÍA DE JOBS, HISTÓRICO DE EJECUCIÓN Y ECOSISTEMA DE ROLLBACK/BACKUPS AISLADOS EN GCP COMPLETADO] — Bitácora forense `job_execution_logs` alimentada por los eventos nativos de la cola (un renglón por intento, con traza y disparador), panel admin `/admin/jobs-monitor` con catálogo, histórico y reintento manual; y bóveda de respaldos cifrada AES-256 en Google Cloud Storage —aislada de la infraestructura primaria en DigitalOcean— con rollback transaccional validado por checksum SHA-256 (ver sección 43).
-- Fase previa: [🟢 FASE 9: ESCUDO DE SEGURIDAD Y THROTTLING COMPLETADO] — Blindaje perimetral en cuatro capas: candado anti fuerza bruta en el login (5 fallos/min por email+IP → bloqueo de 15 min con `Retry-After`), cupo global de API (100 req/min por usuario/IP), middleware global de cabeceras de seguridad con CSP calibrada, y Cloudflare Turnstile invisible validado server-side antes de las credenciales (ver sección 42).
+- Estado del Proyecto: [🟢 FASE 11: TRANSICIONES INSTANTÁNEAS POS ↔ MESAS COMPLETADO] — Caché SWR suscribible con render inmediato desde memoria y revalidación silenciosa, shell persistente que deja de desmontar sidebar y header, cascada serial del POS eliminada (4 lecturas en paralelo) y prefetch por intención en hover/focus. Medido con Playwright sobre el bundle de producción: parpadeo eliminado (7-8 → 0 frames con spinner), Mesas→POS de 241 ms a ~110 ms y 24 → 1 peticiones HTTP en cuatro idas y vueltas (ver sección 44).
+- Fase previa: [🟢 FASE 10: TELEMETRÍA DE JOBS, HISTÓRICO DE EJECUCIÓN Y ECOSISTEMA DE ROLLBACK/BACKUPS AISLADOS EN GCP COMPLETADO] — Bitácora forense `job_execution_logs` alimentada por los eventos nativos de la cola (un renglón por intento, con traza y disparador), panel admin `/admin/jobs-monitor` con catálogo, histórico y reintento manual; y bóveda de respaldos cifrada AES-256 en Google Cloud Storage —aislada de la infraestructura primaria en DigitalOcean— con rollback transaccional validado por checksum SHA-256 (ver sección 43).
+- Fase 9: [🟢 ESCUDO DE SEGURIDAD Y THROTTLING COMPLETADO] — Blindaje perimetral en cuatro capas: candado anti fuerza bruta en el login (5 fallos/min por email+IP → bloqueo de 15 min con `Retry-After`), cupo global de API (100 req/min por usuario/IP), middleware global de cabeceras de seguridad con CSP calibrada, y Cloudflare Turnstile invisible validado server-side antes de las credenciales (ver sección 42).
 - Fase 8: [🟢 SISTEMA ENTERPRISE DE CIERRES AUTOMÁTICOS, NOTIFICACIONES TAGGEADAS, ANALÍTICA FINANCIERA Y AUDITORÍA INMUTABLE COMPLETADO] — Scheduler de cierre de caja 21:00 bajo usuario de sistema, notificaciones estructuradas por tags JSON con modal de plantillas dinámicas, modal de analítica financiera mensual con export CSV, y auditoría forense de cierres admin-only (ver sección 40).
 - Fase 7: [🟢 SISTEMA DE GESTIÓN DE MESAS (DINE-IN) IMPLEMENTADO] — Comedor operativo: plano de mesas, cuentas vivas transaccionales, comandas incrementales y cobro con liberación automática (ver sección 39).
 - Estado de Infraestructura: [🟢 FASE 7: DEPLOY ÁGIL Y DOCKER OPTIMIZADO] — Docker Compose multi-contenedor operativo (4 servicios: backend, frontend, postgres, redis).
@@ -55,6 +56,7 @@
 | Analítica Financiera Mensual (Dashboard) | [🟢 FASE 8: COMPLETADO] | [🟢 FASE 8: COMPLETADO] | Endpoint agregado role:admin,manager (totales, comparativa mensual, métodos de pago, top productos, horas pico, tendencia diaria), modal con skeleton + export CSV — ver sección 40 |
 | Auditoría Histórica de Cierres (Admin Only) | [🟢 FASE 8: COMPLETADO] | [🟢 FASE 8: COMPLETADO] | `/admin/cash-closings-audit` con middleware role:admin, tabla lazy paginada con filtros, radiografía forense de solo lectura, triple candado de inmutabilidad — ver sección 40 |
 | Sistema de Gestión de Mesas (Dine-in) | [🟢 FASE 7: IMPLEMENTADO] | [🟢 FASE 7: IMPLEMENTADO] | Tablas `tables` y `table_sessions`, orden base en estado `open`, 4 endpoints transaccionales con `lockForUpdate` + índice único parcial, botón de mesas a la izquierda del reloj en el header del POS, catálogo en sidebar de Administración, trazabilidad mesa/mesero en histórico y ticket — ver sección 39 |
+| Transiciones Instantáneas POS ↔ Mesas | N/A | [🟢 FASE 11: COMPLETADO] | Caché SWR (`readCache` + `useCachedResource` sobre `useSyncExternalStore`) con `staleTime` por volatilidad real del dato; `PersistentShell` como layout route que evita el derribo de sidebar/header; cascada serial del POS eliminada; prefetch `onMouseEnter`/`onFocus`; carrito que sobrevive a la navegación. Medido: spinner 7-8 → 0 frames, Mesas→POS 241 → ~110 ms, 24 → 1 peticiones — ver sección 44 |
 | Telemetría de Jobs y Rollback/Backups GCP | [🟢 FASE 10: COMPLETADO] | [🟢 FASE 10: COMPLETADO] | Tabla `job_execution_logs` (una fila por intento) alimentada por JobQueued/JobProcessing/JobProcessed/JobFailed sin instrumentar ningún job; 3 endpoints admin + reintento vía `queue:retry`; vista `/admin/jobs-monitor` con catálogo, histórico forense, modal de traza y panel de puntos de restauración; bóveda `gcs_backups` cifrada AES-256+PBKDF2 aislada en GCP, rollback transaccional (`--single-transaction` + `ON_ERROR_STOP`) con checksum SHA-256 y respaldo de seguridad previo; scheduler 03:30 respaldo / 04:15 poda; 30 pruebas en verde — ver sección 43 |
 | Escudo de Seguridad y Throttling | [🟢 FASE 9: COMPLETADO] | [🟢 FASE 9: COMPLETADO] | Candado de login 5 fallos/min por email+IP → bloqueo 15 min con `Retry-After`; cupo global 100 req/min (guard sanctum explícito + `trustProxies`); middleware global `SecurityHeaders` (XFO DENY, nosniff, HSTS, CSP calibrada para Turnstile / agente local 9100 / Reverb WSS); Cloudflare Turnstile invisible validado server-side antes de las credenciales; interceptor Axios 429 + alerta de bloqueo con cuenta regresiva en LoginPage; 18 pruebas en verde — ver sección 42 |
 | Optimizacion Modal de Cobro (Rendimiento) | [🟢 COMPLETADO Y OPERATIVO] | [🟢 COMPLETADO Y OPERATIVO] | Catálogo de métodos de pago servido desde Redis (`Cache::remember`, TTL 60 min, invalidación automática en alta/edición/baja); input de "Dinero Recibido" con sanitización estricta en `onChange` (sin `onBlur`), cálculo del cambio y habilitación de "Confirmar Cobro" en tiempo real desde la primera tecla |
@@ -3974,3 +3976,181 @@ versión del cliente debe ser ≥ la del servidor administrado.
 - `src/components/layout/AppHeader.jsx` — título de la ruta
 - `.env.production.example` — bloque Fase 10
 - `frontend/dist/` — build regenerado
+
+## 44. FASE 11: TRANSICIONES INSTANTÁNEAS POS ↔ MESAS (CACHÉ SWR, SHELL PERSISTENTE Y PREFETCH) [🟢 COMPLETADO Y OPERATIVO]
+
+Alternar entre el POS y el plano de Mesas parpadeaba en blanco y tardaba en
+reconstruirse. La causa no era una sola: eran **tres defectos apilados**, y cada
+uno exigía su propia corrección.
+
+### 44.1 Diagnóstico: por qué parpadeaba
+
+| # | Causa | Efecto |
+| :--- | :--- | :--- |
+| 1 | **Derribo del shell.** Cada una de las 24 páginas renderiza su propio `<AppLayout>`. Navegar desmontaba sidebar, header, reloj, campana y contador de ventas para volver a montarlos idénticos | El chrome completo se repintaba: eso *es* el parpadeo |
+| 2 | **Cascada serial en el POS.** `useEffect` #1 pedía `/cash-registers/active`; solo cuando resolvía, el `useEffect` #2 disparaba `/products/grouped` + `/promotions/active` | Dos viajes de ida y vuelta ENCADENADOS antes de poder pintar nada |
+| 3 | **Cero caché de vista.** Cada montaje arrancaba con `productGroups=[]` y `loading=true`, y volvía a pedir todo | Área de contenido en blanco con spinner en cada navegación |
+
+A esto se sumaba que `/tax-rate` —configuración que cambia una vez al año— se
+pedía en cada montaje de ambas vistas.
+
+### 44.2 Estrategia de caché: por qué NO se agregó TanStack Query
+
+El proyecto ya tenía `src/api/readCache.js`: una caché de proceso con TTL y
+deduplicación de peticiones en vuelo, escrita en la Fase 8 para el header y
+consumida por tres módulos. Tenía exactamente la semántica necesaria y le
+faltaban tres piezas. Extenderla costó ~60 líneas; sustituirla por React Query
+habría significado una dependencia nueva, reescribir la capa de datos de ambas
+vistas y migrar a los tres consumidores existentes — más superficie de
+regresión para el mismo resultado.
+
+Piezas añadidas a `readCache`:
+
+| API | Función |
+| :--- | :--- |
+| `subscribe(key, fn)` | Los componentes se enteran de los cambios sin sondear. Base de `useCachedResource` |
+| `peek(key)` | Instantánea **síncrona**, sin disparar red. Permite que el primer render ya pinte datos |
+| `prefetch(key, fetcher)` | Calienta una clave que nadie consume aún. Idempotente y silenciosa |
+| `mutate(key, data)` | Siembra un dato ya conocido (respuesta de un POST) |
+| `invalidatePrefix(p)` | Invalidación por familia de claves |
+
+**Invariante crítica:** las entradas son inmutables; toda modificación reemplaza
+el objeto entero. `useSyncExternalStore` compara la instantánea por identidad y
+entraría en un bucle infinito de render si se mutara en sitio.
+
+**Degradación ante fallo:** si una revalidación falla sobre un dato ya cargado,
+la caché **conserva el dato viejo** y anota el error. En un POS, un catálogo de
+hace un minuto es infinitamente más útil que una pantalla vacía por un blip de
+red; la vista avisa con un toast y sigue operando.
+
+### 44.3 `useCachedResource`: el hook que elimina el parpadeo
+
+`src/hooks/useCachedResource.js`. El contrato es una sola frase: **si la clave
+ya tiene dato, el primer render lo devuelve** —síncronamente, antes de cualquier
+efecto— y la revalidación ocurre después, en segundo plano.
+
+Se apoya en `useSyncExternalStore` y no en `useState` + `useEffect` porque es la
+única forma de que React lea el valor externo *durante* el render. Con
+`useState`, el primer render sería `undefined` y habría un frame en blanco:
+justo lo que se quiere eliminar.
+
+```js
+isLoading: enabled && !hasData && !error   // sólo cuando no hay NADA que pintar
+isValidating: !!entry.promise              // revalidación silenciosa en curso
+```
+
+Con caché caliente `isLoading` nace en `false`, y de ahí la transición
+instantánea.
+
+### 44.4 Registro central de recursos y ventanas de frescura
+
+`src/api/resources.js` concentra claves, fetchers y `staleTime`. Con las
+peticiones dispersas por los componentes, un `staleTime` distinto en cada sitio
+reintroduce el problema que esta fase vino a resolver.
+
+| Recurso | `staleTime` | Criterio |
+| :--- | :--- | :--- |
+| `pos:catalog` | 60 s | Cambia por una edición deliberada en administración |
+| `pos:promotions` | 60 s | Idem |
+| `pos:cash-register` | 20 s | Gobierna el bloqueo del POS: ventana corta |
+| `dining:tables` | **10 s** | Varios meseros lo mueven a la vez; además revalida al recuperar el foco |
+| `config:tax-rate` | 600 s | Configuración global; cambiarlo es un evento anual |
+
+**Bug corregido de paso:** `/cash-registers/active` responde `200` con
+`data: null` cuando no hay turno abierto, pero el código hacía
+`catch { setCashRegister(null) }` — un fallo de red se leía como "no hay caja" y
+mandaba al cajero a la pantalla de apertura. Ahora el error se propaga y la
+caché conserva el estado previo.
+
+`invalidateAfterSale()` descarta catálogo y mesas tras cobrar: el stock y el
+estado del salón acaban de cambiar en el servidor, así que la siguiente lectura
+va a la red aunque la ventana siga vigente.
+
+### 44.5 Shell persistente (`PersistentShell`)
+
+`/pos` y `/mesas` cuelgan ahora de un *layout route* común que renderiza
+`<AppLayout/>` con `<Outlet/>`. React Router conserva el árbol del shell y sólo
+intercambia el contenido: **no hay teardown de DOM, ni remonte de los widgets
+del header, ni reinicio del estado del sidebar**.
+
+`AppLayout` admite las dos formas de uso que conviven: `children` (el patrón
+histórico de las otras 22 páginas, intacto) y `<Outlet/>` como layout route.
+
+**Alcance deliberado:** sólo se migraron las dos vistas de alta rotación. Migrar
+las 24 páginas es un refactor mayor con superficie de regresión desproporcionada
+frente al beneficio — el cajero no alterna entre Papelera y Auditoría decenas de
+veces por turno.
+
+### 44.6 Carrito que sobrevive a la navegación
+
+`src/pages/pos/cartStore.js`. El carrito vivía sólo en el `useState` de POSPage:
+bastaba ir a Mesas a consultar una cuenta y volver para que la venta en curso se
+evaporara — un cajero perdiendo un ticket a medio armar delante del cliente.
+
+Un store de módulo lo resuelve sin arrastrar el estado a un contexto global. **No
+se persiste en localStorage a propósito**: un carrito resucitado tras cerrar el
+navegador o al día siguiente sería una fuente de errores de cobro, no una
+comodidad.
+
+### 44.7 Prefetch por intención
+
+`prefetchRoute(path)` colgado de `onMouseEnter` y `onFocus`:
+
+- **Sidebar** (`NavLink`) — cubre Mesas → POS.
+- **Botón "Mesas" del header del POS** — cubre POS → Mesas (el plano no está en
+  el sidebar; se llega por ese botón).
+
+Entre que el usuario apunta y suelta el clic pasan 200-400 ms: tiempo de sobra
+para que la petición vuelva. Es idempotente y silenciosa — sobre cualquier ruta
+no crítica, o si el dato ya está fresco, no hace absolutamente nada; y si falla,
+no molesta a nadie porque el usuario ni siquiera ha navegado.
+
+### 44.8 Medición real (Chromium + Playwright, mismo equipo y datos)
+
+Cuatro ciclos completos POS → Mesas → POS, contra el bundle de producción
+servido por `vite preview` y la API Laravel real. `framesConSpinner` cuenta los
+frames en que `.animate-spin` está presente tras la navegación: es el proxy
+directo de "pantalla en blanco".
+
+| Métrica (4 ciclos) | ANTES | DESPUÉS |
+| :--- | ---: | ---: |
+| Mesas → POS, promedio | **241 ms** | **104-116 ms** |
+| Mesas → POS, frames con spinner | **7-8 por transición** | **0** |
+| POS → Mesas, promedio | 107 ms | 106 ms |
+| POS → Mesas, frames con spinner | 0 | 0 |
+| **Peticiones HTTP totales** | **24** | **1** |
+
+- **Parpadeo eliminado:** el spinner desapareció por completo (7-8 → 0 frames).
+- **Latencia Mesas → POS: −52 %**, y la petición única que queda es la
+  revalidación de mesas cuando su ventana de 10 s vence.
+- **Tráfico: −96 %** (24 → 1 peticiones en cuatro idas y vueltas).
+
+> Estas cifras son **conservadoras**: se midieron en localhost con RTT ≈ 1 ms.
+> En producción sobre internet (RTT 50-150 ms) la cascada serial del POS costaba
+> dos RTT encadenados y el camino cacheado cuesta **cero**, así que la mejora
+> real es sensiblemente mayor que el 52 % medido aquí.
+
+**Verificación funcional adicional (Playwright, sin errores de consola):**
+- Carrito con dos productos (total `$57.00`) → ir a Mesas → volver: total
+  intacto en `$57.00`.
+- Sidebar colapsado a 72 px: conserva la anchura al cambiar de vista (antes se
+  reiniciaba a expandido).
+- Identidad del nodo `<aside>` preservada entre navegaciones: prueba directa de
+  que el shell no se desmonta.
+- Hover sobre el botón de Mesas con la ventana vencida dispara `/api/tables`; el
+  clic posterior resuelve en 85 ms **sin ninguna petición**.
+
+### Archivos Creados en esta Fase
+- `src/api/resources.js` — Registro de recursos, `staleTime` y `prefetchRoute`
+- `src/hooks/useCachedResource.js` — Hook SWR sobre `useSyncExternalStore`
+- `src/pages/pos/cartStore.js` — Carrito que sobrevive a la navegación
+
+### Archivos Modificados en esta Fase
+- `src/api/readCache.js` — `subscribe`, `peek`, `prefetch`, `mutate`, `invalidatePrefix`; conservación del dato ante fallo de revalidación
+- `src/App.jsx` — `PersistentShell` como layout route de `/pos` y `/mesas`
+- `src/components/layout/AppLayout.jsx` — Soporte dual `children` / `<Outlet/>`
+- `src/components/layout/Sidebar.jsx` — Prefetch en `onMouseEnter` / `onFocus`
+- `src/pages/pos/POSPage.jsx` — Cascada serial eliminada (4 lecturas en paralelo desde caché), carrito persistente, prefetch en el botón de Mesas, invalidación post-venta
+- `src/pages/dining/TablesFloorPlanPage.jsx` — Plano servido desde caché con revalidación silenciosa
+- `vite.config.js` — Proxy `/api` también en `vite preview`, para validar el bundle compilado contra la API real
+- `frontend/dist/` — Build de producción regenerado
