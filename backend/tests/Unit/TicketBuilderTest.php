@@ -142,6 +142,11 @@ class TicketBuilderTest extends TestCase
             totalPublico: '$360.00',
             recibido: '$400.00',
             cambio: '$40.00',
+            // Ticket sin descuento. El parametro es nullable pero no tiene
+            // valor por defecto, asi que hay que pasarlo explicitamente: la
+            // prueba es anterior al modulo de descuentos y llevaba tiempo
+            // rompiendo la suite por esta omision.
+            descuentoTotal: null,
             leyendaPersonalizada: 'Mesa 5 - Pedido especial sin cebolla',
             mensajePie: 'Vuelva pronto!',
             version: 3,
