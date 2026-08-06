@@ -56,6 +56,7 @@
 | Analítica Financiera Mensual (Dashboard) | [🟢 FASE 8: COMPLETADO] | [🟢 FASE 8: COMPLETADO] | Endpoint agregado role:admin,manager (totales, comparativa mensual, métodos de pago, top productos, horas pico, tendencia diaria), modal con skeleton + export CSV — ver sección 40 |
 | Auditoría Histórica de Cierres (Admin Only) | [🟢 FASE 8: COMPLETADO] | [🟢 FASE 8: COMPLETADO] | `/admin/cash-closings-audit` con middleware role:admin, tabla lazy paginada con filtros, radiografía forense de solo lectura, triple candado de inmutabilidad — ver sección 40 |
 | Sistema de Gestión de Mesas (Dine-in) | [🟢 FASE 7: IMPLEMENTADO] | [🟢 FASE 7: IMPLEMENTADO] | Tablas `tables` y `table_sessions`, orden base en estado `open`, 4 endpoints transaccionales con `lockForUpdate` + índice único parcial, botón de mesas a la izquierda del reloj en el header del POS, catálogo en sidebar de Administración, trazabilidad mesa/mesero en histórico y ticket — ver sección 39 |
+| Seeder Operativo + Selector de Zonas | [🟢 CORREGIDO] | [🟢 CORREGIDO] | El seeder no creaba `ticket_config` activa y TODA instalacion nacia sin poder vender: `/api/orders` y `/api/tables/{id}/open` respondian 422 ERR_TICKET_NO_ACTIVE_CONFIG (verificado: ahora 201 en ambos). El selector de zonas del Plano de Mesas se pintaba vacio por falta de placeholder con `value=null`. 4 pruebas fijan el contrato minimo del seeder — ver seccion 46 |
 | Migraciones Idempotentes (ENUMs PostgreSQL) | [🟢 CORREGIDO] | N/A | `migrate:fresh` borra tablas pero NO los tipos ENUM: el segundo `docker compose up` moria con `type "discount_type" already exists`. Corregido en dos capas: `--drop-types` en el entrypoint y `App\Support\Database\PostgresEnum` (crea si falta, recrea si esta huerfano, respeta si esta en uso — nunca CASCADE) en las 6 migraciones que crean tipos. Guardia estatica que falla si una migracion nueva usa `CREATE TYPE` crudo en `up()`. Suite completa en verde 74/74 — ver seccion 45 |
 | Transiciones Instantáneas POS ↔ Mesas | N/A | [🟢 FASE 11: COMPLETADO] | Caché SWR (`readCache` + `useCachedResource` sobre `useSyncExternalStore`) con `staleTime` por volatilidad real del dato; `PersistentShell` como layout route que evita el derribo de sidebar/header; cascada serial del POS eliminada; prefetch `onMouseEnter`/`onFocus`; carrito que sobrevive a la navegación. Medido: spinner 7-8 → 0 frames, Mesas→POS 241 → ~110 ms, 24 → 1 peticiones — ver sección 44 |
 | Telemetría de Jobs y Rollback/Backups GCP | [🟢 FASE 10: COMPLETADO] | [🟢 FASE 10: COMPLETADO] | Tabla `job_execution_logs` (una fila por intento) alimentada por JobQueued/JobProcessing/JobProcessed/JobFailed sin instrumentar ningún job; 3 endpoints admin + reintento vía `queue:retry`; vista `/admin/jobs-monitor` con catálogo, histórico forense, modal de traza y panel de puntos de restauración; bóveda `gcs_backups` cifrada AES-256+PBKDF2 aislada en GCP, rollback transaccional (`--single-transaction` + `ON_ERROR_STOP`) con checksum SHA-256 y respaldo de seguridad previo; scheduler 03:30 respaldo / 04:15 poda; 30 pruebas en verde — ver sección 43 |
@@ -4267,3 +4268,115 @@ producción.
 - `docker-entrypoint.sh` — `migrate:fresh --seed --force --drop-types`
 - Las 6 migraciones de la tabla en 45.3
 - `tests/Unit/TicketBuilderTest.php` — `descuentoTotal: null` explícito
+
+## 46. CORRECCIÓN: SISTEMA INOPERANTE TRAS SEMBRAR + SELECTOR DE ZONAS VACÍO [🟢 CORREGIDO]
+
+Dos defectos visibles en el Plano de Mesas, reportados desde la interfaz.
+
+### 46.1 El 422 al abrir una mesa — el sistema no podía vender
+
+```
+POST /api/tables/019fd842-.../open  422 (Unprocessable Content)
+```
+
+**Causa raíz: el seeder no creaba ninguna `ticket_config` activa.**
+
+Tanto `OrderController@store` (mostrador) como `TableSessionController@open`
+(comedor) empiezan por buscar la configuración de ticket vigente y abortan con
+`ERR_TICKET_NO_ACTIVE_CONFIG` si no la encuentran. Como el entrypoint de Docker
+ejecuta `migrate:fresh --seed` en cada arranque, **toda instalación nacía
+inoperante**: ni el cajero podía cobrar ni el mesero abrir una mesa.
+
+No era un problema del comedor: era **el sistema entero sin poder facturar**.
+El síntoma apareció primero en Mesas por casualidad.
+
+Corrección — el seeder crea la versión 1 activa, con los datos replicados de
+`fiscal_data` para que ambas fuentes nazcan coherentes:
+
+```php
+TicketConfig::create([
+    'version' => 1,
+    'is_active' => true,
+    'business_name' => $fiscalData['business_name'],
+    'rfc' => $fiscalData['rfc'],
+    'address' => $fiscalData['address'].', '.$fiscalData['city'],
+    'phone' => $fiscalData['phone'],
+    'header_message' => 'Gracias por su preferencia',
+    'footer_message' => 'Conserve su ticket para cualquier aclaracion',
+    'updated_by' => $user->id,
+]);
+```
+
+El módulo `/ticket-config` sigue siendo append-only: cuando el administrador
+cargue los datos reales del negocio se crea una versión 2 y esta se desactiva,
+nunca se edita.
+
+**Verificación HTTP contra la API real, tras sembrar de cero:**
+
+| Endpoint | Antes | Después |
+| :--- | :--- | :--- |
+| `POST /api/tables/{id}/open` | **422** `ERR_TICKET_NO_ACTIVE_CONFIG` | **201** — mesa `occupied`, sesión y orden viva creadas |
+| `POST /api/orders` | **422** (mismo código) | **201** — venta con total `$50.00` |
+
+### 46.2 El selector de zonas se pintaba vacío
+
+El filtro nace sin zona seleccionada (`zoneFilter = null`) y PrimeReact
+interpreta `null` como "sin valor". Al no haber `placeholder`, el control se
+renderizaba **completamente en blanco**, sin ninguna pista de para qué sirve.
+
+Existía una opción `{ label: 'Todas las zonas', value: null }` en la lista, pero
+elegirla devolvía al mismo estado vacío: su valor coincidía con el de "sin
+selección".
+
+Corrección: se añade `placeholder="Todas las zonas"` —que describe el estado
+real, no hay filtro— y la opción de limpieza usa un valor sentinela propio
+(`ALL_ZONES`) para que también se muestre al elegirla. Más `aria-label` para
+lectores de pantalla.
+
+Verificado en navegador: el control muestra "Todas las zonas", lista las tres
+zonas sembradas (Barra, Salón, Terraza) y filtrar por Terraza deja 3 mesas
+visibles.
+
+### 46.3 Prueba de regresión
+
+`tests/Feature/Database/SeederLeavesSystemOperationalTest.php` — 4 pruebas que
+fijan el contrato mínimo del seeder:
+
+- Existe **exactamente una** `ticket_config` activa, con versión 1 y todos sus
+  campos obligatorios poblados.
+- **Se puede abrir una mesa sin configurar nada a mano** (la reproducción
+  exacta del 422, ahora exigiendo 201).
+- El catálogo base queda operativo: métodos de pago activos, los tres roles,
+  y mesas dadas de alta.
+- `migrate:fresh --seed` repetido deja siempre una única configuración activa.
+
+Suite completa: **78/78, 334 aserciones.**
+
+### 46.4 Pendiente detectado, NO corregido: desfase horario de 6 horas
+
+Al validar el flujo se vio que una mesa recién abierta muestra
+**"Abierta hace 6h 0m"**. Es el mismo defecto sistémico documentado en 43.3:
+
+```
+Laravel now()      : 2026-08-06T12:34:04-06:00
+Guardado en la BD  : 2026-08-06 12:33:28+00     <- la hora local etiquetada como UTC
+Sesión de Postgres : Etc/UTC
+```
+
+Laravel serializa el Carbon en zona `America/Mexico_City` **sin el offset**, y
+PostgreSQL —cuya sesión está en UTC— lo interpreta como si ya fuera UTC. Toda
+columna `timestamptz` de la aplicación queda **6 horas corrida**.
+
+La corrección es una línea en `config/database.php` (`'timezone'` en la conexión
+`pgsql`, que emite `SET TIME ZONE`), **pero cambia la interpretación de los
+datos ya almacenados**: órdenes, cierres de caja, auditoría. Requiere decidir si
+se migran las filas históricas o se acepta la discontinuidad, así que queda
+fuera de esta corrección y a criterio del propietario del sistema.
+
+### Archivos Creados
+- `tests/Feature/Database/SeederLeavesSystemOperationalTest.php`
+
+### Archivos Modificados
+- `database/seeders/DatabaseSeeder.php` — `TicketConfig` activa versión 1
+- `frontend/src/pages/dining/TablesFloorPlanPage.jsx` — placeholder, sentinela `ALL_ZONES` y `aria-label` en el selector de zonas
+- `frontend/dist/` — build regenerado

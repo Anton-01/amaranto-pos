@@ -5,8 +5,9 @@ namespace Database\Seeders;
 use App\Models\GlobalSetting;
 use App\Models\NotificationType;
 use App\Models\PaymentMethod;
-use App\Models\Table;
 use App\Models\Role;
+use App\Models\Table;
+use App\Models\TicketConfig;
 use App\Models\User;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Str;
@@ -127,15 +128,45 @@ class DatabaseSeeder extends Seeder
             'value' => ['code' => 'MXN', 'symbol' => '$', 'label' => 'Peso Mexicano'],
         ]);
 
+        $fiscalData = [
+            'business_name' => 'Cronos Fast Food',
+            'rfc' => 'XAXX010101000',
+            'address' => 'Av. Principal #123, Col. Centro',
+            'city' => 'Ciudad de México',
+            'phone' => '55-1234-5678',
+        ];
+
         GlobalSetting::create([
             'key' => 'fiscal_data',
-            'value' => [
-                'business_name' => 'Cronos Fast Food',
-                'rfc' => 'XAXX010101000',
-                'address' => 'Av. Principal #123, Col. Centro',
-                'city' => 'Ciudad de México',
-                'phone' => '55-1234-5678',
-            ],
+            'value' => $fiscalData,
+        ]);
+
+        /*
+         * Configuracion de ticket ACTIVA — version 1.
+         *
+         * No es un adorno: sin una fila activa aqui, el sistema no puede
+         * VENDER. Tanto OrderController@store (mostrador) como
+         * TableSessionController@open (comedor) abortan con
+         * ERR_TICKET_NO_ACTIVE_CONFIG y devuelven 422, de modo que una
+         * instalacion recien sembrada quedaba inoperante: el cajero no podia
+         * cobrar y el mesero no podia abrir una mesa.
+         *
+         * Los datos replican `fiscal_data` para que ambas fuentes nazcan
+         * coherentes. El administrador puede versionarla desde /ticket-config
+         * cuando cargue los datos reales del negocio (el modulo es
+         * append-only: cada cambio crea una version nueva y desactiva la
+         * anterior, nunca edita esta).
+         */
+        TicketConfig::create([
+            'version' => 1,
+            'is_active' => true,
+            'business_name' => $fiscalData['business_name'],
+            'rfc' => $fiscalData['rfc'],
+            'address' => $fiscalData['address'].', '.$fiscalData['city'],
+            'phone' => $fiscalData['phone'],
+            'header_message' => 'Gracias por su preferencia',
+            'footer_message' => 'Conserve su ticket para cualquier aclaracion',
+            'updated_by' => $user->id,
         ]);
     }
 }
