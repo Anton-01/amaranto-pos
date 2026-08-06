@@ -1,28 +1,33 @@
 <?php
 
+use App\Support\Database\PostgresEnum;
 use Illuminate\Database\Migrations\Migration;
-use Illuminate\Support\Facades\DB;
 
+/**
+ * Tipos ENUM nativos de PostgreSQL que usa el esquema base.
+ *
+ * La creacion pasa por PostgresEnum::createMany, que es idempotente: los tipos
+ * SOBREVIVEN a `migrate:fresh` (que solo borra tablas), y un `CREATE TYPE`
+ * directo fallaria con "type already exists" en la segunda corrida.
+ */
 return new class extends Migration
 {
+    private const ENUMS = [
+        'user_status' => ['active', 'suspended'],
+        'promotion_type' => ['percentage', 'fixed_amount', 'freebie_100'],
+        'stock_movement_type' => ['purchase_input', 'merma_output', 'sale_output', 'adjustment'],
+        'stock_movement_reason' => ['expired', 'damaged_spilled', 'internal_consumption', 'theft_loss'],
+        'petty_cash_reason' => ['provider_payment', 'supplies_purchase', 'change_delivery', 'emergency'],
+        'order_status' => ['completed', 'canceled'],
+    ];
+
     public function up(): void
     {
-        DB::statement('DROP TYPE IF EXISTS user_status, payment_method, promotion_type, stock_movement_type, stock_movement_reason, petty_cash_reason, order_status');
-        DB::statement("CREATE TYPE user_status AS ENUM ('active', 'suspended')");
-        DB::statement("CREATE TYPE promotion_type AS ENUM ('percentage', 'fixed_amount', 'freebie_100')");
-        DB::statement("CREATE TYPE stock_movement_type AS ENUM ('purchase_input', 'merma_output', 'sale_output', 'adjustment')");
-        DB::statement("CREATE TYPE stock_movement_reason AS ENUM ('expired', 'damaged_spilled', 'internal_consumption', 'theft_loss')");
-        DB::statement("CREATE TYPE petty_cash_reason AS ENUM ('provider_payment', 'supplies_purchase', 'change_delivery', 'emergency')");
-        DB::statement("CREATE TYPE order_status AS ENUM ('completed', 'canceled')");
+        PostgresEnum::createMany(self::ENUMS);
     }
 
     public function down(): void
     {
-        DB::statement('DROP TYPE IF EXISTS petty_cash_reason');
-        DB::statement('DROP TYPE IF EXISTS stock_movement_reason');
-        DB::statement('DROP TYPE IF EXISTS stock_movement_type');
-        DB::statement('DROP TYPE IF EXISTS promotion_type');
-        DB::statement('DROP TYPE IF EXISTS order_status');
-        DB::statement('DROP TYPE IF EXISTS user_status');
+        PostgresEnum::drop(...array_keys(self::ENUMS));
     }
 };

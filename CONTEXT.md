@@ -56,6 +56,7 @@
 | Analítica Financiera Mensual (Dashboard) | [🟢 FASE 8: COMPLETADO] | [🟢 FASE 8: COMPLETADO] | Endpoint agregado role:admin,manager (totales, comparativa mensual, métodos de pago, top productos, horas pico, tendencia diaria), modal con skeleton + export CSV — ver sección 40 |
 | Auditoría Histórica de Cierres (Admin Only) | [🟢 FASE 8: COMPLETADO] | [🟢 FASE 8: COMPLETADO] | `/admin/cash-closings-audit` con middleware role:admin, tabla lazy paginada con filtros, radiografía forense de solo lectura, triple candado de inmutabilidad — ver sección 40 |
 | Sistema de Gestión de Mesas (Dine-in) | [🟢 FASE 7: IMPLEMENTADO] | [🟢 FASE 7: IMPLEMENTADO] | Tablas `tables` y `table_sessions`, orden base en estado `open`, 4 endpoints transaccionales con `lockForUpdate` + índice único parcial, botón de mesas a la izquierda del reloj en el header del POS, catálogo en sidebar de Administración, trazabilidad mesa/mesero en histórico y ticket — ver sección 39 |
+| Migraciones Idempotentes (ENUMs PostgreSQL) | [🟢 CORREGIDO] | N/A | `migrate:fresh` borra tablas pero NO los tipos ENUM: el segundo `docker compose up` moria con `type "discount_type" already exists`. Corregido en dos capas: `--drop-types` en el entrypoint y `App\Support\Database\PostgresEnum` (crea si falta, recrea si esta huerfano, respeta si esta en uso — nunca CASCADE) en las 6 migraciones que crean tipos. Guardia estatica que falla si una migracion nueva usa `CREATE TYPE` crudo en `up()`. Suite completa en verde 74/74 — ver seccion 45 |
 | Transiciones Instantáneas POS ↔ Mesas | N/A | [🟢 FASE 11: COMPLETADO] | Caché SWR (`readCache` + `useCachedResource` sobre `useSyncExternalStore`) con `staleTime` por volatilidad real del dato; `PersistentShell` como layout route que evita el derribo de sidebar/header; cascada serial del POS eliminada; prefetch `onMouseEnter`/`onFocus`; carrito que sobrevive a la navegación. Medido: spinner 7-8 → 0 frames, Mesas→POS 241 → ~110 ms, 24 → 1 peticiones — ver sección 44 |
 | Telemetría de Jobs y Rollback/Backups GCP | [🟢 FASE 10: COMPLETADO] | [🟢 FASE 10: COMPLETADO] | Tabla `job_execution_logs` (una fila por intento) alimentada por JobQueued/JobProcessing/JobProcessed/JobFailed sin instrumentar ningún job; 3 endpoints admin + reintento vía `queue:retry`; vista `/admin/jobs-monitor` con catálogo, histórico forense, modal de traza y panel de puntos de restauración; bóveda `gcs_backups` cifrada AES-256+PBKDF2 aislada en GCP, rollback transaccional (`--single-transaction` + `ON_ERROR_STOP`) con checksum SHA-256 y respaldo de seguridad previo; scheduler 03:30 respaldo / 04:15 poda; 30 pruebas en verde — ver sección 43 |
 | Escudo de Seguridad y Throttling | [🟢 FASE 9: COMPLETADO] | [🟢 FASE 9: COMPLETADO] | Candado de login 5 fallos/min por email+IP → bloqueo 15 min con `Retry-After`; cupo global 100 req/min (guard sanctum explícito + `trustProxies`); middleware global `SecurityHeaders` (XFO DENY, nosniff, HSTS, CSP calibrada para Turnstile / agente local 9100 / Reverb WSS); Cloudflare Turnstile invisible validado server-side antes de las credenciales; interceptor Axios 429 + alerta de bloqueo con cuenta regresiva en LoginPage; 18 pruebas en verde — ver sección 42 |
@@ -4154,3 +4155,115 @@ directo de "pantalla en blanco".
 - `src/pages/dining/TablesFloorPlanPage.jsx` — Plano servido desde caché con revalidación silenciosa
 - `vite.config.js` — Proxy `/api` también en `vite preview`, para validar el bundle compilado contra la API real
 - `frontend/dist/` — Build de producción regenerado
+
+## 45. CORRECCIÓN: MIGRACIONES IDEMPOTENTES ANTE ENUMS SUPERVIVIENTES (PostgreSQL) [🟢 CORREGIDO]
+
+El contenedor `cronos-backend` moría con código 1 en el **segundo** `docker
+compose up` y arrastraba el arranque completo:
+
+```
+cronos-postgres | ERROR:  type "discount_type" already exists
+cronos-backend  | 2026_06_27_000002_add_discount_columns_to_orders ... FAIL
+cronos-backend  | SQLSTATE[42710]: Duplicate object: 7 ERROR: type "discount_type" already exists
+cronos-backend exited with code 1
+```
+
+### 45.1 Causa raíz
+
+**`migrate:fresh` borra TABLAS, no TIPOS.** Los ENUM nativos de PostgreSQL
+sobreviven al borrado, y en la corrida siguiente el `CREATE TYPE` de la
+migración choca contra el superviviente.
+
+La migración *sí* tenía un `DROP TYPE IF EXISTS discount_type`… pero en
+`down()`, que `migrate:fresh` **nunca invoca**: elimina las tablas
+directamente, sin revertir migración por migración.
+
+Un detalle que explica por qué el fallo tardó en aparecer: la primera
+migración (`create_enums`) sí soltaba sus tipos al inicio de `up()`, así que
+los seis ENUM base eran inmunes. `discount_type` —añadido después, en otra
+migración— no heredó esa precaución.
+
+### 45.2 Corrección en dos capas
+
+**Capa 1 — el comando.** `docker-entrypoint.sh` usaba
+`migrate:fresh --seed --force`. Ahora pasa **`--drop-types`**, la bandera de
+Laravel que sí elimina los tipos en PostgreSQL.
+
+**Capa 2 — las migraciones.** La bandera por sí sola no basta: cualquiera que
+ejecute `php artisan migrate:fresh` a mano, un script de CI o un entrypoint
+futuro reintroduce el fallo. Se creó `App\Support\Database\PostgresEnum`, y
+**las 6 migraciones que crean tipos pasan por él**.
+
+| Situación al invocar `PostgresEnum::create()` | Comportamiento |
+| :--- | :--- |
+| El tipo no existe | Se crea |
+| Existe y **nadie** lo usa | Se **recrea** — garantiza que la definición corresponde al archivo de migración y no a un residuo antiguo con otros valores |
+| Existe y hay **columnas que dependen** de él | No se toca: recrearlo destruiría datos, y su presencia significa que la migración ya corrió |
+
+**Nunca se usa `DROP TYPE ... CASCADE`**: eliminaría en silencio las columnas
+que dependen del tipo. En una base financiera eso es inaceptable — por eso la
+tercera fila de la tabla existe.
+
+API del helper: `create`, `createMany`, `addValue` (con `IF NOT EXISTS`),
+`drop`, `exists`, `isInUse`. Los identificadores se validan contra
+`/^[a-z_][a-z0-9_]*$/` antes de interpolarse, porque un nombre de tipo no puede
+parametrizarse en SQL.
+
+### 45.3 Migraciones ajustadas
+
+| Migración | Tipo |
+| :--- | :--- |
+| `0001_01_01_000000_create_enums` | `user_status`, `promotion_type`, `stock_movement_type`, `stock_movement_reason`, `petty_cash_reason`, `order_status` |
+| `2026_06_27_000002_add_discount_columns_to_orders` | `discount_type` ← **el que rompía** |
+| `2026_07_31_000001_add_open_to_order_status_enum` | `order_status` (vía `addValue`) |
+| `2026_07_31_000002_create_tables_table` | `table_status` |
+| `2026_07_31_000004_create_table_sessions_table` | `table_session_status` |
+| `2026_08_03_000001_create_job_execution_logs_table` | `job_execution_status` |
+
+Se auditó el resto del esquema en busca de otros objetos que sobrevivan a
+`migrate:fresh` —vistas, funciones, triggers, extensiones, dominios,
+secuencias sueltas—: **no existe ninguno**. Los ENUM eran la única familia
+afectada.
+
+### 45.4 Prueba de regresión
+
+`tests/Feature/Database/MigrationsAreRerunnableTest.php` — 6 pruebas:
+
+- `migrate:fresh` **dos y tres veces seguidas SIN `--drop-types`** (la
+  reproducción exacta del fallo).
+- El comando literal del entrypoint, repetido.
+- **Guardia estática:** recorre `database/migrations/*.php`, aísla el cuerpo de
+  cada `up()` por conteo de llaves y falla si encuentra un `CREATE TYPE` crudo.
+  Es lo que impide que una migración nueva escrita al viejo estilo reintroduzca
+  el problema. (Los `down()` sí pueden: recrear un tipo para convertir una
+  columna es una maniobra legítima.)
+- Los 10 ENUM del esquema quedan creados, y `order_status` conserva sus tres
+  valores incluido el `open` que añade `ALTER TYPE`.
+- `create()` sobre un tipo **en uso** no lo altera; sobre un tipo **huérfano**
+  sí lo recrea.
+
+**Verificación de que la guardia funciona:** al reintroducir a propósito el
+`CREATE TYPE` crudo en la migración original, **4 pruebas fallan**, y la
+estática nombra el archivo culpable.
+
+### 45.5 Estado de la suite
+
+Tres arranques consecutivos con el comando exacto del contenedor (39
+migraciones + seed): **OK, OK, OK**.
+
+De paso se corrigió `TicketBuilderTest`, que llevaba varias fases en rojo: el
+parámetro `descuentoTotal` del `TicketDTO` es nullable pero **no tiene valor por
+defecto**, y la prueba —anterior al módulo de descuentos— nunca se actualizó.
+Es un arreglo de una línea en la prueba, sin cambio de comportamiento en
+producción.
+
+**La suite pasa completa por primera vez: 74/74, 319 aserciones.**
+
+### Archivos Creados
+- `app/Support/Database/PostgresEnum.php`
+- `tests/Feature/Database/MigrationsAreRerunnableTest.php`
+
+### Archivos Modificados
+- `docker-entrypoint.sh` — `migrate:fresh --seed --force --drop-types`
+- Las 6 migraciones de la tabla en 45.3
+- `tests/Unit/TicketBuilderTest.php` — `descuentoTotal: null` explícito

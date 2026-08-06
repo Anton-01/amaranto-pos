@@ -1,5 +1,6 @@
 <?php
 
+use App\Support\Database\PostgresEnum;
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
@@ -9,7 +10,7 @@ return new class extends Migration
 {
     public function up(): void
     {
-        DB::statement("CREATE TYPE discount_type AS ENUM ('fixed', 'percentage', 'none')");
+        PostgresEnum::create('discount_type', ['fixed', 'percentage', 'none']);
 
         Schema::table('orders', function (Blueprint $table) {
             $table->uuid('promotion_id')->nullable();
@@ -30,6 +31,6 @@ return new class extends Migration
         });
 
         DB::statement("ALTER TABLE orders DROP COLUMN IF EXISTS discount_type");
-        DB::statement("DROP TYPE IF EXISTS discount_type");
+        PostgresEnum::drop('discount_type');
     }
 };

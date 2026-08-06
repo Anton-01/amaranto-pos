@@ -1,5 +1,6 @@
 <?php
 
+use App\Support\Database\PostgresEnum;
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
@@ -9,8 +10,7 @@ return new class extends Migration
 {
     public function up(): void
     {
-        DB::statement('DROP TYPE IF EXISTS table_session_status');
-        DB::statement("CREATE TYPE table_session_status AS ENUM ('open', 'closed', 'canceled')");
+        PostgresEnum::create('table_session_status', ['open', 'closed', 'canceled']);
 
         Schema::create('table_sessions', function (Blueprint $table) {
             $table->uuid('id')->primary();
@@ -44,6 +44,6 @@ return new class extends Migration
     public function down(): void
     {
         Schema::dropIfExists('table_sessions');
-        DB::statement('DROP TYPE IF EXISTS table_session_status');
+        PostgresEnum::drop('table_session_status');
     }
 };

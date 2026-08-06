@@ -33,8 +33,18 @@ if [ ! -L "public/storage" ]; then
 fi
 
 # 6. Run migrations and seeders
+#
+# --drop-types es OBLIGATORIO en PostgreSQL: `migrate:fresh` borra tablas pero
+# NO los tipos ENUM nativos. Sin la bandera, los tipos sobreviven al borrado y
+# la segunda corrida del contenedor muere con:
+#     SQLSTATE[42710]: type "discount_type" already exists
+#
+# Las migraciones ademas crean sus ENUM de forma idempotente
+# (App\Support\Database\PostgresEnum), de modo que el arranque funciona aunque
+# alguien invoque el comando sin esta bandera. Cinturon y tirantes: este error
+# rompia el contenedor entero y no debe poder repetirse.
 echo "→ Running migrations with seed..."
-php artisan migrate:fresh --seed --force
+php artisan migrate:fresh --seed --force --drop-types
 
 # 6. Clear and rebuild caches
 echo "→ Clearing caches..."
