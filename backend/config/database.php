@@ -96,6 +96,34 @@ return [
             'prefix' => '',
             'prefix_indexes' => true,
             'search_path' => 'public',
+
+            /*
+            |------------------------------------------------------------------
+            | Zona horaria de la SESION de PostgreSQL
+            |------------------------------------------------------------------
+            |
+            | Corrige un desfase de 6 horas en TODA columna `timestamptz`.
+            |
+            | Eloquent serializa los Carbon con el formato `Y-m-d H:i:s`, es
+            | decir SIN offset. El Carbon vive en la zona de la aplicacion
+            | (America/Mexico_City), pero PostgreSQL interpretaba esa cadena
+            | desnuda en la zona de su sesion —Etc/UTC por defecto— y guardaba
+            | la hora local etiquetada como UTC:
+            |
+            |     Laravel now()     2026-08-06T12:34:04-06:00
+            |     Guardado          2026-08-06 12:34:04+00      <- 6 h adelantado
+            |
+            | Alinear la sesion con la zona de la aplicacion cierra el circulo:
+            | PostgreSQL interpreta la cadena en la MISMA zona en que Laravel la
+            | escribio, y al leer la devuelve con su offset explicito.
+            |
+            | Solo afecta a los registros NUEVOS. Las filas historicas conservan
+            | el instante que ya tenian almacenado — no se reinterpretan ni se
+            | migran (ver seccion 47 de CONTEXT.md).
+            |
+            */
+            'timezone' => env('DB_TIMEZONE') ?: config('app.timezone'),
+
             'sslmode' => env('DB_SSLMODE', 'prefer'),
             'options' => extension_loaded('pdo_pgsql') ? [
                 PDO::ATTR_EMULATE_PREPARES => false,

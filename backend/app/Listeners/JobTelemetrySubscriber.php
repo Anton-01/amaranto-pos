@@ -45,10 +45,13 @@ class JobTelemetrySubscriber
      * suscriptor en cada evento, asi que el estado de instancia no sobrevive
      * de JobProcessing a JobProcessed.
      *
-     * Se mide aqui y no restando `started_at` leido de PostgreSQL porque la
-     * columna es `timestamptz` y al releerla Laravel la reinterpreta en la
-     * zona de la app (America/Mexico_City), introduciendo un sesgo de exactamente
-     * 6 horas en cada duracion. Ambos extremos salen del mismo reloj de proceso.
+     * Se mide con un reloj de proceso en lugar de restar `started_at` releido
+     * de PostgreSQL: ambos extremos salen de la misma fuente, sin viaje a la
+     * base de datos de por medio ni dependencia de como se serialicen las
+     * fechas. Nacio para esquivar un desfase de 6 h entre la zona de la
+     * aplicacion y la de la sesion de PostgreSQL —ya corregido en
+     * `config/database.php`— y se conserva porque sigue siendo la medicion
+     * mas precisa.
      *
      * @var array<string, float>
      */
@@ -242,8 +245,9 @@ class JobTelemetrySubscriber
      *
      * Fuente primaria: el cronometro monotonico del proceso. Como respaldo
      * —worker reiniciado a media ejecucion— se recurre al valor CRUDO de la
-     * columna, que conserva el desplazamiento horario original de PostgreSQL;
-     * el atributo ya casteado lo perderia.
+     * columna. Desde que la sesion de PostgreSQL comparte zona con la
+     * aplicacion, ese valor llega con su offset explicito y `Carbon::parse` lo
+     * resuelve al instante correcto.
      */
     private function elapsedMs(JobExecutionLog $log): ?int
     {
