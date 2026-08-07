@@ -19,6 +19,9 @@ const EMPTY = Object.freeze([]);
 const EMPTY_SUMMARY = Object.freeze({ total: 0, available: 0, occupied: 0, reserved: 0 });
 const DEFAULT_TAX_RATE = 0.16;
 
+/** Valor sentinela de la opcion "sin filtro" del selector de zonas. */
+const ALL_ZONES = '__todas__';
+
 /**
  * Plano de mesas (Floor Plan).
  *
@@ -179,10 +182,23 @@ export default function TablesFloorPlanPage() {
             </span>
           ))}
           {zones.length > 0 && (
+            /*
+             * El filtro arranca sin zona seleccionada (`zoneFilter = null`) y
+             * PrimeReact interpreta null como "sin valor": sin `placeholder` el
+             * control se pintaba COMPLETAMENTE VACIO, sin pista de para que
+             * sirve. El placeholder describe el estado real —no hay filtro, se
+             * ven todas las zonas— y `ALL_ZONES` da a la opcion de limpieza un
+             * valor propio para que tambien se muestre al elegirla.
+             */
             <Dropdown
               value={zoneFilter}
-              options={[{ label: 'Todas las zonas', value: null }, ...zones.map(z => ({ label: z, value: z }))]}
-              onChange={(e) => setZoneFilter(e.value)}
+              options={[
+                { label: 'Todas las zonas', value: ALL_ZONES },
+                ...zones.map(z => ({ label: z, value: z })),
+              ]}
+              onChange={(e) => setZoneFilter(e.value === ALL_ZONES ? null : e.value)}
+              placeholder="Todas las zonas"
+              aria-label="Filtrar mesas por zona"
               className="w-48 text-sm"
               pt={{ root: { className: 'w-48' } }}
             />

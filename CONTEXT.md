@@ -56,6 +56,8 @@
 | Analítica Financiera Mensual (Dashboard) | [🟢 FASE 8: COMPLETADO] | [🟢 FASE 8: COMPLETADO] | Endpoint agregado role:admin,manager (totales, comparativa mensual, métodos de pago, top productos, horas pico, tendencia diaria), modal con skeleton + export CSV — ver sección 40 |
 | Auditoría Histórica de Cierres (Admin Only) | [🟢 FASE 8: COMPLETADO] | [🟢 FASE 8: COMPLETADO] | `/admin/cash-closings-audit` con middleware role:admin, tabla lazy paginada con filtros, radiografía forense de solo lectura, triple candado de inmutabilidad — ver sección 40 |
 | Sistema de Gestión de Mesas (Dine-in) | [🟢 FASE 7: IMPLEMENTADO] | [🟢 FASE 7: IMPLEMENTADO] | Tablas `tables` y `table_sessions`, orden base en estado `open`, 4 endpoints transaccionales con `lockForUpdate` + índice único parcial, botón de mesas a la izquierda del reloj en el header del POS, catálogo en sidebar de Administración, trazabilidad mesa/mesero en histórico y ticket — ver sección 39 |
+| Desfase Horario timestamptz (6 h) | [🟢 CORREGIDO] | N/A | Eloquent escribia la hora local SIN offset y PostgreSQL (sesion en UTC) la guardaba como UTC: toda columna `timestamptz` quedaba 6 h adelantada. Corregido con `'timezone'` en la conexion pgsql. Solo aplica a registros NUEVOS; el historico de produccion no se migra y conserva su instante absoluto intacto (verificado: 0 s de diferencia). 5 pruebas de viaje redondo — ver seccion 47 |
+| Seeder Operativo + Selector de Zonas | [🟢 CORREGIDO] | [🟢 CORREGIDO] | El seeder no creaba `ticket_config` activa y TODA instalacion nacia sin poder vender: `/api/orders` y `/api/tables/{id}/open` respondian 422 ERR_TICKET_NO_ACTIVE_CONFIG (verificado: ahora 201 en ambos). El selector de zonas del Plano de Mesas se pintaba vacio por falta de placeholder con `value=null`. 4 pruebas fijan el contrato minimo del seeder — ver seccion 46 |
 | Migraciones Idempotentes (ENUMs PostgreSQL) | [🟢 CORREGIDO] | N/A | `migrate:fresh` borra tablas pero NO los tipos ENUM: el segundo `docker compose up` moria con `type "discount_type" already exists`. Corregido en dos capas: `--drop-types` en el entrypoint y `App\Support\Database\PostgresEnum` (crea si falta, recrea si esta huerfano, respeta si esta en uso — nunca CASCADE) en las 6 migraciones que crean tipos. Guardia estatica que falla si una migracion nueva usa `CREATE TYPE` crudo en `up()`. Suite completa en verde 74/74 — ver seccion 45 |
 | Transiciones Instantáneas POS ↔ Mesas | N/A | [🟢 FASE 11: COMPLETADO] | Caché SWR (`readCache` + `useCachedResource` sobre `useSyncExternalStore`) con `staleTime` por volatilidad real del dato; `PersistentShell` como layout route que evita el derribo de sidebar/header; cascada serial del POS eliminada; prefetch `onMouseEnter`/`onFocus`; carrito que sobrevive a la navegación. Medido: spinner 7-8 → 0 frames, Mesas→POS 241 → ~110 ms, 24 → 1 peticiones — ver sección 44 |
 | Telemetría de Jobs y Rollback/Backups GCP | [🟢 FASE 10: COMPLETADO] | [🟢 FASE 10: COMPLETADO] | Tabla `job_execution_logs` (una fila por intento) alimentada por JobQueued/JobProcessing/JobProcessed/JobFailed sin instrumentar ningún job; 3 endpoints admin + reintento vía `queue:retry`; vista `/admin/jobs-monitor` con catálogo, histórico forense, modal de traza y panel de puntos de restauración; bóveda `gcs_backups` cifrada AES-256+PBKDF2 aislada en GCP, rollback transaccional (`--single-transaction` + `ON_ERROR_STOP`) con checksum SHA-256 y respaldo de seguridad previo; scheduler 03:30 respaldo / 04:15 poda; 30 pruebas en verde — ver sección 43 |
@@ -4267,3 +4269,221 @@ producción.
 - `docker-entrypoint.sh` — `migrate:fresh --seed --force --drop-types`
 - Las 6 migraciones de la tabla en 45.3
 - `tests/Unit/TicketBuilderTest.php` — `descuentoTotal: null` explícito
+
+## 46. CORRECCIÓN: SISTEMA INOPERANTE TRAS SEMBRAR + SELECTOR DE ZONAS VACÍO [🟢 CORREGIDO]
+
+Dos defectos visibles en el Plano de Mesas, reportados desde la interfaz.
+
+### 46.1 El 422 al abrir una mesa — el sistema no podía vender
+
+```
+POST /api/tables/019fd842-.../open  422 (Unprocessable Content)
+```
+
+**Causa raíz: el seeder no creaba ninguna `ticket_config` activa.**
+
+Tanto `OrderController@store` (mostrador) como `TableSessionController@open`
+(comedor) empiezan por buscar la configuración de ticket vigente y abortan con
+`ERR_TICKET_NO_ACTIVE_CONFIG` si no la encuentran. Como el entrypoint de Docker
+ejecuta `migrate:fresh --seed` en cada arranque, **toda instalación nacía
+inoperante**: ni el cajero podía cobrar ni el mesero abrir una mesa.
+
+No era un problema del comedor: era **el sistema entero sin poder facturar**.
+El síntoma apareció primero en Mesas por casualidad.
+
+Corrección — el seeder crea la versión 1 activa, con los datos replicados de
+`fiscal_data` para que ambas fuentes nazcan coherentes:
+
+```php
+TicketConfig::create([
+    'version' => 1,
+    'is_active' => true,
+    'business_name' => $fiscalData['business_name'],
+    'rfc' => $fiscalData['rfc'],
+    'address' => $fiscalData['address'].', '.$fiscalData['city'],
+    'phone' => $fiscalData['phone'],
+    'header_message' => 'Gracias por su preferencia',
+    'footer_message' => 'Conserve su ticket para cualquier aclaracion',
+    'updated_by' => $user->id,
+]);
+```
+
+El módulo `/ticket-config` sigue siendo append-only: cuando el administrador
+cargue los datos reales del negocio se crea una versión 2 y esta se desactiva,
+nunca se edita.
+
+**Verificación HTTP contra la API real, tras sembrar de cero:**
+
+| Endpoint | Antes | Después |
+| :--- | :--- | :--- |
+| `POST /api/tables/{id}/open` | **422** `ERR_TICKET_NO_ACTIVE_CONFIG` | **201** — mesa `occupied`, sesión y orden viva creadas |
+| `POST /api/orders` | **422** (mismo código) | **201** — venta con total `$50.00` |
+
+### 46.2 El selector de zonas se pintaba vacío
+
+El filtro nace sin zona seleccionada (`zoneFilter = null`) y PrimeReact
+interpreta `null` como "sin valor". Al no haber `placeholder`, el control se
+renderizaba **completamente en blanco**, sin ninguna pista de para qué sirve.
+
+Existía una opción `{ label: 'Todas las zonas', value: null }` en la lista, pero
+elegirla devolvía al mismo estado vacío: su valor coincidía con el de "sin
+selección".
+
+Corrección: se añade `placeholder="Todas las zonas"` —que describe el estado
+real, no hay filtro— y la opción de limpieza usa un valor sentinela propio
+(`ALL_ZONES`) para que también se muestre al elegirla. Más `aria-label` para
+lectores de pantalla.
+
+Verificado en navegador: el control muestra "Todas las zonas", lista las tres
+zonas sembradas (Barra, Salón, Terraza) y filtrar por Terraza deja 3 mesas
+visibles.
+
+### 46.3 Prueba de regresión
+
+`tests/Feature/Database/SeederLeavesSystemOperationalTest.php` — 4 pruebas que
+fijan el contrato mínimo del seeder:
+
+- Existe **exactamente una** `ticket_config` activa, con versión 1 y todos sus
+  campos obligatorios poblados.
+- **Se puede abrir una mesa sin configurar nada a mano** (la reproducción
+  exacta del 422, ahora exigiendo 201).
+- El catálogo base queda operativo: métodos de pago activos, los tres roles,
+  y mesas dadas de alta.
+- `migrate:fresh --seed` repetido deja siempre una única configuración activa.
+
+Suite completa: **78/78, 334 aserciones.**
+
+### 46.4 Pendiente detectado, NO corregido: desfase horario de 6 horas
+
+Al validar el flujo se vio que una mesa recién abierta muestra
+**"Abierta hace 6h 0m"**. Es el mismo defecto sistémico documentado en 43.3:
+
+```
+Laravel now()      : 2026-08-06T12:34:04-06:00
+Guardado en la BD  : 2026-08-06 12:33:28+00     <- la hora local etiquetada como UTC
+Sesión de Postgres : Etc/UTC
+```
+
+Laravel serializa el Carbon en zona `America/Mexico_City` **sin el offset**, y
+PostgreSQL —cuya sesión está en UTC— lo interpreta como si ya fuera UTC. Toda
+columna `timestamptz` de la aplicación queda **6 horas corrida**.
+
+La corrección es una línea en `config/database.php` (`'timezone'` en la conexión
+`pgsql`, que emite `SET TIME ZONE`), **pero cambia la interpretación de los
+datos ya almacenados**: órdenes, cierres de caja, auditoría. Requiere decidir si
+se migran las filas históricas o se acepta la discontinuidad, así que queda
+fuera de esta corrección y a criterio del propietario del sistema.
+
+### Archivos Creados
+- `tests/Feature/Database/SeederLeavesSystemOperationalTest.php`
+
+### Archivos Modificados
+- `database/seeders/DatabaseSeeder.php` — `TicketConfig` activa versión 1
+- `frontend/src/pages/dining/TablesFloorPlanPage.jsx` — placeholder, sentinela `ALL_ZONES` y `aria-label` en el selector de zonas
+- `frontend/dist/` — build regenerado
+
+## 47. CORRECCIÓN: DESFASE DE 6 HORAS EN TODA COLUMNA `timestamptz` [🟢 CORREGIDO — solo registros nuevos]
+
+### 47.1 El mecanismo
+
+Eloquent serializa los `Carbon` con el formato `Y-m-d H:i:s`, es decir **sin
+offset**. El Carbon vive en la zona de la aplicación (`America/Mexico_City`),
+pero PostgreSQL interpretaba esa cadena desnuda en la zona de **su sesión**
+—`Etc/UTC` por defecto— y guardaba la hora de pared local etiquetada como UTC:
+
+```
+Laravel now()      2026-08-06T12:34:04-06:00
+Guardado en la BD  2026-08-06 12:34:04+00     ← 6 h adelantado
+Sesión de Postgres Etc/UTC
+```
+
+Afectaba a **toda** columna `timestamptz` del sistema: órdenes, cierres de caja,
+auditoría, sesiones de mesa, telemetría de jobs, `personal_access_tokens`. El
+síntoma visible era una mesa recién abierta anunciando *"Abierta hace 6h 0m"*.
+
+### 47.2 La corrección
+
+Una línea en la conexión `pgsql` de `config/database.php`:
+
+```php
+'timezone' => env('DB_TIMEZONE') ?: config('app.timezone'),
+```
+
+Laravel emite `SET TIME ZONE` al abrir la conexión, de modo que PostgreSQL
+interpreta la cadena **en la misma zona en que Laravel la escribió** y al leer
+la devuelve con su offset explícito.
+
+**Verificación del viaje redondo:**
+
+| | Antes | Después |
+| :--- | :--- | :--- |
+| Escrito por Laravel | `2026-08-06T12:34:04-06:00` | `2026-08-06T12:44:09-06:00` |
+| Crudo en PostgreSQL | `2026-08-06 12:34:04+00` | `2026-08-06 12:44:09-06` |
+| Releído por Eloquent | 6 h de desfase | `2026-08-06T12:44:09-06:00` |
+| Mesa recién abierta | *"Abierta hace 6h 0m"* | *"Abierta hace 0m"* |
+
+### 47.3 El histórico de producción NO se migra
+
+Decisión del propietario del sistema: los registros existentes se dejan como
+están para no arriesgar la integridad de los datos financieros.
+
+**Por qué es seguro.** `timestamptz` almacena un **instante absoluto**, no una
+cadena con zona. Cambiar la zona de la sesión altera cómo se *renderiza* al
+leer, jamás el instante guardado. Verificado con una fila preexistente: el
+instante releído es idéntico al almacenado, con **0 segundos** de diferencia. Y
+como el frontend convierte a hora local del navegador, **el histórico se sigue
+mostrando exactamente igual que antes**.
+
+**La única consecuencia real.** Los filtros por rango de fecha usan cadenas sin
+offset, así que sus límites también pasan a interpretarse en hora local. Sobre
+filas **antiguas** —escritas bajo la convención vieja— eso mueve la frontera del
+día 6 horas:
+
+| Fila legacy | Reporte del 05-ago |
+| :--- | :--- |
+| Instante `20:00Z` (tarde) | dentro ✔ |
+| Instante `01:00Z` (madrugada) | **fuera** — cae en el bucket del 04-ago |
+
+Es decir: **los registros históricos cuya hora almacenada esté entre 00:00 y
+06:00 aparecerán un día antes en los reportes filtrados por fecha.** En este
+negocio —que cierra a las 21:00 y auto-cierra cajas a esa hora— las ventas en
+esa franja son improbables; sí caen ahí la auditoría, la telemetría y el
+respaldo de las 03:30, que son operativos y no financieros.
+
+Si algún día se decide normalizar el histórico, el desplazamiento es de
+`-6 hours` sobre las filas anteriores a esta corrección — pero **no se ejecutó
+nada**: la base de producción queda intacta.
+
+### 47.4 Código que compensaba el bug
+
+- `JobTelemetrySubscriber` conserva su cronómetro monotónico. Nació para
+  esquivar este desfase, pero se mantiene porque sigue siendo la medición más
+  precisa: ambos extremos salen del mismo reloj de proceso, sin viaje a la base
+  de datos. Se actualizaron los comentarios, cuya premisa ya no aplica.
+- Los `serializeDate()` de `Order`, `OrderItem`, `Table`, `TableSession` y
+  `SystemNotification` (que convierten a `America/Mexico_City` al serializar)
+  **no eran parches**, sino normalización de presentación: siguen siendo
+  correctos y quedan intactos.
+
+### 47.5 Prueba de regresión
+
+`tests/Feature/Database/TimestampRoundTripTest.php` — 5 pruebas:
+
+- La sesión de PostgreSQL comparte zona con la aplicación.
+- Un timestamp escrito ahora se relee como ahora (tolerancia 5 s).
+- PostgreSQL almacena el offset correcto, no la hora local como UTC.
+- **Una fila histórica conserva su instante** — la garantía para producción.
+- Un registro de hoy cae en el filtro de hoy.
+
+**Verificado que la guardia sirve:** al retirar la línea de `config/database.php`
+fallan 3 de las 5 con mensajes que nombran la causa.
+
+Suite completa: **83/83, 339 aserciones.**
+
+### Archivos Creados
+- `tests/Feature/Database/TimestampRoundTripTest.php`
+
+### Archivos Modificados
+- `config/database.php` — `'timezone'` en la conexión `pgsql`
+- `app/Listeners/JobTelemetrySubscriber.php` — comentarios actualizados
+- `.env.example`, `.env.production.example` — `DB_TIMEZONE` documentada
