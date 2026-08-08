@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\Admin\BackupController;
+use App\Http\Controllers\Admin\EmailConfigurationController;
 use App\Http\Controllers\Admin\JobMonitorController;
 use App\Http\Controllers\Admin\MailPreviewController;
 use App\Http\Controllers\Admin\PrintTicketController;
@@ -229,6 +230,20 @@ Route::middleware(['auth:sanctum', 'user.active'])->group(function () {
             Route::get('/', [MailPreviewController::class, 'index']);
             Route::get('/{slug}/render', [MailPreviewController::class, 'render']);
         });
+    });
+
+    /*
+     * Outbound mailing credentials. Admin-only — these rows hold the provider
+     * API key and decide where financial reports are delivered, so managers
+     * (who may administer users and settings) are deliberately left out.
+     */
+    Route::middleware('role:admin')->prefix('admin/email-configurations')->group(function () {
+        Route::get('/', [EmailConfigurationController::class, 'index']);
+        Route::get('/catalogs', [EmailConfigurationController::class, 'catalogs']);
+        Route::post('/', [EmailConfigurationController::class, 'store']);
+        Route::put('/{email_configuration}', [EmailConfigurationController::class, 'update']);
+        Route::patch('/{email_configuration}/toggle-status', [EmailConfigurationController::class, 'toggleStatus']);
+        Route::delete('/{email_configuration}', [EmailConfigurationController::class, 'destroy']);
     });
 
     Route::middleware('role:admin,manager')->prefix('analytics')->group(function () {

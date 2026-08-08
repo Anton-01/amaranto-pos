@@ -2,7 +2,11 @@
 
 namespace App\Console\Commands;
 
+use App\Jobs\SendConfiguredProcessMail;
+use App\Mail\CashRegisterClosingReportMail;
 use App\Models\CashRegister;
+use App\Models\CashRegisterClosing;
+use App\Models\EmailConfiguration;
 use App\Models\SystemNotification;
 use App\Models\User;
 use App\Services\CashClosingService;
@@ -60,6 +64,9 @@ class AutoCloseCashRegisters extends Command
         $closed = [];
         $failed = 0;
 
+        /** @var array<int, array{closing: CashRegisterClosing, operator: string}> */
+        $reportable = [];
+
         foreach ($openRegisters as $register) {
             try {
                 $closing = $closingService->close(
@@ -84,6 +91,11 @@ class AutoCloseCashRegisters extends Command
                     'was_stale' => $register->opened_at !== null
                         && $register->opened_at->timezone('America/Mexico_City')->toDateString()
                             !== now('America/Mexico_City')->toDateString(),
+                ];
+
+                $reportable[] = [
+                    'closing' => $closing,
+                    'operator' => $register->user?->name ?? 'N/D',
                 ];
 
                 $this->info(sprintf(
@@ -131,8 +143,75 @@ class AutoCloseCashRegisters extends Command
             ]);
         }
 
+        $this->dispatchClosingReports($reportable);
+
         $this->info(sprintf('Resumen: %d cerradas, %d fallidas.', count($closed), $failed));
 
         return $failed > 0 ? self::FAILURE : self::SUCCESS;
+    }
+
+    /**
+     * Hands the closing reports over to the queue.
+     *
+     * The command never touches SMTP: it only checks whether the "jobs"
+     * process has an active mailbox and, if so, dispatches one queued
+     * SendConfiguredProcessMail per closing. Credentials, sender identity,
+     * subject and recipients are resolved later inside the worker, which keeps
+     * a slow or unreachable provider from stretching the 21:00 window and from
+     * turning a successful closing into a failed command.
+     *
+     * @param  array<int, array{closing: CashRegisterClosing, operator: string}>  $reportable
+     */
+    private function dispatchClosingReports(array $reportable): void
+    {
+        if ($reportable === []) {
+            return;
+        }
+
+        // Single probe before the loop: with no active configuration there is
+        // nothing to send and the queue is left untouched.
+        if (EmailConfiguration::activeFor(EmailConfiguration::PROCESS_JOBS) === null) {
+            $this->line('Notificacion por correo omitida: sin configuracion activa para el proceso "jobs".');
+
+            return;
+        }
+
+        foreach ($reportable as $entry) {
+            /** @var CashRegisterClosing $closing */
+            $closing = $entry['closing'];
+
+            SendConfiguredProcessMail::dispatch(
+                EmailConfiguration::PROCESS_JOBS,
+                new CashRegisterClosingReportMail(
+                    closingId: $closing->id,
+                    operatorName: $entry['operator'],
+                    closingDate: ($closing->created_at ?? now())
+                        ->timezone('America/Mexico_City')
+                        ->format('d/m/Y H:i:s'),
+                    totalAmount: (float) $closing->expected_amount,
+                    paymentBreakdown: $this->breakdownForMail($closing),
+                    isAutomated: true,
+                )
+            );
+        }
+
+        $this->info(sprintf('%d reporte(s) de cierre encolado(s) para envio por correo.', count($reportable)));
+    }
+
+    /**
+     * Flattens the stored breakdown into the label => amount shape the mail
+     * template renders. Only the registered amount is carried over: an
+     * automated closing declares exactly what the system expected, so the
+     * declared/difference columns of the ledger have nothing to add here.
+     *
+     * @return array<string, float>
+     */
+    private function breakdownForMail(CashRegisterClosing $closing): array
+    {
+        return collect($closing->payment_breakdown ?? [])
+            ->mapWithKeys(fn (array $row) => [
+                (string) ($row['name'] ?? 'Otro') => round((float) ($row['expected'] ?? 0), 2),
+            ])
+            ->all();
     }
 }

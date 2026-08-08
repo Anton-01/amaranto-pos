@@ -129,7 +129,7 @@ class DatabaseSeeder extends Seeder
         ]);
 
         $fiscalData = [
-            'business_name' => 'Cronos Fast Food',
+            'business_name' => 'Cronos POS',
             'rfc' => 'XAXX010101000',
             'address' => 'Av. Principal #123, Col. Centro',
             'city' => 'Ciudad de México',

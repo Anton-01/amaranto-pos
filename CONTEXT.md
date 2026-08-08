@@ -63,6 +63,7 @@
 | Telemetría de Jobs y Rollback/Backups GCP | [🟢 FASE 10: COMPLETADO] | [🟢 FASE 10: COMPLETADO] | Tabla `job_execution_logs` (una fila por intento) alimentada por JobQueued/JobProcessing/JobProcessed/JobFailed sin instrumentar ningún job; 3 endpoints admin + reintento vía `queue:retry`; vista `/admin/jobs-monitor` con catálogo, histórico forense, modal de traza y panel de puntos de restauración; bóveda `gcs_backups` cifrada AES-256+PBKDF2 aislada en GCP, rollback transaccional (`--single-transaction` + `ON_ERROR_STOP`) con checksum SHA-256 y respaldo de seguridad previo; scheduler 03:30 respaldo / 04:15 poda; 30 pruebas en verde — ver sección 43 |
 | Escudo de Seguridad y Throttling | [🟢 FASE 9: COMPLETADO] | [🟢 FASE 9: COMPLETADO] | Candado de login 5 fallos/min por email+IP → bloqueo 15 min con `Retry-After`; cupo global 100 req/min (guard sanctum explícito + `trustProxies`); middleware global `SecurityHeaders` (XFO DENY, nosniff, HSTS, CSP calibrada para Turnstile / agente local 9100 / Reverb WSS); Cloudflare Turnstile invisible validado server-side antes de las credenciales; interceptor Axios 429 + alerta de bloqueo con cuenta regresiva en LoginPage; 18 pruebas en verde — ver sección 42 |
 | Optimizacion Modal de Cobro (Rendimiento) | [🟢 COMPLETADO Y OPERATIVO] | [🟢 COMPLETADO Y OPERATIVO] | Catálogo de métodos de pago servido desde Redis (`Cache::remember`, TTL 60 min, invalidación automática en alta/edición/baja); input de "Dinero Recibido" con sanitización estricta en `onChange` (sin `onBlur`), cálculo del cambio y habilitación de "Confirmar Cobro" en tiempo real desde la primera tecla |
+| Mailing Dinamico (SendGrid) por Proceso | [🟢 COMPLETADO Y OPERATIVO] | [🟢 COMPLETADO Y OPERATIVO] | Tabla `email_configurations` (una fila por `process_type`, API Key cifrada, destinatarios JSONB); transporte armado al vuelo con `Config::set()` sobre el relay SMTP de SendGrid; `SendConfiguredProcessMail` resuelve credenciales dentro del worker; cierre automatico de caja desacoplado (encola, no envia); reporte sin PDF ni diferencias y con membrete fiscal; pestana "Notificaciones / Emails" admin-only — ver seccion 48 |
 
 ## 3. Detalle del Modulo Completado: Migraciones & Modelos Base
 
@@ -4487,3 +4488,157 @@ Suite completa: **83/83, 339 aserciones.**
 - `config/database.php` — `'timezone'` en la conexión `pgsql`
 - `app/Listeners/JobTelemetrySubscriber.php` — comentarios actualizados
 - `.env.example`, `.env.production.example` — `DB_TIMEZONE` documentada
+
+---
+
+## 48. MÓDULO DE MAILING DINÁMICO (SendGrid) INTEGRADO AL CIERRE AUTOMÁTICO DE CAJA [🟢 COMPLETADO Y OPERATIVO]
+
+El correo saliente deja de depender del bloque `MAIL_*` del `.env`. Cada tipo de
+proceso del negocio ("jobs", "users", …) tiene su propia fila con credenciales,
+remitente, asunto y lista de destinatarios; el transporte se arma **al vuelo**
+justo antes de enviar. Rotar una API Key o redirigir un reporte pasa a ser una
+escritura en base de datos, no un redeploy.
+
+### 48.1 Tabla `email_configurations`
+
+| Columna | Tipo | Nota |
+| :--- | :--- | :--- |
+| `id` | uuid PK | |
+| `process_type` | varchar(60) **unique** | `jobs`, `users`, `sales`, `inventory` |
+| `provider` | varchar(40) default `sendgrid` | resuelto contra `config/mailing.php` |
+| `api_key` | text | cast `encrypted` — cifrada con `APP_KEY` |
+| `from_email` / `from_name` | varchar | identidad del remitente |
+| `target_emails` | jsonb | arreglo de destinatarios (máx. 20) |
+| `subject` | varchar | asunto aplicado al Mailable en el envío |
+| `is_active` | boolean | kill-switch: inactiva ⇒ el proceso no notifica |
+| `updated_by` | uuid FK users | auditoría |
+
+`UNIQUE(process_type)` garantiza que una búsqueda por proceso jamás devuelva dos
+transportes en competencia. Índice `(process_type, is_active)` para la única
+consulta caliente.
+
+### 48.2 Transporte dinámico — `App\Services\Mail\DynamicMailerFactory`
+
+Toma la fila, la fusiona sobre la plantilla del proveedor declarada en
+`config/mailing.php` e inyecta el resultado en `config('mail.mailers.dynamic-{proceso}')`
+con `Config::set()`. Nada se persiste en disco y nada sobrevive al proceso.
+
+- **SendGrid** viaja por su relay SMTP (`smtp.sendgrid.net:587`, usuario literal
+  `apikey`, la API Key como contraseña). Sin dependencias nuevas en Composer.
+- Tras registrar, llama a `MailManager::forgetMailers()`: el worker es un
+  proceso largo que cachea cada mailer resuelto, y sin ese flush el segundo job
+  enviaría por el transporte del primero — con la API Key equivocada.
+- Se inyecta el contrato `Illuminate\Contracts\Mail\Factory` (no el manager
+  concreto) para que el servicio siga funcionando bajo `Mail::fake()`.
+
+### 48.3 Desacoplamiento — `App\Jobs\SendConfiguredProcessMail`
+
+El productor (el comando de cierre) solo despacha `(process_type, Mailable)`:
+nunca toca credenciales ni bloquea en SMTP.
+
+**Por qué la configuración se resuelve dentro del worker y no al despachar:** el
+transporte se inyecta en `config('mail.mailers')` en tiempo de ejecución y muere
+con el proceso. Si el productor lo registrara y solo encolara el Mailable, el
+worker buscaría después un mailer que no existe en su propia configuración.
+Resolver ahí mantiene transporte y envío en el mismo proceso, y de paso lee la
+fila más fresca: una llave rotada mientras el mensaje esperaba en Redis se
+respeta igual.
+
+- Sin configuración activa ⇒ el job termina en silencio (estado válido, no falla).
+- Sin destinatarios válidos ⇒ `Log::warning` y salida limpia.
+- `tries = 3` con `backoff [30, 120, 300]` para fallas transitorias de SMTP.
+- Envía con `sendNow()`: el Mailable es `ShouldQueue` y volver a encolarlo desde
+  ahí lo devolvería a Redis, donde el transporte en tiempo de ejecución ya no
+  existe. La pata asíncrona ya ocurrió al despachar el job.
+
+### 48.4 Plantilla ajustada — `CashRegisterClosingReportMail`
+
+- **Sin PDF**: desaparecen `attachments()` y el parámetro `pdfPath`. El cuerpo
+  del correo *es* el documento.
+- **Sin aritmética de diferencias**: fuera `declaredAmount` y `differenceAmount`
+  (y con ellos los tags FALTANTE/SOBRANTE). Un cierre automático declara
+  exactamente lo esperado; la conciliación del efectivo físico corresponde al
+  arqueo del siguiente turno. Queda una sola cifra: **Total Registrado**.
+- **Membrete fiscal**: el Mailable lee `fiscal_data` de `global_settings` **al
+  renderizar** (no al construir: el objeto viaja por la cola) e imprime Razón
+  Social, RFC, dirección y teléfono como encabezado formal.
+- El asunto de `email_configurations` gana sobre el predeterminado: `envelope()`
+  devuelve `$this->subject ?: self::DEFAULT_SUBJECT`, porque la hidratación del
+  Envelope corre *después* de `->subject()` y si no lo sobrescribiría.
+- Seeder: `fiscal_data.business_name` pasa de `Cronos Fast Food` a `Cronos POS`
+  (única ocurrencia quemada en el código). Las instalaciones ya sembradas
+  conservan su valor y se editan desde Configuración → Datos Fiscales.
+
+### 48.5 Enganche en `cronos:auto-close-registers`
+
+Tras cerrar las cajas y asentar la notificación inmutable, el comando sondea
+**una sola vez** si existe configuración activa para `jobs`; si no hay, ni toca
+la cola. Si hay, despacha un `SendConfiguredProcessMail` por cierre con el
+desglose aplanado a `nombre => monto registrado`. El correo nunca puede
+estirar la ventana de las 21:00 ni convertir un cierre exitoso en un comando
+fallido.
+
+### 48.6 Endpoints (admin-only)
+
+| Método | Ruta | Descripción |
+| :--- | :--- | :--- |
+| GET | /api/admin/email-configurations | Listado (API Key enmascarada) |
+| GET | /api/admin/email-configurations/catalogs | Tipos de proceso y proveedores |
+| POST | /api/admin/email-configurations | Alta |
+| PUT | /api/admin/email-configurations/{id} | Edición |
+| PATCH | /api/admin/email-configurations/{id}/toggle-status | Kill-switch inline |
+| DELETE | /api/admin/email-configurations/{id} | Baja |
+
+`role:admin` estricto — no `admin,manager`: estas filas guardan la credencial
+del proveedor y deciden a dónde llegan los reportes financieros.
+
+La API Key **nunca** sale del servidor: `$hidden` la oculta y el modelo expone
+`has_api_key` y `api_key_preview` (`****1234`). En la edición, un campo vacío
+significa "conserva la credencial guardada", no "bórrala".
+
+### 48.7 Frontend — pestaña "Notificaciones / Emails"
+
+`SystemSettingsPage` suma la pestaña (visible solo para `admin`) con
+`EmailNotificationsPanel`: tabla de configuraciones con InputSwitch optimista
+(rollback ante error), y modal con Tipo de Proceso, Proveedor, API Key
+(`Password` con `toggleMask`), remitente, asunto y destinatarios en `Chips`.
+
+### 48.8 Jobs de mantenimiento suspendidos
+
+En `routes/console.php` quedan **comentados** —con su cadencia documentada— los
+schedules de `cronos:backup-run --trigger=scheduled` (03:30) y
+`cronos:telemetry-prune --backups` (04:15). Ambos comandos siguen operativos y
+se pueden ejecutar a mano. Nota operativa: mientras la poda esté apagada,
+`job_execution_logs` crece sin techo (cada correo encolado deja una fila).
+
+### 48.9 Pruebas
+
+`tests/Feature/Mailing/DynamicMailingTest.php` — 8 pruebas: el cierre encola sin
+enviar de forma síncrona; sin configuración activa no se encola nada pero el
+cierre sí ocurre; el job usa destinatarios y asunto de la BD; una configuración
+desactivada después de encolar no envía; el transporte usa las credenciales de
+la fila; el reporte es autocontenido (sin PDF, sin diferencias, con RFC); la API
+no expone la API Key y la conserva al editar; y solo existe una configuración
+por tipo de proceso.
+
+### Archivos Creados
+- `backend/database/migrations/2026_08_08_000001_create_email_configurations_table.php`
+- `backend/app/Models/EmailConfiguration.php`
+- `backend/app/Services/Mail/DynamicMailerFactory.php`
+- `backend/app/Jobs/SendConfiguredProcessMail.php`
+- `backend/app/Http/Controllers/Admin/EmailConfigurationController.php`
+- `backend/app/Http/Requests/EmailConfiguration/StoreEmailConfigurationRequest.php`
+- `backend/app/Http/Requests/EmailConfiguration/UpdateEmailConfigurationRequest.php`
+- `backend/config/mailing.php`
+- `backend/tests/Feature/Mailing/DynamicMailingTest.php`
+- `frontend/src/components/settings/EmailNotificationsPanel.jsx`
+
+### Archivos Modificados
+- `backend/app/Mail/CashRegisterClosingReportMail.php` — sin PDF ni diferencias, membrete fiscal
+- `backend/resources/views/mail/cash-register-closing-report.blade.php` — plantilla reescrita
+- `backend/app/Console/Commands/AutoCloseCashRegisters.php` — despacho a la cola
+- `backend/routes/api.php` — rutas del módulo
+- `backend/routes/console.php` — schedules de respaldo y poda comentados
+- `backend/routes/web.php`, `backend/app/Http/Controllers/Admin/MailPreviewController.php` — previews alineadas a la nueva firma
+- `backend/database/seeders/DatabaseSeeder.php` — `Cronos Fast Food` → `Cronos POS`
+- `frontend/src/pages/admin/SystemSettingsPage.jsx` — pestaña "Notificaciones / Emails"

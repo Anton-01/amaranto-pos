@@ -8,7 +8,9 @@ import { toast } from 'sonner';
 import api from '../../api/axios';
 import AppLayout from '../../components/layout/AppLayout';
 import PrinterSetupPanel from '../../components/settings/PrinterSetupPanel';
+import EmailNotificationsPanel from '../../components/settings/EmailNotificationsPanel';
 import useCronosAgent from '../../hooks/useCronosAgent';
+import { useAuth } from '../../context/AuthContext';
 
 const timezoneOptions = [
   { label: 'Ciudad de México (UTC-6)', value: 'America/Mexico_City' },
@@ -28,6 +30,10 @@ const currencyOptions = [
 
 export default function SystemSettingsPage() {
   const cronosAgent = useCronosAgent();
+  const { user } = useAuth();
+  // The mailing endpoints are admin-only (they expose provider credentials),
+  // so managers never get a tab whose requests would come back 403.
+  const isAdmin = user?.roles?.includes('admin');
   const [settings, setSettings] = useState({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -227,6 +233,12 @@ export default function SystemSettingsPage() {
               </div>
             </div>
           </TabPanel>
+
+          {isAdmin && (
+            <TabPanel header="Notificaciones / Emails" pt={{ headerAction: { className: 'text-sm' } }}>
+              <EmailNotificationsPanel />
+            </TabPanel>
+          )}
         </TabView>
       </div>
 
