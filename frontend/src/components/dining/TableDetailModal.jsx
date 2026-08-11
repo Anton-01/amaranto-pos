@@ -4,6 +4,7 @@ import { InputText } from 'primereact/inputtext';
 import { Button } from 'primereact/button';
 import { toast } from 'sonner';
 import api from '../../api/axios';
+import TableCancellationModal from './TableCancellationModal';
 import { fmtCurrency, fmtElapsed } from './tableStatus';
 
 /**
@@ -13,6 +14,11 @@ import { fmtCurrency, fmtElapsed } from './tableStatus';
  * endpoint es transaccional, de modo que la comanda queda firme antes de que el
  * mesero levante el dedo. La respuesta trae la sesion recalculada, asi que la
  * cuenta y el total se refrescan sin una segunda peticion.
+ *
+ * Las partidas ya comandadas se corrigen desde la propia cuenta con los mismos
+ * controles del POS (+ / - / papelera). Toda reduccion viaja al servidor, que
+ * devuelve el stock y deja la huella en la auditoria: aqui no se edita nada en
+ * memoria, porque la cuenta viva es la del servidor.
  */
 export default function TableDetailModal({ visible, table, onHide, onCharge, onSessionChange }) {
   const [session, setSession] = useState(null);
@@ -20,6 +26,8 @@ export default function TableDetailModal({ visible, table, onHide, onCharge, onS
   const [products, setProducts] = useState([]);
   const [search, setSearch] = useState('');
   const [addingId, setAddingId] = useState(null);
+  const [mutatingItemId, setMutatingItemId] = useState(null);
+  const [showCancellation, setShowCancellation] = useState(false);
 
   const tableId = table?.id;
 
@@ -76,6 +84,58 @@ export default function TableDetailModal({ visible, table, onHide, onCharge, onS
       setAddingId(null);
     }
   };
+
+  /**
+   * Single funnel for every line mutation.
+   *
+   * The server owns the arithmetic and the stock, so the response replaces the
+   * whole session instead of patching it locally — that keeps quantity, price
+   * and totals consistent even when a promotion makes the line non-linear.
+   */
+  const mutateItem = async (item, request, successMessage) => {
+    setMutatingItemId(item.id);
+    try {
+      const res = await request();
+      setSession(res.data.data);
+      onSessionChange?.();
+      toast.success(successMessage);
+    } catch (err) {
+      const data = err.response?.data;
+      if (data?.code === 'ERR_POS_INSUFFICIENT_STOCK') {
+        toast.error('Sin existencias', { description: data.message });
+      } else if (data?.code === 'ERR_TABLE_NO_OPEN_SESSION') {
+        toast.error('La mesa ya no tiene cuenta abierta.');
+        onHide();
+      } else if (data?.code === 'ERR_TABLE_ITEM_NOT_FOUND') {
+        toast.info('Esa partida ya no está en la cuenta.');
+        fetchDetail();
+      } else {
+        toast.error(data?.message || 'No se pudo actualizar la partida.');
+      }
+    } finally {
+      setMutatingItemId(null);
+    }
+  };
+
+  const changeQuantity = (item, nextQuantity) => {
+    // Reaching zero is a removal, and removals go through DELETE so the audit
+    // trail records them as such instead of as a quantity edit.
+    if (nextQuantity < 1) {
+      return removeItem(item);
+    }
+
+    return mutateItem(
+      item,
+      () => api.put(`/tables/${tableId}/items/${item.id}`, { quantity: nextQuantity }),
+      nextQuantity > item.quantity ? 'Cantidad aumentada.' : 'Cantidad reducida. Queda registrado en la auditoría.'
+    );
+  };
+
+  const removeItem = (item) => mutateItem(
+    item,
+    () => api.delete(`/tables/${tableId}/items/${item.id}`),
+    `${item.product_name} retirado de la cuenta. Queda registrado en la auditoría.`
+  );
 
   const items = session?.items ?? [];
 
@@ -164,26 +224,66 @@ export default function TableDetailModal({ visible, table, onHide, onCharge, onS
               </p>
             ) : (
               <ul className="divide-y divide-slate-100">
-                {items.map((item) => (
-                  <li key={item.id} className="flex items-start justify-between gap-2 p-3">
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-medium text-slate-900">
-                        {item.quantity} × {item.product_name}
-                      </p>
-                      <p className="text-xs text-slate-500">
-                        {item.added_at
-                          ? new Date(item.added_at).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' })
-                          : '—'}
-                        {item.promotion && (
-                          <span className="ml-1 text-emerald-600">· {item.promotion.name}</span>
-                        )}
-                      </p>
-                    </div>
-                    <span className="text-sm font-semibold text-slate-900">
-                      {fmtCurrency(item.final_price_at_sale)}
-                    </span>
-                  </li>
-                ))}
+                {items.map((item) => {
+                  const busy = mutatingItemId === item.id;
+                  const locked = mutatingItemId !== null;
+
+                  return (
+                    <li key={item.id} className="p-3">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm font-medium text-slate-900">{item.product_name}</p>
+                          <p className="text-xs text-slate-500">
+                            {item.added_at
+                              ? new Date(item.added_at).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' })
+                              : '—'}
+                            {item.promotion && (
+                              <span className="ml-1 text-emerald-600">· {item.promotion.name}</span>
+                            )}
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => removeItem(item)}
+                          disabled={locked}
+                          title="Eliminar partida de la cuenta"
+                          className="shrink-0 cursor-pointer text-slate-400 transition-colors hover:text-rose-500 disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                          <i className="pi pi-trash text-sm" />
+                        </button>
+                      </div>
+
+                      <div className="mt-2 flex items-center justify-between">
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => changeQuantity(item, item.quantity - 1)}
+                            disabled={locked}
+                            title={item.quantity <= 1 ? 'Retirar la partida' : 'Reducir cantidad'}
+                            className="flex h-6 w-6 cursor-pointer items-center justify-center rounded bg-slate-100 text-sm font-bold text-slate-600 hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-40"
+                          >
+                            -
+                          </button>
+                          <span className="w-8 text-center text-sm font-medium tabular-nums">
+                            {busy ? <i className="pi pi-spin pi-spinner text-xs text-indigo-500" /> : item.quantity}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => changeQuantity(item, item.quantity + 1)}
+                            disabled={locked}
+                            title="Aumentar cantidad"
+                            className="flex h-6 w-6 cursor-pointer items-center justify-center rounded bg-slate-100 text-sm font-bold text-slate-600 hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-40"
+                          >
+                            +
+                          </button>
+                        </div>
+                        <span className="text-sm font-semibold text-slate-900">
+                          {fmtCurrency(item.final_price_at_sale)}
+                        </span>
+                      </div>
+                    </li>
+                  );
+                })}
               </ul>
             )}
           </div>
@@ -217,8 +317,34 @@ export default function TableDetailModal({ visible, table, onHide, onCharge, onS
               pt={{ root: { className: 'border-0' } }}
             />
           </div>
+
+          {/* Destructive path, kept visually apart from the charge action so a
+              mis-tap cannot void an account that was about to be paid. */}
+          <Button
+            type="button"
+            label="Cancelar Mesa"
+            icon="pi pi-times-circle"
+            onClick={() => setShowCancellation(true)}
+            disabled={!session}
+            className="mt-2 w-full cursor-pointer rounded-lg border border-rose-200 bg-white px-4 py-2.5 text-sm font-semibold text-rose-600 hover:bg-rose-50 disabled:opacity-50"
+            pt={{ root: { className: 'border border-rose-200' } }}
+          />
         </div>
       </div>
+
+      <TableCancellationModal
+        visible={showCancellation}
+        table={table}
+        session={session}
+        onHide={() => setShowCancellation(false)}
+        onCanceled={() => {
+          // The table is free again: close both dialogs and let the floor plan
+          // reload from the server rather than guessing the new state.
+          setShowCancellation(false);
+          onSessionChange?.();
+          onHide();
+        }}
+      />
     </Dialog>
   );
 }

@@ -64,6 +64,7 @@
 | Escudo de Seguridad y Throttling | [🟢 FASE 9: COMPLETADO] | [🟢 FASE 9: COMPLETADO] | Candado de login 5 fallos/min por email+IP → bloqueo 15 min con `Retry-After`; cupo global 100 req/min (guard sanctum explícito + `trustProxies`); middleware global `SecurityHeaders` (XFO DENY, nosniff, HSTS, CSP calibrada para Turnstile / agente local 9100 / Reverb WSS); Cloudflare Turnstile invisible validado server-side antes de las credenciales; interceptor Axios 429 + alerta de bloqueo con cuenta regresiva en LoginPage; 18 pruebas en verde — ver sección 42 |
 | Optimizacion Modal de Cobro (Rendimiento) | [🟢 COMPLETADO Y OPERATIVO] | [🟢 COMPLETADO Y OPERATIVO] | Catálogo de métodos de pago servido desde Redis (`Cache::remember`, TTL 60 min, invalidación automática en alta/edición/baja); input de "Dinero Recibido" con sanitización estricta en `onChange` (sin `onBlur`), cálculo del cambio y habilitación de "Confirmar Cobro" en tiempo real desde la primera tecla |
 | Mailing Dinamico (SendGrid) por Proceso | [🟢 COMPLETADO Y OPERATIVO] | [🟢 COMPLETADO Y OPERATIVO] | Tabla `email_configurations` (una fila por `process_type`, API Key cifrada, destinatarios JSONB); transporte armado al vuelo con `Config::set()` sobre el relay SMTP de SendGrid; `SendConfiguredProcessMail` resuelve credenciales dentro del worker; cierre automatico de caja desacoplado (encola, no envia); reporte sin PDF ni diferencias y con membrete fiscal; pestana "Notificaciones / Emails" admin-only — ver seccion 48 |
+| Control de Partidas y Cancelacion Segura de Mesas | [🟢 COMPLETADO Y OPERATIVO] | [🟢 COMPLETADO Y OPERATIVO] | `PUT`/`DELETE` de partidas en la cuenta viva con reescalado desde el precio almacenado, reintegro de stock con `StockMovement` y `item_removed_from_table` en auditoria; `POST /tables/{id}/cancel` transaccional (sesion canceled + mesa available + items sellados con `canceled_at`) autorizado por rol admin o por contrasena hasheada en `global_settings.cancellation_authorization`; controles +/-/papelera y modal estricto de cancelacion en el detalle de mesa — ver seccion 49 |
 
 ## 3. Detalle del Modulo Completado: Migraciones & Modelos Base
 
@@ -4642,3 +4643,160 @@ por tipo de proceso.
 - `backend/routes/web.php`, `backend/app/Http/Controllers/Admin/MailPreviewController.php` — previews alineadas a la nueva firma
 - `backend/database/seeders/DatabaseSeeder.php` — `Cronos Fast Food` → `Cronos POS`
 - `frontend/src/pages/admin/SystemSettingsPage.jsx` — pestaña "Notificaciones / Emails"
+
+---
+
+## 49. CONTROL DE PARTIDAS Y CANCELACIÓN SEGURA DE MESAS [🟢 COMPLETADO Y OPERATIVO]
+
+Fricción operativa reportada desde el piso: una vez comandada, una partida no se
+podía corregir y una mesa abierta por error no se podía liberar sin cobrarla. Se
+resuelve sin aflojar la trazabilidad — al contrario: **todo retiro de consumo ya
+registrado deja huella**.
+
+### 49.1 Corrección de partidas en la cuenta viva
+
+| Método | Ruta | Descripción |
+| :--- | :--- | :--- |
+| PUT | /api/tables/{table}/items/{item} | Ajusta la cantidad de una partida ya comandada |
+| DELETE | /api/tables/{table}/items/{item} | Retira la partida de la cuenta |
+
+Ambas corren bajo el mismo `lockForUpdate` sobre la mesa que el resto del módulo
+—punto único de serialización del comedor—, más bloqueo de la orden, de la
+partida y del producto.
+
+**Aritmética.** La línea se reescala desde el **precio unitario almacenado**, no
+desde el catálogo: un cambio de precio posterior no puede reescribir lo que se
+le cotizó al comensal. El descuento de promoción se recalcula sobre el bruto
+nuevo con `OrderCalculator::promotionDiscount()`, porque `fixed_amount` y
+`freebie_100` no escalan linealmente con la cantidad. Si la promoción fue purgada
+del catálogo, el descuento ya concedido se escala proporcionalmente en lugar de
+reencarecer la línea en silencio.
+
+Recomponer TODA la cuenta es lossless mientras la orden no arrastre descuento
+global (`discount_type = 'none'`, la invariante de una cuenta abierta): las
+líneas intactas resuelven exactamente a los valores ya guardados.
+
+**Stock.** Subir la cantidad consume unidades igual que una comanda nueva
+(valida `ERR_POS_INSUFFICIENT_STOCK`). Bajarla o eliminar la partida las
+reintegra **y escribe un `StockMovement` de tipo `adjustment`**, para que un
+conteo de almacén se concilie contra un ajuste explícito y no contra un salto
+inexplicado de `current_stock`.
+
+> `StockMovement` suma `created_at` a su `$fillable` (el modelo tiene
+> `$timestamps = false`): sin sellarlo, el movimiento quedaba invisible para los
+> filtros por fecha y el ordenamiento del kardex, que se apoyan en esa columna.
+
+**Auditoría.** Toda reducción y toda eliminación insertan
+`action: 'item_removed_from_table'` con `operation`
+(`quantity_decreased` / `item_deleted`), usuario, mesa, orden, producto,
+`quantity_before` / `quantity_after` / `quantity_removed`, **`amount_removed`**
+(lo que salió de la cuenta, no un precio unitario), `stock_returned` y el nuevo
+total. Los aumentos quedan como `table_item_quantity_increased`.
+
+**Alcance del endpoint.** La partida se busca **acotada a la orden de esa mesa**;
+un id de otra cuenta responde `ERR_TABLE_ITEM_NOT_FOUND` (404) en lugar de
+editarse. No lleva middleware de rol: el mesero corrige su propia comanda y el
+control no es el permiso, es la huella.
+
+### 49.2 Cancelación segura de mesa
+
+`POST /api/tables/{table}/cancel` — motivo obligatorio (mínimo 5 caracteres) y
+autorización por una de dos vías, **registrando cuál**:
+
+| Autoridad | `authorized_by` | Contraseña |
+| :--- | :--- | :--- |
+| Rol `admin` | `admin_role` | No se solicita |
+| Cualquier otro rol | `authorization_password` | Obligatoria, validada con `Hash::check` |
+
+Errores: `ERR_TABLE_CANCEL_UNAUTHORIZED` (403) si la contraseña no coincide y
+`ERR_CANCEL_PASSWORD_NOT_CONFIGURED` (422) si nunca se definió — un hueco de
+administración no es una contraseña equivocada, y el operador merece una
+instrucción accionable en vez de reintentar a ciegas.
+
+**Transacción única** (una cancelación a medias es peor que ninguna: dejaría una
+mesa ocupada para siempre o una cuenta fantasma sin mesa):
+
+1. Reintegra el stock de cada partida con su `StockMovement`.
+2. Sella `order_items.canceled_at` en todas las líneas — **se marcan, no se
+   borran**: el consumo anulado es la evidencia de lo que había en la mesa.
+3. `orders` → `canceled` con `canceled_by`, `canceled_at` y `cancellation_reason`.
+4. `table_sessions` → `canceled` con `closed_at` / `closed_by`. El índice único
+   parcial solo vigila las sesiones abiertas, así que este cambio es lo que
+   realmente libera la mesa.
+5. `tables` → `available`.
+6. `AuditLog: table_canceled` con motivo exacto, ejecutor (nombre y correo),
+   **monto cancelado**, snapshot de partidas, mesero, minutos de ocupación y bajo
+   qué autoridad se liberó.
+
+Migración `2026_08_09_000001_add_canceled_at_to_order_items_table` — columna
+`timestamptz` nullable; NULL significa "nunca anulada".
+
+### 49.3 Contraseña de Autorización
+
+Vive en `global_settings` bajo la llave `cancellation_authorization`, **hasheada
+con bcrypt**, y es deliberadamente **independiente de la contraseña de acceso de
+cualquier usuario**: un supervisor puede confiarla a un encargado de turno sin
+entregar su cuenta, y rotarla no obliga a nadie a cambiar su forma de entrar.
+
+`App\Services\CancellationAuthorizationService` concentra las tres operaciones
+(`isConfigured`, `store`, `authorize`).
+
+| Método | Ruta | Middleware |
+| :--- | :--- | :--- |
+| GET | /api/admin/settings/cancellation-password | role:admin,manager — solo estado y fecha de rotación |
+| PUT | /api/admin/settings/cancellation-password | **role:admin** — define o rota (min 6, confirmada) |
+
+**Blindaje del endpoint genérico de settings.** `GlobalSetting::PROTECTED_KEYS`
+se descuenta de toda lectura de `GET /api/admin/settings` y se **rechaza en la
+escritura** con error de validación: el endpoint genérico guarda valores tal
+cual, así que dejar pasar la llave escribiría el secreto en texto plano y
+saltaría el hasheo de su propio endpoint.
+
+### 49.4 Interfaz (React)
+
+- **`TableDetailModal`** — cada partida de "Cuenta de la mesa" suma los controles
+  del POS: `-` / cantidad / `+` y papelera. Nada se edita en memoria: cada acción
+  viaja al servidor y la respuesta **reemplaza la sesión completa**, porque el
+  servidor es dueño de la aritmética y del stock. Llegar a 0 con el `-` se
+  encamina al DELETE, para que la auditoría lo registre como retiro y no como
+  edición de cantidad. Mientras una mutación está en vuelo se bloquean los
+  controles de todas las partidas (una sola cuenta, un solo cambio a la vez).
+- **`TableCancellationModal`** — botón "Cancelar Mesa" en rojo, separado del de
+  cobro para que un toque errado no anule una cuenta que iba a pagarse. El modal
+  exige motivo y, **solo si el usuario no es admin**, la contraseña de
+  autorización; al admin se le muestra un aviso de que su rol basta. El frontend
+  decide qué *mostrar*; el backend revalida rol y hash por su cuenta.
+- **`CancellationPasswordPanel`** — pestaña "Autorizaciones" (admin-only) en
+  Configuración del Sistema: estado (Configurada / Sin configurar), fecha de la
+  última rotación y formulario con confirmación. Como solo se guarda el hash, la
+  única operación posible es reemplazarla.
+
+### 49.5 Pruebas
+
+`tests/Feature/Dining/TableAccountControlsTest.php` — 8 pruebas: reducir devuelve
+stock y audita monto retirado; eliminar retira la partida, reintegra stock y deja
+`StockMovement`; no se puede aumentar más allá del stock; una partida ajena
+responde 404; el admin cancela sin contraseña (sesión, mesa, orden e items
+sellados); el no-admin necesita la contraseña correcta y el log registra
+`authorization_password`; el motivo es obligatorio; y la contraseña se guarda
+hasheada, no se expone en `GET /settings` ni se puede sobrescribir por el
+endpoint genérico.
+
+### Archivos Creados
+- `backend/database/migrations/2026_08_09_000001_add_canceled_at_to_order_items_table.php`
+- `backend/app/Services/CancellationAuthorizationService.php`
+- `backend/app/Http/Requests/TableSession/UpdateTableItemRequest.php`
+- `backend/app/Http/Requests/TableSession/CancelTableRequest.php`
+- `backend/tests/Feature/Dining/TableAccountControlsTest.php`
+- `frontend/src/components/dining/TableCancellationModal.jsx`
+- `frontend/src/components/settings/CancellationPasswordPanel.jsx`
+
+### Archivos Modificados
+- `backend/app/Http/Controllers/Dining/TableSessionController.php` — `updateItem`, `destroyItem`, `cancel` y helpers de recomposición/stock
+- `backend/app/Http/Controllers/Admin/SystemSettingsController.php` — llaves protegidas y endpoints de la contraseña de autorización
+- `backend/app/Models/GlobalSetting.php` — `PROTECTED_KEYS`
+- `backend/app/Models/OrderItem.php` — `canceled_at` (fillable + cast)
+- `backend/app/Models/StockMovement.php` — `created_at` (fillable + cast)
+- `backend/routes/api.php` — 3 rutas de comedor + 2 de la contraseña de autorización
+- `frontend/src/components/dining/TableDetailModal.jsx` — controles +/-/papelera y botón de cancelación
+- `frontend/src/pages/admin/SystemSettingsPage.jsx` — pestaña "Autorizaciones"

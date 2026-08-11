@@ -122,6 +122,23 @@ Route::middleware(['auth:sanctum', 'user.active'])->group(function () {
         Route::post('/{table}/items', [TableSessionController::class, 'addItems']);
         Route::post('/{table}/close', [TableSessionController::class, 'close']);
 
+        /*
+         * Correccion de partidas ya comandadas. No lleva middleware de rol: el
+         * mesero corrige su propia comanda en la mesa. El control no es el
+         * permiso sino la huella — toda reduccion o eliminacion queda asentada
+         * en audit_logs con usuario, producto, cantidad y monto retirado.
+         */
+        Route::put('/{table}/items/{item}', [TableSessionController::class, 'updateItem']);
+        Route::delete('/{table}/items/{item}', [TableSessionController::class, 'destroyItem']);
+
+        /*
+         * Cancelacion de la cuenta completa. La autorizacion se resuelve dentro
+         * del controlador (rol admin o contrasena de autorizacion), no con un
+         * middleware de rol: el cajero SI puede cancelar, siempre que un
+         * supervisor le haya confiado la contrasena.
+         */
+        Route::post('/{table}/cancel', [TableSessionController::class, 'cancel']);
+
         // Catalogo de mesas: administracion.
         Route::middleware('role:admin,manager')->group(function () {
             Route::post('/', [TableController::class, 'store']);
@@ -216,6 +233,18 @@ Route::middleware(['auth:sanctum', 'user.active'])->group(function () {
 
         Route::get('/settings', [SystemSettingsController::class, 'index']);
         Route::put('/settings', [SystemSettingsController::class, 'update']);
+
+        /*
+         * Contrasena de autorizacion para cancelaciones. Vive fuera del
+         * endpoint generico de settings porque se guarda hasheada, y su
+         * escritura queda reservada al admin: es la llave que delega la
+         * facultad de anular consumo ya registrado.
+         */
+        Route::get('/settings/cancellation-password', [SystemSettingsController::class, 'cancellationPassword']);
+        Route::middleware('role:admin')->put(
+            '/settings/cancellation-password',
+            [SystemSettingsController::class, 'updateCancellationPassword']
+        );
 
         Route::prefix('roles')->group(function () {
             Route::get('/', [RoleController::class, 'index']);

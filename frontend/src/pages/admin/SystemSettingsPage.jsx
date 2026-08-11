@@ -9,6 +9,7 @@ import api from '../../api/axios';
 import AppLayout from '../../components/layout/AppLayout';
 import PrinterSetupPanel from '../../components/settings/PrinterSetupPanel';
 import EmailNotificationsPanel from '../../components/settings/EmailNotificationsPanel';
+import CancellationPasswordPanel from '../../components/settings/CancellationPasswordPanel';
 import useCronosAgent from '../../hooks/useCronosAgent';
 import { useAuth } from '../../context/AuthContext';
 
@@ -237,6 +238,12 @@ export default function SystemSettingsPage() {
           {isAdmin && (
             <TabPanel header="Notificaciones / Emails" pt={{ headerAction: { className: 'text-sm' } }}>
               <EmailNotificationsPanel />
+            </TabPanel>
+          )}
+
+          {isAdmin && (
+            <TabPanel header="Autorizaciones" pt={{ headerAction: { className: 'text-sm' } }}>
+              <CancellationPasswordPanel />
             </TabPanel>
           )}
         </TabView>
