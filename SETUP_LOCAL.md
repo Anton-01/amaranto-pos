@@ -25,14 +25,40 @@ cd amaranto-pos
 docker compose up --build
 ```
 
-El primer arranque tarda ~2-3 minutos. El entrypoint del backend automatiza:
-- Instala dependencias de Composer (si `vendor/` no existe)
+El primer arranque tarda ~2-3 minutos. **Solo el contenedor `backend` prepara el
+entorno compartido** (`CONTAINER_ROLE=app`); `scheduler` y `queue-worker`
+esperan a que termine —via el healthcheck de `backend`— y arrancan directo con
+su comando. Es deliberado: los tres montan el mismo codigo, el mismo volumen de
+`vendor/` y la misma base de datos, asi que instalar dependencias o migrar por
+triplicado los hacia chocar entre si.
+
+El entrypoint de `backend` automatiza:
+- Instala dependencias de Composer
 - Crea `.env` desde `.env.example` y genera `APP_KEY`
-- Ejecuta `migrate:fresh --seed` (crea las 18 tablas + datos base)
+- Ejecuta `migrate:fresh --seed` (esquema completo + datos base + demo)
 - Instala Laravel Reverb (WebSockets)
-- Inicia el queue worker en segundo plano
 - Inicia Reverb en puerto 8080
 - Inicia el servidor Laravel en puerto 8000
+
+La cola la procesa el servicio dedicado `queue-worker`, y las tareas
+programadas el servicio `scheduler`.
+
+### Datos de demostracion
+
+El seeder deja el sistema listo para probar sin capturar nada a mano:
+
+| Que | Detalle |
+| :--- | :--- |
+| Categorias | Bebidas, Paquetes y Refrescos |
+| Productos | 16 en total, con precios (IVA incluido), stock y minimos |
+| Promociones | `Martes de Refrescos -15%` (porcentaje) y `Paquete Oficina -$20` (monto fijo) |
+| Caja | Un turno ABIERTO del administrador con fondo de $1,500 |
+| Ventas | 3 tickets cobrados (efectivo, tarjeta y efectivo con 10% de descuento global) + 1 cancelada con devolucion de stock |
+| Comedor | `Mesa 3` ocupada con una cuenta viva lista para cobrar |
+| Inventario | Entradas de compra que respaldan el stock inicial y una merma |
+
+Para apagarlos, poner `SEED_DEMO_DATA=false` en el servicio `backend` de
+`docker-compose.yml`. En produccion estan apagados salvo que se activen a mano.
 
 ### 3. Acceder a la Aplicacion
 

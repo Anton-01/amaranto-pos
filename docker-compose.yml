@@ -11,6 +11,9 @@ services:
       - ./backend:/var/www/html
       - backend-vendor:/var/www/html/vendor
     environment:
+      # Unico contenedor que instala dependencias, escribe .env y corre
+      # migraciones/seeders. Ver el encabezado de backend/docker-entrypoint.sh.
+      - CONTAINER_ROLE=app
       - APP_NAME=Cronos POS
       - APP_ENV=local
       - APP_DEBUG=true
@@ -35,11 +38,22 @@ services:
       - MAIL_MAILER=log
       - MAIL_FROM_ADDRESS=no-reply@cronos.pos
       - MAIL_FROM_NAME=Cronos POS
+      # Datos de demostracion (catalogo + tickets de prueba) al sembrar.
+      - SEED_DEMO_DATA=true
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
+    # El servidor HTTP solo responde DESPUES de composer install, .env,
+    # migraciones y seeders: por eso este healthcheck es la señal que usan
+    # scheduler y queue-worker para saber que el arranque compartido termino.
+    healthcheck:
+      test: ["CMD-SHELL", "php -r \"exit(@file_get_contents('http://127.0.0.1:8000/up') === false ? 1 : 0);\""]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 180s
     networks:
       - cronos-network
 
@@ -53,6 +67,7 @@ services:
       - ./backend:/var/www/html
       - backend-vendor:/var/www/html/vendor
     environment:
+      - CONTAINER_ROLE=worker
       - APP_NAME=Cronos POS
       - APP_ENV=local
       - APP_DEBUG=true
@@ -73,6 +88,9 @@ services:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      # Arranca solo cuando `backend` ya instalo dependencias y migro la base.
+      backend:
         condition: service_healthy
     networks:
       - cronos-network
@@ -87,6 +105,7 @@ services:
       - ./backend:/var/www/html
       - backend-vendor:/var/www/html/vendor
     environment:
+      - CONTAINER_ROLE=worker
       - APP_NAME=Cronos POS
       - APP_ENV=local
       - APP_DEBUG=true
@@ -107,6 +126,9 @@ services:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      # Arranca solo cuando `backend` ya instalo dependencias y migro la base.
+      backend:
         condition: service_healthy
     networks:
       - cronos-network

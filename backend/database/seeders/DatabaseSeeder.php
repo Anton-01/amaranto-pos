@@ -168,5 +168,34 @@ class DatabaseSeeder extends Seeder
             'footer_message' => 'Conserve su ticket para cualquier aclaracion',
             'updated_by' => $user->id,
         ]);
+
+        if ($this->shouldSeedDemoData()) {
+            $this->call([
+                DemoCatalogSeeder::class,
+                DemoSalesSeeder::class,
+            ]);
+        }
+    }
+
+    /**
+     * ¿Se siembran catalogo y ventas de demostracion?
+     *
+     * Fuera de produccion es lo deseable: un entorno recien levantado tiene que
+     * poder venderse, imprimirse y arquearse sin capturar nada a mano. En
+     * produccion queda APAGADO salvo peticion explicita — un ticket falso en la
+     * base real contamina el historial de ventas y el arqueo de caja.
+     *
+     * `SEED_DEMO_DATA` manda sobre el entorno en ambas direcciones (docker
+     * compose lo fija en `true` para el entorno local).
+     */
+    private function shouldSeedDemoData(): bool
+    {
+        $flag = env('SEED_DEMO_DATA');
+
+        if ($flag !== null && $flag !== '') {
+            return filter_var($flag, FILTER_VALIDATE_BOOLEAN);
+        }
+
+        return ! app()->isProduction();
     }
 }
