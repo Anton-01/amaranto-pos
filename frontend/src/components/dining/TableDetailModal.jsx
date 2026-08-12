@@ -5,6 +5,7 @@ import { Button } from 'primereact/button';
 import { toast } from 'sonner';
 import api from '../../api/axios';
 import TableCancellationModal from './TableCancellationModal';
+import { useAuth } from '../../context/AuthContext';
 import { fmtCurrency, fmtElapsed } from './tableStatus';
 
 /**
@@ -19,8 +20,15 @@ import { fmtCurrency, fmtElapsed } from './tableStatus';
  * controles del POS (+ / - / papelera). Toda reduccion viaja al servidor, que
  * devuelve el stock y deja la huella en la auditoria: aqui no se edita nada en
  * memoria, porque la cuenta viva es la del servidor.
+ *
+ * Esos controles solo se pintan para admin y manager, que es a quienes el
+ * backend autoriza a retirar consumo ya registrado. El mesero sigue agregando
+ * comanda con normalidad.
  */
 export default function TableDetailModal({ visible, table, onHide, onCharge, onSessionChange }) {
+  const { user } = useAuth();
+  const canEditItems = ['admin', 'manager'].some(role => user?.roles?.includes(role));
+
   const [session, setSession] = useState(null);
   const [loading, setLoading] = useState(false);
   const [products, setProducts] = useState([]);
@@ -109,6 +117,8 @@ export default function TableDetailModal({ visible, table, onHide, onCharge, onS
       } else if (data?.code === 'ERR_TABLE_ITEM_NOT_FOUND') {
         toast.info('Esa partida ya no está en la cuenta.');
         fetchDetail();
+      } else if (data?.code === 'ERR_AUTH_FORBIDDEN_ROLE') {
+        toast.error('Solo un administrador o gerente puede modificar partidas ya comandadas.');
       } else {
         toast.error(data?.message || 'No se pudo actualizar la partida.');
       }
@@ -242,41 +252,51 @@ export default function TableDetailModal({ visible, table, onHide, onCharge, onS
                             )}
                           </p>
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => removeItem(item)}
-                          disabled={locked}
-                          title="Eliminar partida de la cuenta"
-                          className="shrink-0 cursor-pointer text-slate-400 transition-colors hover:text-rose-500 disabled:cursor-not-allowed disabled:opacity-40"
-                        >
-                          <i className="pi pi-trash text-sm" />
-                        </button>
+                        {canEditItems && (
+                          <button
+                            type="button"
+                            onClick={() => removeItem(item)}
+                            disabled={locked}
+                            title="Eliminar partida de la cuenta"
+                            className="shrink-0 cursor-pointer text-slate-400 transition-colors hover:text-rose-500 disabled:cursor-not-allowed disabled:opacity-40"
+                          >
+                            <i className="pi pi-trash text-sm" />
+                          </button>
+                        )}
                       </div>
 
                       <div className="mt-2 flex items-center justify-between">
-                        <div className="flex items-center gap-1">
-                          <button
-                            type="button"
-                            onClick={() => changeQuantity(item, item.quantity - 1)}
-                            disabled={locked}
-                            title={item.quantity <= 1 ? 'Retirar la partida' : 'Reducir cantidad'}
-                            className="flex h-6 w-6 cursor-pointer items-center justify-center rounded bg-slate-100 text-sm font-bold text-slate-600 hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-40"
-                          >
-                            -
-                          </button>
-                          <span className="w-8 text-center text-sm font-medium tabular-nums">
-                            {busy ? <i className="pi pi-spin pi-spinner text-xs text-indigo-500" /> : item.quantity}
+                        {canEditItems ? (
+                          <div className="flex items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => changeQuantity(item, item.quantity - 1)}
+                              disabled={locked}
+                              title={item.quantity <= 1 ? 'Retirar la partida' : 'Reducir cantidad'}
+                              className="flex h-6 w-6 cursor-pointer items-center justify-center rounded bg-slate-100 text-sm font-bold text-slate-600 hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-40"
+                            >
+                              -
+                            </button>
+                            <span className="w-8 text-center text-sm font-medium tabular-nums">
+                              {busy ? <i className="pi pi-spin pi-spinner text-xs text-indigo-500" /> : item.quantity}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => changeQuantity(item, item.quantity + 1)}
+                              disabled={locked}
+                              title="Aumentar cantidad"
+                              className="flex h-6 w-6 cursor-pointer items-center justify-center rounded bg-slate-100 text-sm font-bold text-slate-600 hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-40"
+                            >
+                              +
+                            </button>
+                          </div>
+                        ) : (
+                          /* Read-only for waiters: the quantity still reads the
+                             same, only the controls that withdraw it are gone. */
+                          <span className="text-sm font-medium text-slate-600 tabular-nums">
+                            Cantidad: {item.quantity}
                           </span>
-                          <button
-                            type="button"
-                            onClick={() => changeQuantity(item, item.quantity + 1)}
-                            disabled={locked}
-                            title="Aumentar cantidad"
-                            className="flex h-6 w-6 cursor-pointer items-center justify-center rounded bg-slate-100 text-sm font-bold text-slate-600 hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-40"
-                          >
-                            +
-                          </button>
-                        </div>
+                        )}
                         <span className="text-sm font-semibold text-slate-900">
                           {fmtCurrency(item.final_price_at_sale)}
                         </span>

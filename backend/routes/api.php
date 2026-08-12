@@ -123,13 +123,15 @@ Route::middleware(['auth:sanctum', 'user.active'])->group(function () {
         Route::post('/{table}/close', [TableSessionController::class, 'close']);
 
         /*
-         * Correccion de partidas ya comandadas. No lleva middleware de rol: el
-         * mesero corrige su propia comanda en la mesa. El control no es el
-         * permiso sino la huella — toda reduccion o eliminacion queda asentada
-         * en audit_logs con usuario, producto, cantidad y monto retirado.
+         * Correccion de partidas ya comandadas. Reservada a admin y manager: un
+         * mesero agrega consumo, pero retirarlo saca dinero ya registrado de la
+         * cuenta y eso exige mando. La huella en audit_logs (usuario, producto,
+         * cantidad y monto retirado) opera como segunda capa, no como la unica.
          */
-        Route::put('/{table}/items/{item}', [TableSessionController::class, 'updateItem']);
-        Route::delete('/{table}/items/{item}', [TableSessionController::class, 'destroyItem']);
+        Route::middleware('role:admin,manager')->group(function () {
+            Route::put('/{table}/items/{item}', [TableSessionController::class, 'updateItem']);
+            Route::delete('/{table}/items/{item}', [TableSessionController::class, 'destroyItem']);
+        });
 
         /*
          * Cancelacion de la cuenta completa. La autorizacion se resuelve dentro

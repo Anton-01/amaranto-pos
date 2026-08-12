@@ -22,9 +22,9 @@ use Tests\TestCase;
  * Line controls and secure cancellation of a live table account.
  *
  * The properties pinned here are the ones that make the feature auditable:
- * every withdrawal of already-registered consumption leaves a trace, stock
- * comes back when it does, and a table can only be voided by somebody who
- * actually holds the authority.
+ * withdrawing already-registered consumption takes rank and always leaves a
+ * trace, stock comes back when it does, and a table can only be voided by
+ * somebody who actually holds the authority.
  */
 class TableAccountControlsTest extends TestCase
 {
@@ -124,12 +124,12 @@ class TableAccountControlsTest extends TestCase
 
     public function test_reducir_la_cantidad_devuelve_stock_y_deja_huella_en_auditoria(): void
     {
-        $waiter = $this->userWithRole('vendor');
-        ['table' => $table, 'product' => $product, 'item' => $item] = $this->openTableWithItems($waiter, 3, 100.00, 50);
+        $supervisor = $this->userWithRole('manager');
+        ['table' => $table, 'product' => $product, 'item' => $item] = $this->openTableWithItems($supervisor, 3, 100.00, 50);
 
         $stockAfterOrder = $product->fresh()->current_stock;
 
-        $response = $this->actingAs($waiter)
+        $response = $this->actingAs($supervisor)
             ->putJson("/api/tables/{$table->id}/items/{$item->id}", ['quantity' => 1]);
 
         $response->assertOk();
@@ -142,7 +142,7 @@ class TableAccountControlsTest extends TestCase
         $log = AuditLog::where('action', 'item_removed_from_table')->latest('created_at')->firstOrFail();
 
         $this->assertSame('quantity_decreased', $log->metadata['operation']);
-        $this->assertSame($waiter->id, $log->user_id);
+        $this->assertSame($supervisor->id, $log->user_id);
         $this->assertSame(3, $log->metadata['quantity_before']);
         $this->assertSame(1, $log->metadata['quantity_after']);
         $this->assertSame(2, $log->metadata['quantity_removed']);
@@ -152,12 +152,12 @@ class TableAccountControlsTest extends TestCase
 
     public function test_eliminar_una_partida_la_retira_de_la_cuenta_y_reintegra_su_stock(): void
     {
-        $waiter = $this->userWithRole('vendor');
-        ['table' => $table, 'product' => $product, 'item' => $item] = $this->openTableWithItems($waiter, 2, 150.00, 20);
+        $supervisor = $this->userWithRole('manager');
+        ['table' => $table, 'product' => $product, 'item' => $item] = $this->openTableWithItems($supervisor, 2, 150.00, 20);
 
         $stockAfterOrder = $product->fresh()->current_stock;
 
-        $response = $this->actingAs($waiter)
+        $response = $this->actingAs($supervisor)
             ->deleteJson("/api/tables/{$table->id}/items/{$item->id}");
 
         $response->assertOk();
@@ -184,10 +184,10 @@ class TableAccountControlsTest extends TestCase
 
     public function test_no_se_puede_aumentar_una_partida_mas_alla_del_stock_disponible(): void
     {
-        $waiter = $this->userWithRole('vendor');
-        ['table' => $table, 'item' => $item] = $this->openTableWithItems($waiter, 2, 80.00, 3);
+        $supervisor = $this->userWithRole('manager');
+        ['table' => $table, 'item' => $item] = $this->openTableWithItems($supervisor, 2, 80.00, 3);
 
-        $this->actingAs($waiter)
+        $this->actingAs($supervisor)
             ->putJson("/api/tables/{$table->id}/items/{$item->id}", ['quantity' => 10])
             ->assertStatus(422)
             ->assertJsonPath('code', 'ERR_POS_INSUFFICIENT_STOCK');
@@ -198,18 +198,43 @@ class TableAccountControlsTest extends TestCase
 
     public function test_una_partida_ajena_a_la_mesa_no_puede_tocarse_desde_otra_mesa(): void
     {
-        $waiter = $this->userWithRole('vendor');
-        ['item' => $item] = $this->openTableWithItems($waiter);
+        $supervisor = $this->userWithRole('manager');
+        ['item' => $item] = $this->openTableWithItems($supervisor);
 
         $otherTable = Table::where('status', Table::STATUS_AVAILABLE)->firstOrFail();
-        $this->actingAs($waiter)
+        $this->actingAs($supervisor)
             ->postJson("/api/tables/{$otherTable->id}/open", ['guests' => 1, 'notes' => null])
             ->assertCreated();
 
-        $this->actingAs($waiter)
+        $this->actingAs($supervisor)
             ->putJson("/api/tables/{$otherTable->id}/items/{$item->id}", ['quantity' => 1])
             ->assertStatus(404)
             ->assertJsonPath('code', 'ERR_TABLE_ITEM_NOT_FOUND');
+    }
+
+    public function test_un_mesero_no_puede_retirar_partidas_ya_comandadas(): void
+    {
+        $waiter = $this->userWithRole('vendor');
+        ['table' => $table, 'product' => $product, 'item' => $item] = $this->openTableWithItems($waiter, 3, 100.00, 50);
+
+        $stockAfterOrder = $product->fresh()->current_stock;
+
+        // The waiter opened the table and sent the round, but withdrawing what
+        // is already on the account takes rank.
+        $this->actingAs($waiter)
+            ->putJson("/api/tables/{$table->id}/items/{$item->id}", ['quantity' => 1])
+            ->assertStatus(403)
+            ->assertJsonPath('code', 'ERR_AUTH_FORBIDDEN_ROLE');
+
+        $this->actingAs($waiter)
+            ->deleteJson("/api/tables/{$table->id}/items/{$item->id}")
+            ->assertStatus(403)
+            ->assertJsonPath('code', 'ERR_AUTH_FORBIDDEN_ROLE');
+
+        // Neither the account nor the inventory moved.
+        $this->assertSame(3, (int) $item->fresh()->quantity);
+        $this->assertSame($stockAfterOrder, $product->fresh()->current_stock);
+        $this->assertSame(0, AuditLog::where('action', 'item_removed_from_table')->count());
     }
 
     public function test_un_administrador_cancela_la_mesa_sin_contrasena_de_autorizacion(): void

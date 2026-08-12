@@ -64,7 +64,7 @@
 | Escudo de Seguridad y Throttling | [🟢 FASE 9: COMPLETADO] | [🟢 FASE 9: COMPLETADO] | Candado de login 5 fallos/min por email+IP → bloqueo 15 min con `Retry-After`; cupo global 100 req/min (guard sanctum explícito + `trustProxies`); middleware global `SecurityHeaders` (XFO DENY, nosniff, HSTS, CSP calibrada para Turnstile / agente local 9100 / Reverb WSS); Cloudflare Turnstile invisible validado server-side antes de las credenciales; interceptor Axios 429 + alerta de bloqueo con cuenta regresiva en LoginPage; 18 pruebas en verde — ver sección 42 |
 | Optimizacion Modal de Cobro (Rendimiento) | [🟢 COMPLETADO Y OPERATIVO] | [🟢 COMPLETADO Y OPERATIVO] | Catálogo de métodos de pago servido desde Redis (`Cache::remember`, TTL 60 min, invalidación automática en alta/edición/baja); input de "Dinero Recibido" con sanitización estricta en `onChange` (sin `onBlur`), cálculo del cambio y habilitación de "Confirmar Cobro" en tiempo real desde la primera tecla |
 | Mailing Dinamico (SendGrid) por Proceso | [🟢 COMPLETADO Y OPERATIVO] | [🟢 COMPLETADO Y OPERATIVO] | Tabla `email_configurations` (una fila por `process_type`, API Key cifrada, destinatarios JSONB); transporte armado al vuelo con `Config::set()` sobre el relay SMTP de SendGrid; `SendConfiguredProcessMail` resuelve credenciales dentro del worker; cierre automatico de caja desacoplado (encola, no envia); reporte sin PDF ni diferencias y con membrete fiscal; pestana "Notificaciones / Emails" admin-only — ver seccion 48 |
-| Control de Partidas y Cancelacion Segura de Mesas | [🟢 COMPLETADO Y OPERATIVO] | [🟢 COMPLETADO Y OPERATIVO] | `PUT`/`DELETE` de partidas en la cuenta viva con reescalado desde el precio almacenado, reintegro de stock con `StockMovement` y `item_removed_from_table` en auditoria; `POST /tables/{id}/cancel` transaccional (sesion canceled + mesa available + items sellados con `canceled_at`) autorizado por rol admin o por contrasena hasheada en `global_settings.cancellation_authorization`; controles +/-/papelera y modal estricto de cancelacion en el detalle de mesa — ver seccion 49 |
+| Control de Partidas y Cancelacion Segura de Mesas | [🟢 COMPLETADO Y OPERATIVO] | [🟢 COMPLETADO Y OPERATIVO] | `PUT`/`DELETE` de partidas en la cuenta viva bajo `role:admin,manager`, con reescalado desde el precio almacenado, reintegro de stock con `StockMovement` y `item_removed_from_table` en auditoria; `POST /tables/{id}/cancel` transaccional (sesion canceled + mesa available + items sellados con `canceled_at`) autorizado por rol admin o por contrasena hasheada en `global_settings.cancellation_authorization`; controles +/-/papelera y modal estricto de cancelacion en el detalle de mesa — ver seccion 49 |
 
 ## 3. Detalle del Modulo Completado: Migraciones & Modelos Base
 
@@ -4695,8 +4695,14 @@ total. Los aumentos quedan como `table_item_quantity_increased`.
 
 **Alcance del endpoint.** La partida se busca **acotada a la orden de esa mesa**;
 un id de otra cuenta responde `ERR_TABLE_ITEM_NOT_FOUND` (404) en lugar de
-editarse. No lleva middleware de rol: el mesero corrige su propia comanda y el
-control no es el permiso, es la huella.
+editarse.
+
+**Autorizacion.** Ambas rutas van bajo `role:admin,manager`. Un mesero AGREGA
+consumo con normalidad, pero retirarlo saca dinero ya registrado de la cuenta y
+eso exige mando: un vendedor recibe `ERR_AUTH_FORBIDDEN_ROLE` (403). La huella en
+`audit_logs` opera como segunda capa, no como el unico control. En el frontend
+los controles `+/-/papelera` solo se pintan para admin y manager; la cantidad
+sigue siendo legible para el mesero.
 
 ### 49.2 Cancelación segura de mesa
 
@@ -4761,6 +4767,8 @@ saltaría el hasheo de su propio endpoint.
   encamina al DELETE, para que la auditoría lo registre como retiro y no como
   edición de cantidad. Mientras una mutación está en vuelo se bloquean los
   controles de todas las partidas (una sola cuenta, un solo cambio a la vez).
+  Los controles se pintan **solo para admin y manager**, en espejo del
+  middleware del backend.
 - **`TableCancellationModal`** — botón "Cancelar Mesa" en rojo, separado del de
   cobro para que un toque errado no anule una cuenta que iba a pagarse. El modal
   exige motivo y, **solo si el usuario no es admin**, la contraseña de
@@ -4773,10 +4781,10 @@ saltaría el hasheo de su propio endpoint.
 
 ### 49.5 Pruebas
 
-`tests/Feature/Dining/TableAccountControlsTest.php` — 8 pruebas: reducir devuelve
+`tests/Feature/Dining/TableAccountControlsTest.php` — 9 pruebas: reducir devuelve
 stock y audita monto retirado; eliminar retira la partida, reintegra stock y deja
 `StockMovement`; no se puede aumentar más allá del stock; una partida ajena
-responde 404; el admin cancela sin contraseña (sesión, mesa, orden e items
+responde 404; **un mesero recibe 403 y no mueve ni la cuenta ni el inventario**; el admin cancela sin contraseña (sesión, mesa, orden e items
 sellados); el no-admin necesita la contraseña correcta y el log registra
 `authorization_password`; el motivo es obligatorio; y la contraseña se guarda
 hasheada, no se expone en `GET /settings` ni se puede sobrescribir por el
