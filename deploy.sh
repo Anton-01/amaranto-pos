@@ -1,20 +1,4 @@
 #!/bin/bash
-# ==============================================================
-# Cronos POS — Script de Despliegue de Produccion
-# Ejecutar en el Droplet: bash deploy.sh
-#
-# ESTRATEGIA DE BUILD (Fase 7 — Deploy Agil):
-#   El bundle de React/Vite NO se compila en el Droplet. Se
-#   compila en la maquina del desarrollador ANTES del push:
-#
-#     1. (Local)   bash build-frontend.sh   -> genera frontend/dist/
-#     2. (Local)   git add frontend/dist && git commit && git push
-#     3. (Droplet) bash deploy.sh           -> solo empaqueta estaticos
-#
-#   El backend usa la imagen pre-compilada serversideup/php, por lo
-#   que 'docker compose up --build' no compila extensiones de PHP.
-# ==============================================================
-
 set -euo pipefail
 
 export DOCKER_BUILDKIT=1
@@ -30,66 +14,68 @@ log() {
 }
 
 log "=========================================="
-log "Iniciando despliegue de Cronos POS"
+log "Starting deployment of Cronos POS"
 log "=========================================="
 
 cd "$APP_DIR"
 
-# 1. Pull de los ultimos cambios
-log "→ Paso 1/7: Descargando cambios de main..."
+# 1. Pull latest changes
+log "→ Step 1/7: Pulling latest changes from main..."
 git pull origin main --ff-only
 
-# 2. Verificar que el frontend fue pre-compilado en local
-#    (el Droplet ya NO ejecuta npm install / npm run build)
-log "→ Paso 2/7: Verificando build pre-compilado del frontend..."
+# 2. Verify that the frontend was pre-compiled locally
+#    (the Droplet NO LONGER runs npm install / npm run build)
+log "→ Step 2/7: Verifying pre-compiled frontend build..."
 if [ ! -f "frontend/dist/index.html" ]; then
-    log "ERROR: No existe frontend/dist/index.html"
-    log "       El frontend debe compilarse en la maquina del desarrollador"
-    log "       ANTES del push. Ejecuta en local:"
+    log "ERROR: frontend/dist/index.html does not exist"
+    log "       The frontend must be compiled on the developer's machine"
+    log "       BEFORE pushing. Run locally:"
     log "         bash build-frontend.sh"
     log "         git add frontend/dist && git commit -m 'build: frontend dist' && git push"
     exit 1
 fi
-log "   Build de frontend encontrado ($(du -sh frontend/dist | cut -f1))."
+log "   Frontend build found ($(du -sh frontend/dist | cut -f1))."
 
-# 3. Compilar y levantar contenedores (solo empaqueta estaticos +
-#    imagenes base pre-compiladas — sin compilacion nativa)
-log "→ Paso 3/7: Empaquetando imagenes y levantando servicios..."
+# 3. Build and spin up containers (only packages statics +
+#    pre-compiled base images — no native compilation)
+log "→ Step 3/7: Packaging images and starting services..."
 docker compose -f "$COMPOSE_FILE" up --build -d
 
-# 4. Esperar a que el backend este saludable
-log "→ Paso 4/7: Esperando que el backend inicie..."
+# 4. Wait for the backend to be healthy
+log "→ Step 4/7: Waiting for the backend to start..."
 RETRIES=0
 MAX_RETRIES=30
 until docker compose -f "$COMPOSE_FILE" exec backend php artisan about > /dev/null 2>&1; do
     RETRIES=$((RETRIES + 1))
     if [ "$RETRIES" -ge "$MAX_RETRIES" ]; then
-        log "ERROR: El backend no respondio despues de ${MAX_RETRIES} intentos"
+        log "ERROR: Backend did not respond after ${MAX_RETRIES} attempts"
         exit 1
     fi
     sleep 2
 done
-log "   Backend operativo."
+log "   Backend is operational."
 
-# 5. Ejecutar migraciones de produccion
-log "→ Paso 5/7: Ejecutando migraciones..."
+# 5. Run production migrations
+log "→ Step 5/7: Running migrations..."
 docker compose -f "$COMPOSE_FILE" exec backend php artisan migrate --force
 
-# 6. Optimizar caches de produccion
-log "→ Paso 6/7: Optimizando caches..."
+# 6. Optimize production caches
+log "→ Step 6/7: Optimizing caches..."
 docker compose -f "$COMPOSE_FILE" exec backend php artisan config:cache
 docker compose -f "$COMPOSE_FILE" exec backend php artisan route:cache
 docker compose -f "$COMPOSE_FILE" exec backend php artisan event:cache
 docker compose -f "$COMPOSE_FILE" exec backend php artisan view:cache
 
-# 7. Reiniciar queue worker para liberar memoria
-log "→ Paso 7/7: Reiniciando queue worker..."
-docker compose -f "$COMPOSE_FILE" exec backend php artisan queue:restart
+# 7. Restart background services to load the new code
+log "→ Step 7/7: Restarting Queue Worker and Scheduler..."
 
-# Limpiar imagenes huerfanas
-log "→ Limpiando imagenes no utilizadas..."
+# Restart containers that run infinite processes
+docker compose -f "$COMPOSE_FILE" restart scheduler queue-worker
+
+# Clean up dangling images
+log "→ Cleaning up unused images..."
 docker image prune -f
 
 log "=========================================="
-log "Despliegue completado exitosamente"
+log "Deployment completed successfully"
 log "=========================================="

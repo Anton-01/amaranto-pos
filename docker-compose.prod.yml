@@ -1,9 +1,3 @@
-# ==============================================================
-# Cronos POS — Docker Compose Production
-# Arquitectura: Backend (API + Reverb + Queue) + Frontend (Nginx SPA) + Redis
-# Base de Datos: DigitalOcean Managed PostgreSQL (externa)
-# ==============================================================
-
 services:
   backend:
     build:
@@ -27,6 +21,36 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
+
+  scheduler:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile.prod
+    container_name: cronos-scheduler
+    restart: always
+    command: php artisan schedule:work
+    env_file:
+      - .env.production
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - cronos-network
+
+  queue-worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile.prod
+    container_name: cronos-queue-worker
+    restart: always
+    command: php artisan queue:work --tries=3 --timeout=90
+    env_file:
+      - .env.production
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - cronos-network
 
   frontend:
     build:
