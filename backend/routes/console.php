@@ -27,33 +27,29 @@ Schedule::command('cronos:auto-close-registers')
 
 /*
 |--------------------------------------------------------------------------
-| Scheduler — Respaldo Diario a la Boveda Aislada (Fase 10)
+| Scheduler — Backup and Maintenance (suspended)
 |--------------------------------------------------------------------------
-| A las 03:30, con el POS ya cerrado y despues del cierre automatico de las
-| 21:00: el snapshot captura la jornada completa, incluidos los arqueos.
+| Both maintenance schedules are disabled on purpose and left in place as
+| documentation of the intended cadence.
 |
-| runInBackground evita que un pg_dump largo retrase al resto del scheduler,
-| y withoutOverlapping impide que un respaldo lento se solape con el del dia
-| siguiente y duplique carga sobre PostgreSQL.
+| - cronos:backup-run took a nightly pg_dump into the isolated GCS vault.
+| - cronos:telemetry-prune purged expired backups and job_execution_logs
+|   rows; while it stays off, that table grows without a ceiling (every
+|   queued email leaves one row), so it needs manual pruning.
+|
+| Both commands remain fully operational and can still be triggered by hand
+| with `php artisan`. Re-enable by uncommenting the blocks below.
 */
-Schedule::command('cronos:backup-run --trigger=scheduled')
-    ->dailyAt(config('backup.schedule.daily_at', '03:30'))
-    ->timezone(config('backup.schedule.timezone', 'America/Mexico_City'))
-    ->when(fn () => (bool) config('backup.schedule.enabled', true))
-    ->withoutOverlapping()
-    ->runInBackground()
-    ->onOneServer();
+// Schedule::command('cronos:backup-run --trigger=scheduled')
+//     ->dailyAt(config('backup.schedule.daily_at', '03:30'))
+//     ->timezone(config('backup.schedule.timezone', 'America/Mexico_City'))
+//     ->when(fn () => (bool) config('backup.schedule.enabled', true))
+//     ->withoutOverlapping()
+//     ->runInBackground()
+//     ->onOneServer();
 
-/*
-|--------------------------------------------------------------------------
-| Scheduler — Poda de Telemetria y Respaldos Vencidos (Fase 10)
-|--------------------------------------------------------------------------
-| A las 04:15, despues del respaldo: primero se asegura la copia del dia y
-| solo entonces se purgan las vencidas. Sin esta poda, job_execution_logs
-| crece sin techo (cada correo encolado deja una fila).
-*/
-Schedule::command('cronos:telemetry-prune --backups')
-    ->dailyAt('04:15')
-    ->timezone('America/Mexico_City')
-    ->withoutOverlapping()
-    ->onOneServer();
+// Schedule::command('cronos:telemetry-prune --backups')
+//     ->dailyAt('04:15')
+//     ->timezone('America/Mexico_City')
+//     ->withoutOverlapping()
+//     ->onOneServer();

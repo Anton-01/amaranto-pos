@@ -63,6 +63,8 @@
 | Telemetría de Jobs y Rollback/Backups GCP | [🟢 FASE 10: COMPLETADO] | [🟢 FASE 10: COMPLETADO] | Tabla `job_execution_logs` (una fila por intento) alimentada por JobQueued/JobProcessing/JobProcessed/JobFailed sin instrumentar ningún job; 3 endpoints admin + reintento vía `queue:retry`; vista `/admin/jobs-monitor` con catálogo, histórico forense, modal de traza y panel de puntos de restauración; bóveda `gcs_backups` cifrada AES-256+PBKDF2 aislada en GCP, rollback transaccional (`--single-transaction` + `ON_ERROR_STOP`) con checksum SHA-256 y respaldo de seguridad previo; scheduler 03:30 respaldo / 04:15 poda; 30 pruebas en verde — ver sección 43 |
 | Escudo de Seguridad y Throttling | [🟢 FASE 9: COMPLETADO] | [🟢 FASE 9: COMPLETADO] | Candado de login 5 fallos/min por email+IP → bloqueo 15 min con `Retry-After`; cupo global 100 req/min (guard sanctum explícito + `trustProxies`); middleware global `SecurityHeaders` (XFO DENY, nosniff, HSTS, CSP calibrada para Turnstile / agente local 9100 / Reverb WSS); Cloudflare Turnstile invisible validado server-side antes de las credenciales; interceptor Axios 429 + alerta de bloqueo con cuenta regresiva en LoginPage; 18 pruebas en verde — ver sección 42 |
 | Optimizacion Modal de Cobro (Rendimiento) | [🟢 COMPLETADO Y OPERATIVO] | [🟢 COMPLETADO Y OPERATIVO] | Catálogo de métodos de pago servido desde Redis (`Cache::remember`, TTL 60 min, invalidación automática en alta/edición/baja); input de "Dinero Recibido" con sanitización estricta en `onChange` (sin `onBlur`), cálculo del cambio y habilitación de "Confirmar Cobro" en tiempo real desde la primera tecla |
+| Mailing Dinamico (SendGrid) por Proceso | [🟢 COMPLETADO Y OPERATIVO] | [🟢 COMPLETADO Y OPERATIVO] | Tabla `email_configurations` (una fila por `process_type`, API Key cifrada, destinatarios JSONB); transporte armado al vuelo con `Config::set()` sobre el relay SMTP de SendGrid; `SendConfiguredProcessMail` resuelve credenciales dentro del worker; cierre automatico de caja desacoplado (encola, no envia); reporte sin PDF ni diferencias y con membrete fiscal; pestana "Notificaciones / Emails" admin-only — ver seccion 48 |
+| Control de Partidas y Cancelacion Segura de Mesas | [🟢 COMPLETADO Y OPERATIVO] | [🟢 COMPLETADO Y OPERATIVO] | `PUT`/`DELETE` de partidas en la cuenta viva bajo `role:admin,manager`, con reescalado desde el precio almacenado, reintegro de stock con `StockMovement` y `item_removed_from_table` en auditoria; `POST /tables/{id}/cancel` transaccional (sesion canceled + mesa available + items sellados con `canceled_at`) autorizado por rol admin o por contrasena hasheada en `global_settings.cancellation_authorization`; controles +/-/papelera y modal estricto de cancelacion en el detalle de mesa — ver seccion 49 |
 
 ## 3. Detalle del Modulo Completado: Migraciones & Modelos Base
 
@@ -4487,3 +4489,322 @@ Suite completa: **83/83, 339 aserciones.**
 - `config/database.php` — `'timezone'` en la conexión `pgsql`
 - `app/Listeners/JobTelemetrySubscriber.php` — comentarios actualizados
 - `.env.example`, `.env.production.example` — `DB_TIMEZONE` documentada
+
+---
+
+## 48. MÓDULO DE MAILING DINÁMICO (SendGrid) INTEGRADO AL CIERRE AUTOMÁTICO DE CAJA [🟢 COMPLETADO Y OPERATIVO]
+
+El correo saliente deja de depender del bloque `MAIL_*` del `.env`. Cada tipo de
+proceso del negocio ("jobs", "users", …) tiene su propia fila con credenciales,
+remitente, asunto y lista de destinatarios; el transporte se arma **al vuelo**
+justo antes de enviar. Rotar una API Key o redirigir un reporte pasa a ser una
+escritura en base de datos, no un redeploy.
+
+### 48.1 Tabla `email_configurations`
+
+| Columna | Tipo | Nota |
+| :--- | :--- | :--- |
+| `id` | uuid PK | |
+| `process_type` | varchar(60) **unique** | `jobs`, `users`, `sales`, `inventory` |
+| `provider` | varchar(40) default `sendgrid` | resuelto contra `config/mailing.php` |
+| `api_key` | text | cast `encrypted` — cifrada con `APP_KEY` |
+| `from_email` / `from_name` | varchar | identidad del remitente |
+| `target_emails` | jsonb | arreglo de destinatarios (máx. 20) |
+| `subject` | varchar | asunto aplicado al Mailable en el envío |
+| `is_active` | boolean | kill-switch: inactiva ⇒ el proceso no notifica |
+| `updated_by` | uuid FK users | auditoría |
+
+`UNIQUE(process_type)` garantiza que una búsqueda por proceso jamás devuelva dos
+transportes en competencia. Índice `(process_type, is_active)` para la única
+consulta caliente.
+
+### 48.2 Transporte dinámico — `App\Services\Mail\DynamicMailerFactory`
+
+Toma la fila, la fusiona sobre la plantilla del proveedor declarada en
+`config/mailing.php` e inyecta el resultado en `config('mail.mailers.dynamic-{proceso}')`
+con `Config::set()`. Nada se persiste en disco y nada sobrevive al proceso.
+
+- **SendGrid** viaja por su relay SMTP (`smtp.sendgrid.net:587`, usuario literal
+  `apikey`, la API Key como contraseña). Sin dependencias nuevas en Composer.
+- Tras registrar, llama a `MailManager::forgetMailers()`: el worker es un
+  proceso largo que cachea cada mailer resuelto, y sin ese flush el segundo job
+  enviaría por el transporte del primero — con la API Key equivocada.
+- Se inyecta el contrato `Illuminate\Contracts\Mail\Factory` (no el manager
+  concreto) para que el servicio siga funcionando bajo `Mail::fake()`.
+
+### 48.3 Desacoplamiento — `App\Jobs\SendConfiguredProcessMail`
+
+El productor (el comando de cierre) solo despacha `(process_type, Mailable)`:
+nunca toca credenciales ni bloquea en SMTP.
+
+**Por qué la configuración se resuelve dentro del worker y no al despachar:** el
+transporte se inyecta en `config('mail.mailers')` en tiempo de ejecución y muere
+con el proceso. Si el productor lo registrara y solo encolara el Mailable, el
+worker buscaría después un mailer que no existe en su propia configuración.
+Resolver ahí mantiene transporte y envío en el mismo proceso, y de paso lee la
+fila más fresca: una llave rotada mientras el mensaje esperaba en Redis se
+respeta igual.
+
+- Sin configuración activa ⇒ el job termina en silencio (estado válido, no falla).
+- Sin destinatarios válidos ⇒ `Log::warning` y salida limpia.
+- `tries = 3` con `backoff [30, 120, 300]` para fallas transitorias de SMTP.
+- Envía con `sendNow()`: el Mailable es `ShouldQueue` y volver a encolarlo desde
+  ahí lo devolvería a Redis, donde el transporte en tiempo de ejecución ya no
+  existe. La pata asíncrona ya ocurrió al despachar el job.
+
+### 48.4 Plantilla ajustada — `CashRegisterClosingReportMail`
+
+- **Sin PDF**: desaparecen `attachments()` y el parámetro `pdfPath`. El cuerpo
+  del correo *es* el documento.
+- **Sin aritmética de diferencias**: fuera `declaredAmount` y `differenceAmount`
+  (y con ellos los tags FALTANTE/SOBRANTE). Un cierre automático declara
+  exactamente lo esperado; la conciliación del efectivo físico corresponde al
+  arqueo del siguiente turno. Queda una sola cifra: **Total Registrado**.
+- **Membrete fiscal**: el Mailable lee `fiscal_data` de `global_settings` **al
+  renderizar** (no al construir: el objeto viaja por la cola) e imprime Razón
+  Social, RFC, dirección y teléfono como encabezado formal.
+- El asunto de `email_configurations` gana sobre el predeterminado: `envelope()`
+  devuelve `$this->subject ?: self::DEFAULT_SUBJECT`, porque la hidratación del
+  Envelope corre *después* de `->subject()` y si no lo sobrescribiría.
+- Seeder: `fiscal_data.business_name` pasa de `Cronos Fast Food` a `Cronos POS`
+  (única ocurrencia quemada en el código). Las instalaciones ya sembradas
+  conservan su valor y se editan desde Configuración → Datos Fiscales.
+
+### 48.5 Enganche en `cronos:auto-close-registers`
+
+Tras cerrar las cajas y asentar la notificación inmutable, el comando sondea
+**una sola vez** si existe configuración activa para `jobs`; si no hay, ni toca
+la cola. Si hay, despacha un `SendConfiguredProcessMail` por cierre con el
+desglose aplanado a `nombre => monto registrado`. El correo nunca puede
+estirar la ventana de las 21:00 ni convertir un cierre exitoso en un comando
+fallido.
+
+### 48.6 Endpoints (admin-only)
+
+| Método | Ruta | Descripción |
+| :--- | :--- | :--- |
+| GET | /api/admin/email-configurations | Listado (API Key enmascarada) |
+| GET | /api/admin/email-configurations/catalogs | Tipos de proceso y proveedores |
+| POST | /api/admin/email-configurations | Alta |
+| PUT | /api/admin/email-configurations/{id} | Edición |
+| PATCH | /api/admin/email-configurations/{id}/toggle-status | Kill-switch inline |
+| DELETE | /api/admin/email-configurations/{id} | Baja |
+
+`role:admin` estricto — no `admin,manager`: estas filas guardan la credencial
+del proveedor y deciden a dónde llegan los reportes financieros.
+
+La API Key **nunca** sale del servidor: `$hidden` la oculta y el modelo expone
+`has_api_key` y `api_key_preview` (`****1234`). En la edición, un campo vacío
+significa "conserva la credencial guardada", no "bórrala".
+
+### 48.7 Frontend — pestaña "Notificaciones / Emails"
+
+`SystemSettingsPage` suma la pestaña (visible solo para `admin`) con
+`EmailNotificationsPanel`: tabla de configuraciones con InputSwitch optimista
+(rollback ante error), y modal con Tipo de Proceso, Proveedor, API Key
+(`Password` con `toggleMask`), remitente, asunto y destinatarios en `Chips`.
+
+### 48.8 Jobs de mantenimiento suspendidos
+
+En `routes/console.php` quedan **comentados** —con su cadencia documentada— los
+schedules de `cronos:backup-run --trigger=scheduled` (03:30) y
+`cronos:telemetry-prune --backups` (04:15). Ambos comandos siguen operativos y
+se pueden ejecutar a mano. Nota operativa: mientras la poda esté apagada,
+`job_execution_logs` crece sin techo (cada correo encolado deja una fila).
+
+### 48.9 Pruebas
+
+`tests/Feature/Mailing/DynamicMailingTest.php` — 8 pruebas: el cierre encola sin
+enviar de forma síncrona; sin configuración activa no se encola nada pero el
+cierre sí ocurre; el job usa destinatarios y asunto de la BD; una configuración
+desactivada después de encolar no envía; el transporte usa las credenciales de
+la fila; el reporte es autocontenido (sin PDF, sin diferencias, con RFC); la API
+no expone la API Key y la conserva al editar; y solo existe una configuración
+por tipo de proceso.
+
+### Archivos Creados
+- `backend/database/migrations/2026_08_08_000001_create_email_configurations_table.php`
+- `backend/app/Models/EmailConfiguration.php`
+- `backend/app/Services/Mail/DynamicMailerFactory.php`
+- `backend/app/Jobs/SendConfiguredProcessMail.php`
+- `backend/app/Http/Controllers/Admin/EmailConfigurationController.php`
+- `backend/app/Http/Requests/EmailConfiguration/StoreEmailConfigurationRequest.php`
+- `backend/app/Http/Requests/EmailConfiguration/UpdateEmailConfigurationRequest.php`
+- `backend/config/mailing.php`
+- `backend/tests/Feature/Mailing/DynamicMailingTest.php`
+- `frontend/src/components/settings/EmailNotificationsPanel.jsx`
+
+### Archivos Modificados
+- `backend/app/Mail/CashRegisterClosingReportMail.php` — sin PDF ni diferencias, membrete fiscal
+- `backend/resources/views/mail/cash-register-closing-report.blade.php` — plantilla reescrita
+- `backend/app/Console/Commands/AutoCloseCashRegisters.php` — despacho a la cola
+- `backend/routes/api.php` — rutas del módulo
+- `backend/routes/console.php` — schedules de respaldo y poda comentados
+- `backend/routes/web.php`, `backend/app/Http/Controllers/Admin/MailPreviewController.php` — previews alineadas a la nueva firma
+- `backend/database/seeders/DatabaseSeeder.php` — `Cronos Fast Food` → `Cronos POS`
+- `frontend/src/pages/admin/SystemSettingsPage.jsx` — pestaña "Notificaciones / Emails"
+
+---
+
+## 49. CONTROL DE PARTIDAS Y CANCELACIÓN SEGURA DE MESAS [🟢 COMPLETADO Y OPERATIVO]
+
+Fricción operativa reportada desde el piso: una vez comandada, una partida no se
+podía corregir y una mesa abierta por error no se podía liberar sin cobrarla. Se
+resuelve sin aflojar la trazabilidad — al contrario: **todo retiro de consumo ya
+registrado deja huella**.
+
+### 49.1 Corrección de partidas en la cuenta viva
+
+| Método | Ruta | Descripción |
+| :--- | :--- | :--- |
+| PUT | /api/tables/{table}/items/{item} | Ajusta la cantidad de una partida ya comandada |
+| DELETE | /api/tables/{table}/items/{item} | Retira la partida de la cuenta |
+
+Ambas corren bajo el mismo `lockForUpdate` sobre la mesa que el resto del módulo
+—punto único de serialización del comedor—, más bloqueo de la orden, de la
+partida y del producto.
+
+**Aritmética.** La línea se reescala desde el **precio unitario almacenado**, no
+desde el catálogo: un cambio de precio posterior no puede reescribir lo que se
+le cotizó al comensal. El descuento de promoción se recalcula sobre el bruto
+nuevo con `OrderCalculator::promotionDiscount()`, porque `fixed_amount` y
+`freebie_100` no escalan linealmente con la cantidad. Si la promoción fue purgada
+del catálogo, el descuento ya concedido se escala proporcionalmente en lugar de
+reencarecer la línea en silencio.
+
+Recomponer TODA la cuenta es lossless mientras la orden no arrastre descuento
+global (`discount_type = 'none'`, la invariante de una cuenta abierta): las
+líneas intactas resuelven exactamente a los valores ya guardados.
+
+**Stock.** Subir la cantidad consume unidades igual que una comanda nueva
+(valida `ERR_POS_INSUFFICIENT_STOCK`). Bajarla o eliminar la partida las
+reintegra **y escribe un `StockMovement` de tipo `adjustment`**, para que un
+conteo de almacén se concilie contra un ajuste explícito y no contra un salto
+inexplicado de `current_stock`.
+
+> `StockMovement` suma `created_at` a su `$fillable` (el modelo tiene
+> `$timestamps = false`): sin sellarlo, el movimiento quedaba invisible para los
+> filtros por fecha y el ordenamiento del kardex, que se apoyan en esa columna.
+
+**Auditoría.** Toda reducción y toda eliminación insertan
+`action: 'item_removed_from_table'` con `operation`
+(`quantity_decreased` / `item_deleted`), usuario, mesa, orden, producto,
+`quantity_before` / `quantity_after` / `quantity_removed`, **`amount_removed`**
+(lo que salió de la cuenta, no un precio unitario), `stock_returned` y el nuevo
+total. Los aumentos quedan como `table_item_quantity_increased`.
+
+**Alcance del endpoint.** La partida se busca **acotada a la orden de esa mesa**;
+un id de otra cuenta responde `ERR_TABLE_ITEM_NOT_FOUND` (404) en lugar de
+editarse.
+
+**Autorizacion.** Ambas rutas van bajo `role:admin,manager`. Un mesero AGREGA
+consumo con normalidad, pero retirarlo saca dinero ya registrado de la cuenta y
+eso exige mando: un vendedor recibe `ERR_AUTH_FORBIDDEN_ROLE` (403). La huella en
+`audit_logs` opera como segunda capa, no como el unico control. En el frontend
+los controles `+/-/papelera` solo se pintan para admin y manager; la cantidad
+sigue siendo legible para el mesero.
+
+### 49.2 Cancelación segura de mesa
+
+`POST /api/tables/{table}/cancel` — motivo obligatorio (mínimo 5 caracteres) y
+autorización por una de dos vías, **registrando cuál**:
+
+| Autoridad | `authorized_by` | Contraseña |
+| :--- | :--- | :--- |
+| Rol `admin` | `admin_role` | No se solicita |
+| Cualquier otro rol | `authorization_password` | Obligatoria, validada con `Hash::check` |
+
+Errores: `ERR_TABLE_CANCEL_UNAUTHORIZED` (403) si la contraseña no coincide y
+`ERR_CANCEL_PASSWORD_NOT_CONFIGURED` (422) si nunca se definió — un hueco de
+administración no es una contraseña equivocada, y el operador merece una
+instrucción accionable en vez de reintentar a ciegas.
+
+**Transacción única** (una cancelación a medias es peor que ninguna: dejaría una
+mesa ocupada para siempre o una cuenta fantasma sin mesa):
+
+1. Reintegra el stock de cada partida con su `StockMovement`.
+2. Sella `order_items.canceled_at` en todas las líneas — **se marcan, no se
+   borran**: el consumo anulado es la evidencia de lo que había en la mesa.
+3. `orders` → `canceled` con `canceled_by`, `canceled_at` y `cancellation_reason`.
+4. `table_sessions` → `canceled` con `closed_at` / `closed_by`. El índice único
+   parcial solo vigila las sesiones abiertas, así que este cambio es lo que
+   realmente libera la mesa.
+5. `tables` → `available`.
+6. `AuditLog: table_canceled` con motivo exacto, ejecutor (nombre y correo),
+   **monto cancelado**, snapshot de partidas, mesero, minutos de ocupación y bajo
+   qué autoridad se liberó.
+
+Migración `2026_08_09_000001_add_canceled_at_to_order_items_table` — columna
+`timestamptz` nullable; NULL significa "nunca anulada".
+
+### 49.3 Contraseña de Autorización
+
+Vive en `global_settings` bajo la llave `cancellation_authorization`, **hasheada
+con bcrypt**, y es deliberadamente **independiente de la contraseña de acceso de
+cualquier usuario**: un supervisor puede confiarla a un encargado de turno sin
+entregar su cuenta, y rotarla no obliga a nadie a cambiar su forma de entrar.
+
+`App\Services\CancellationAuthorizationService` concentra las tres operaciones
+(`isConfigured`, `store`, `authorize`).
+
+| Método | Ruta | Middleware |
+| :--- | :--- | :--- |
+| GET | /api/admin/settings/cancellation-password | role:admin,manager — solo estado y fecha de rotación |
+| PUT | /api/admin/settings/cancellation-password | **role:admin** — define o rota (min 6, confirmada) |
+
+**Blindaje del endpoint genérico de settings.** `GlobalSetting::PROTECTED_KEYS`
+se descuenta de toda lectura de `GET /api/admin/settings` y se **rechaza en la
+escritura** con error de validación: el endpoint genérico guarda valores tal
+cual, así que dejar pasar la llave escribiría el secreto en texto plano y
+saltaría el hasheo de su propio endpoint.
+
+### 49.4 Interfaz (React)
+
+- **`TableDetailModal`** — cada partida de "Cuenta de la mesa" suma los controles
+  del POS: `-` / cantidad / `+` y papelera. Nada se edita en memoria: cada acción
+  viaja al servidor y la respuesta **reemplaza la sesión completa**, porque el
+  servidor es dueño de la aritmética y del stock. Llegar a 0 con el `-` se
+  encamina al DELETE, para que la auditoría lo registre como retiro y no como
+  edición de cantidad. Mientras una mutación está en vuelo se bloquean los
+  controles de todas las partidas (una sola cuenta, un solo cambio a la vez).
+  Los controles se pintan **solo para admin y manager**, en espejo del
+  middleware del backend.
+- **`TableCancellationModal`** — botón "Cancelar Mesa" en rojo, separado del de
+  cobro para que un toque errado no anule una cuenta que iba a pagarse. El modal
+  exige motivo y, **solo si el usuario no es admin**, la contraseña de
+  autorización; al admin se le muestra un aviso de que su rol basta. El frontend
+  decide qué *mostrar*; el backend revalida rol y hash por su cuenta.
+- **`CancellationPasswordPanel`** — pestaña "Autorizaciones" (admin-only) en
+  Configuración del Sistema: estado (Configurada / Sin configurar), fecha de la
+  última rotación y formulario con confirmación. Como solo se guarda el hash, la
+  única operación posible es reemplazarla.
+
+### 49.5 Pruebas
+
+`tests/Feature/Dining/TableAccountControlsTest.php` — 9 pruebas: reducir devuelve
+stock y audita monto retirado; eliminar retira la partida, reintegra stock y deja
+`StockMovement`; no se puede aumentar más allá del stock; una partida ajena
+responde 404; **un mesero recibe 403 y no mueve ni la cuenta ni el inventario**; el admin cancela sin contraseña (sesión, mesa, orden e items
+sellados); el no-admin necesita la contraseña correcta y el log registra
+`authorization_password`; el motivo es obligatorio; y la contraseña se guarda
+hasheada, no se expone en `GET /settings` ni se puede sobrescribir por el
+endpoint genérico.
+
+### Archivos Creados
+- `backend/database/migrations/2026_08_09_000001_add_canceled_at_to_order_items_table.php`
+- `backend/app/Services/CancellationAuthorizationService.php`
+- `backend/app/Http/Requests/TableSession/UpdateTableItemRequest.php`
+- `backend/app/Http/Requests/TableSession/CancelTableRequest.php`
+- `backend/tests/Feature/Dining/TableAccountControlsTest.php`
+- `frontend/src/components/dining/TableCancellationModal.jsx`
+- `frontend/src/components/settings/CancellationPasswordPanel.jsx`
+
+### Archivos Modificados
+- `backend/app/Http/Controllers/Dining/TableSessionController.php` — `updateItem`, `destroyItem`, `cancel` y helpers de recomposición/stock
+- `backend/app/Http/Controllers/Admin/SystemSettingsController.php` — llaves protegidas y endpoints de la contraseña de autorización
+- `backend/app/Models/GlobalSetting.php` — `PROTECTED_KEYS`
+- `backend/app/Models/OrderItem.php` — `canceled_at` (fillable + cast)
+- `backend/app/Models/StockMovement.php` — `created_at` (fillable + cast)
+- `backend/routes/api.php` — 3 rutas de comedor + 2 de la contraseña de autorización
+- `frontend/src/components/dining/TableDetailModal.jsx` — controles +/-/papelera y botón de cancelación
+- `frontend/src/pages/admin/SystemSettingsPage.jsx` — pestaña "Autorizaciones"

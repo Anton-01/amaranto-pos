@@ -19,11 +19,16 @@ class StockMovement extends Model
         'quantity',
         'cost_price_at_movement',
         'reason',
+        // Stamped by hand (timestamps are disabled on this model). Without it
+        // the movement is invisible to the date filters and the ordering of the
+        // inventory ledger, which both key off created_at.
+        'created_at',
     ];
 
     protected function casts(): array
     {
         return [
+            'created_at' => 'datetime',
             'quantity' => 'integer',
             'cost_price_at_movement' => 'decimal:2',
         ];

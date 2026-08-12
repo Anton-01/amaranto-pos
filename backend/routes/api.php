@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\Admin\BackupController;
+use App\Http\Controllers\Admin\EmailConfigurationController;
 use App\Http\Controllers\Admin\JobMonitorController;
 use App\Http\Controllers\Admin\MailPreviewController;
 use App\Http\Controllers\Admin\PrintTicketController;
@@ -121,6 +122,25 @@ Route::middleware(['auth:sanctum', 'user.active'])->group(function () {
         Route::post('/{table}/items', [TableSessionController::class, 'addItems']);
         Route::post('/{table}/close', [TableSessionController::class, 'close']);
 
+        /*
+         * Correccion de partidas ya comandadas. Reservada a admin y manager: un
+         * mesero agrega consumo, pero retirarlo saca dinero ya registrado de la
+         * cuenta y eso exige mando. La huella en audit_logs (usuario, producto,
+         * cantidad y monto retirado) opera como segunda capa, no como la unica.
+         */
+        Route::middleware('role:admin,manager')->group(function () {
+            Route::put('/{table}/items/{item}', [TableSessionController::class, 'updateItem']);
+            Route::delete('/{table}/items/{item}', [TableSessionController::class, 'destroyItem']);
+        });
+
+        /*
+         * Cancelacion de la cuenta completa. La autorizacion se resuelve dentro
+         * del controlador (rol admin o contrasena de autorizacion), no con un
+         * middleware de rol: el cajero SI puede cancelar, siempre que un
+         * supervisor le haya confiado la contrasena.
+         */
+        Route::post('/{table}/cancel', [TableSessionController::class, 'cancel']);
+
         // Catalogo de mesas: administracion.
         Route::middleware('role:admin,manager')->group(function () {
             Route::post('/', [TableController::class, 'store']);
@@ -216,6 +236,18 @@ Route::middleware(['auth:sanctum', 'user.active'])->group(function () {
         Route::get('/settings', [SystemSettingsController::class, 'index']);
         Route::put('/settings', [SystemSettingsController::class, 'update']);
 
+        /*
+         * Contrasena de autorizacion para cancelaciones. Vive fuera del
+         * endpoint generico de settings porque se guarda hasheada, y su
+         * escritura queda reservada al admin: es la llave que delega la
+         * facultad de anular consumo ya registrado.
+         */
+        Route::get('/settings/cancellation-password', [SystemSettingsController::class, 'cancellationPassword']);
+        Route::middleware('role:admin')->put(
+            '/settings/cancellation-password',
+            [SystemSettingsController::class, 'updateCancellationPassword']
+        );
+
         Route::prefix('roles')->group(function () {
             Route::get('/', [RoleController::class, 'index']);
             Route::get('/permissions', [RoleController::class, 'permissions']);
@@ -229,6 +261,20 @@ Route::middleware(['auth:sanctum', 'user.active'])->group(function () {
             Route::get('/', [MailPreviewController::class, 'index']);
             Route::get('/{slug}/render', [MailPreviewController::class, 'render']);
         });
+    });
+
+    /*
+     * Outbound mailing credentials. Admin-only — these rows hold the provider
+     * API key and decide where financial reports are delivered, so managers
+     * (who may administer users and settings) are deliberately left out.
+     */
+    Route::middleware('role:admin')->prefix('admin/email-configurations')->group(function () {
+        Route::get('/', [EmailConfigurationController::class, 'index']);
+        Route::get('/catalogs', [EmailConfigurationController::class, 'catalogs']);
+        Route::post('/', [EmailConfigurationController::class, 'store']);
+        Route::put('/{email_configuration}', [EmailConfigurationController::class, 'update']);
+        Route::patch('/{email_configuration}/toggle-status', [EmailConfigurationController::class, 'toggleStatus']);
+        Route::delete('/{email_configuration}', [EmailConfigurationController::class, 'destroy']);
     });
 
     Route::middleware('role:admin,manager')->prefix('analytics')->group(function () {

@@ -6,8 +6,10 @@ use App\Builders\TicketBuilder;
 use App\Exceptions\TableConflictException;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\TableSession\AddTableItemsRequest;
+use App\Http\Requests\TableSession\CancelTableRequest;
 use App\Http\Requests\TableSession\CloseTableRequest;
 use App\Http\Requests\TableSession\OpenTableRequest;
+use App\Http\Requests\TableSession\UpdateTableItemRequest;
 use App\Models\AuditLog;
 use App\Models\CashRegister;
 use App\Models\GlobalSetting;
@@ -15,13 +17,17 @@ use App\Models\Order;
 use App\Models\OrderItem;
 use App\Models\Product;
 use App\Models\Promotion;
+use App\Models\StockMovement;
 use App\Models\Table;
 use App\Models\TableSession;
 use App\Models\TicketConfig;
+use App\Models\User;
+use App\Services\CancellationAuthorizationService;
 use App\Services\OrderCalculator;
 use App\Services\PrinterService;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -42,6 +48,7 @@ class TableSessionController extends Controller
         private readonly OrderCalculator $calculator,
         private readonly TicketBuilder $ticketBuilder,
         private readonly PrinterService $printerService,
+        private readonly CancellationAuthorizationService $authorization,
     ) {}
 
     /**
@@ -261,6 +268,353 @@ class TableSessionController extends Controller
     }
 
     /**
+     * PUT /api/tables/{table}/items/{item}
+     *
+     * Adjusts the quantity of a line already sent to the table.
+     *
+     * The whole operation runs under the same table lock as the rest of the
+     * module, so a waiter raising a quantity and another one lowering it cannot
+     * interleave and leave the account out of step with the inventory.
+     *
+     * Stock moves in the direction of the change: growing the line consumes
+     * units exactly like a new order does, shrinking it hands them back with a
+     * StockMovement so the adjustment is visible in the inventory ledger. Any
+     * reduction is written to audit_logs — that is money already registered on
+     * the table walking back out of the account.
+     */
+    public function updateItem(UpdateTableItemRequest $request, Table $table, string $item): JsonResponse
+    {
+        $user = $request->user();
+        $newQuantity = (int) $request->input('quantity');
+
+        try {
+            $session = DB::transaction(function () use ($request, $table, $user, $item, $newQuantity) {
+                $session = $this->lockOpenSession($table);
+
+                /** @var Order $order */
+                $order = Order::whereKey($session->order_id)->lockForUpdate()->firstOrFail();
+                $orderItem = $this->lockAccountItem($order, $item);
+
+                $previousQuantity = (int) $orderItem->quantity;
+                $delta = $newQuantity - $previousQuantity;
+
+                // Nothing to do, and nothing worth auditing either.
+                if ($delta === 0) {
+                    return $session;
+                }
+
+                $product = $orderItem->product_id
+                    ? Product::whereKey($orderItem->product_id)->lockForUpdate()->first()
+                    : null;
+
+                if ($delta > 0 && $product?->track_stock) {
+                    if ($product->current_stock < $delta) {
+                        throw new TableConflictException(
+                            'ERR_POS_INSUFFICIENT_STOCK',
+                            "Stock insuficiente para \"{$product->name}\": quedan {$product->current_stock} unidades."
+                        );
+                    }
+
+                    $product->decrement('current_stock', $delta);
+                }
+
+                $previousAmount = (float) $orderItem->final_price_at_sale;
+
+                $composed = $this->recomposeAccount(
+                    $order,
+                    fn (array $lines) => $this->replaceLine($lines, $orderItem->id, $newQuantity)
+                );
+
+                if ($delta < 0) {
+                    $returned = abs($delta);
+                    $this->returnStock($product, $returned, $orderItem, $user);
+
+                    $refreshed = $orderItem->fresh();
+
+                    AuditLog::create([
+                        'action' => 'item_removed_from_table',
+                        'auditable_type' => 'TableSession',
+                        'auditable_id' => $session->id,
+                        'user_id' => $user->id,
+                        'metadata' => [
+                            'operation' => 'quantity_decreased',
+                            'table_id' => $table->id,
+                            'table_name' => $table->name,
+                            'order_id' => $order->id,
+                            'order_item_id' => $orderItem->id,
+                            'product_id' => $orderItem->product_id,
+                            'product_name' => $product?->name ?? 'Producto eliminado',
+                            'quantity_before' => $previousQuantity,
+                            'quantity_after' => $newQuantity,
+                            'quantity_removed' => $returned,
+                            // What actually left the account, not a unit price:
+                            // this is the figure an auditor reconciles against.
+                            'amount_removed' => round($previousAmount - (float) ($refreshed?->final_price_at_sale ?? 0), 2),
+                            'stock_returned' => (bool) $product?->track_stock,
+                            'new_total' => $composed['total'],
+                            'user_name' => $user->name,
+                        ],
+                        'ip_address' => $request->ip(),
+                        'user_agent' => $request->userAgent(),
+                        'created_at' => now(),
+                    ]);
+                } else {
+                    AuditLog::create([
+                        'action' => 'table_item_quantity_increased',
+                        'auditable_type' => 'TableSession',
+                        'auditable_id' => $session->id,
+                        'user_id' => $user->id,
+                        'metadata' => [
+                            'table_id' => $table->id,
+                            'table_name' => $table->name,
+                            'order_id' => $order->id,
+                            'order_item_id' => $orderItem->id,
+                            'product_id' => $orderItem->product_id,
+                            'product_name' => $product?->name ?? 'Producto eliminado',
+                            'quantity_before' => $previousQuantity,
+                            'quantity_after' => $newQuantity,
+                            'quantity_added' => $delta,
+                            'new_total' => $composed['total'],
+                            'user_name' => $user->name,
+                        ],
+                        'ip_address' => $request->ip(),
+                        'user_agent' => $request->userAgent(),
+                        'created_at' => now(),
+                    ]);
+                }
+
+                return $session;
+            });
+        } catch (TableConflictException $e) {
+            return $e->toResponse();
+        }
+
+        return response()->json([
+            'status' => 'success',
+            'data' => $this->presentSession($session->fresh()),
+            'metadata' => ['message' => 'Partida actualizada.'],
+        ]);
+    }
+
+    /**
+     * DELETE /api/tables/{table}/items/{item}
+     *
+     * Removes a line from the live account and gives its stock back.
+     *
+     * The row is deleted rather than flagged because an open account is a
+     * draft, not a sale: nothing here has been charged yet. The forensic record
+     * of what was withdrawn — product, quantity and amount — lives in
+     * audit_logs, which is append-only.
+     */
+    public function destroyItem(Request $request, Table $table, string $item): JsonResponse
+    {
+        $user = $request->user();
+
+        try {
+            $session = DB::transaction(function () use ($request, $table, $user, $item) {
+                $session = $this->lockOpenSession($table);
+
+                /** @var Order $order */
+                $order = Order::whereKey($session->order_id)->lockForUpdate()->firstOrFail();
+                $orderItem = $this->lockAccountItem($order, $item);
+
+                $product = $orderItem->product_id
+                    ? Product::whereKey($orderItem->product_id)->lockForUpdate()->first()
+                    : null;
+
+                $removedQuantity = (int) $orderItem->quantity;
+                $removedAmount = (float) $orderItem->final_price_at_sale;
+
+                $this->returnStock($product, $removedQuantity, $orderItem, $user);
+
+                // Totals are recomposed over the surviving lines first, then the
+                // row goes away: the account is never observable without its
+                // line but still carrying its amount.
+                $composed = $this->recomposeAccount(
+                    $order,
+                    fn (array $lines) => $this->dropLine($lines, $orderItem->id)
+                );
+
+                $orderItem->delete();
+
+                AuditLog::create([
+                    'action' => 'item_removed_from_table',
+                    'auditable_type' => 'TableSession',
+                    'auditable_id' => $session->id,
+                    'user_id' => $user->id,
+                    'metadata' => [
+                        'operation' => 'item_deleted',
+                        'table_id' => $table->id,
+                        'table_name' => $table->name,
+                        'order_id' => $order->id,
+                        'order_item_id' => $orderItem->id,
+                        'product_id' => $orderItem->product_id,
+                        'product_name' => $product?->name ?? 'Producto eliminado',
+                        'quantity_before' => $removedQuantity,
+                        'quantity_after' => 0,
+                        'quantity_removed' => $removedQuantity,
+                        'amount_removed' => round($removedAmount, 2),
+                        'stock_returned' => (bool) $product?->track_stock,
+                        'new_total' => $composed['total'],
+                        'user_name' => $user->name,
+                    ],
+                    'ip_address' => $request->ip(),
+                    'user_agent' => $request->userAgent(),
+                    'created_at' => now(),
+                ]);
+
+                return $session;
+            });
+        } catch (TableConflictException $e) {
+            return $e->toResponse();
+        }
+
+        return response()->json([
+            'status' => 'success',
+            'data' => $this->presentSession($session->fresh()),
+            'metadata' => ['message' => 'Partida eliminada de la cuenta.'],
+        ]);
+    }
+
+    /**
+     * POST /api/tables/{table}/cancel
+     *
+     * Voids the whole live account and frees the table without charging it.
+     *
+     * Authorization comes from one of two places and the audit record says
+     * which: an administrator cancels on the strength of their role, anybody
+     * else must type the authorization password configured by the
+     * administration — a shared secret that is deliberately not any user's
+     * login credential.
+     *
+     * Everything then happens inside a single transaction, because a partial
+     * cancellation is worse than none: it would leave a table occupied forever
+     * or a phantom account with no table behind it.
+     */
+    public function cancel(CancelTableRequest $request, Table $table): JsonResponse
+    {
+        /** @var User $user */
+        $user = $request->user();
+
+        $authorizedBy = $this->authorization->authorize($user, $request->input('authorization_password'));
+
+        if ($authorizedBy === null) {
+            // A missing secret is an administration gap, not a bad password:
+            // the operator is told what to fix instead of retrying blindly.
+            if (! $this->authorization->isConfigured()) {
+                return response()->json([
+                    'status' => 'error',
+                    'code' => 'ERR_CANCEL_PASSWORD_NOT_CONFIGURED',
+                    'message' => 'No hay una contrasena de autorizacion configurada. Pide al administrador que la defina en Configuracion del Sistema.',
+                ], 422);
+            }
+
+            return response()->json([
+                'status' => 'error',
+                'code' => 'ERR_TABLE_CANCEL_UNAUTHORIZED',
+                'message' => 'La contrasena de autorizacion es incorrecta.',
+            ], 403);
+        }
+
+        try {
+            $result = DB::transaction(function () use ($request, $table, $user, $authorizedBy) {
+                $session = $this->lockOpenSession($table);
+
+                /** @var Order $order */
+                $order = Order::whereKey($session->order_id)->lockForUpdate()->firstOrFail();
+                $items = $order->items()->get();
+
+                $canceledAmount = (float) $order->total;
+                $itemsSnapshot = [];
+
+                foreach ($items as $orderItem) {
+                    $product = $orderItem->product_id
+                        ? Product::whereKey($orderItem->product_id)->lockForUpdate()->first()
+                        : null;
+
+                    $this->returnStock($product, (int) $orderItem->quantity, $orderItem, $user);
+
+                    $itemsSnapshot[] = [
+                        'order_item_id' => $orderItem->id,
+                        'product_id' => $orderItem->product_id,
+                        'product_name' => $product?->name ?? 'Producto eliminado',
+                        'quantity' => (int) $orderItem->quantity,
+                        'amount' => (float) $orderItem->final_price_at_sale,
+                        'stock_returned' => (bool) $product?->track_stock,
+                    ];
+                }
+
+                // Lines are stamped, never deleted: the voided consumption is
+                // the evidence of what was on the table when it was canceled.
+                $now = now();
+                OrderItem::where('order_id', $order->id)->update(['canceled_at' => $now]);
+
+                $order->update([
+                    'status' => Order::STATUS_CANCELED,
+                    'canceled_by' => $user->id,
+                    'canceled_at' => $now,
+                    'cancellation_reason' => $request->input('reason'),
+                ]);
+
+                $session->update([
+                    'status' => TableSession::STATUS_CANCELED,
+                    'closed_at' => $now,
+                    'closed_by' => $user->id,
+                ]);
+
+                // The partial unique index only guards open sessions, so moving
+                // this one to 'canceled' is what actually frees the table for
+                // the next party.
+                Table::whereKey($table->id)->update(['status' => Table::STATUS_AVAILABLE]);
+
+                AuditLog::create([
+                    'action' => 'table_canceled',
+                    'auditable_type' => 'TableSession',
+                    'auditable_id' => $session->id,
+                    'user_id' => $user->id,
+                    'metadata' => [
+                        'table_id' => $table->id,
+                        'table_name' => $table->name,
+                        'order_id' => $order->id,
+                        'reason' => $request->input('reason'),
+                        'canceled_amount' => round($canceledAmount, 2),
+                        'items_count' => $items->count(),
+                        'items' => $itemsSnapshot,
+                        'executed_by' => $user->name,
+                        'executed_by_email' => $user->email,
+                        // Which authority released the table: the role itself or
+                        // the shared authorization password.
+                        'authorized_by' => $authorizedBy,
+                        'waiter_name' => $order->waiter_name_at_sale,
+                        'opened_at' => $session->opened_at?->toIso8601String(),
+                        'elapsed_minutes' => $session->opened_at ? (int) $session->opened_at->diffInMinutes($now) : 0,
+                    ],
+                    'ip_address' => $request->ip(),
+                    'user_agent' => $request->userAgent(),
+                    'created_at' => $now,
+                ]);
+
+                return [
+                    'session_id' => $session->id,
+                    'order_id' => $order->id,
+                    'table_id' => $table->id,
+                    'canceled_amount' => round($canceledAmount, 2),
+                    'items_count' => $items->count(),
+                    'authorized_by' => $authorizedBy,
+                ];
+            });
+        } catch (TableConflictException $e) {
+            return $e->toResponse();
+        }
+
+        return response()->json([
+            'status' => 'success',
+            'data' => $result,
+            'metadata' => ['message' => 'Mesa cancelada. La mesa quedo libre y el consumo fue anulado.'],
+        ]);
+    }
+
+    /**
      * POST /api/tables/{table}/close
      *
      * Cobra la cuenta: aplica el descuento global, sella la orden como venta,
@@ -423,6 +777,154 @@ class TableSessionController extends Controller
         }
 
         return $session;
+    }
+
+    /**
+     * Locks a line of the live account, refusing anything outside this order.
+     *
+     * Scoping the lookup to the order (instead of trusting the id alone) is
+     * what stops a crafted request from editing another table's consumption
+     * through this endpoint.
+     */
+    private function lockAccountItem(Order $order, string $itemId): OrderItem
+    {
+        $item = OrderItem::where('order_id', $order->id)
+            ->whereKey($itemId)
+            ->lockForUpdate()
+            ->first();
+
+        if (! $item) {
+            throw new TableConflictException(
+                'ERR_TABLE_ITEM_NOT_FOUND',
+                'La partida ya no existe en la cuenta de esta mesa.',
+                404
+            );
+        }
+
+        return $item;
+    }
+
+    /**
+     * Rebuilds and persists the account after a line was changed or dropped.
+     *
+     * The mutation is expressed as a callable over the raw lines so the caller
+     * decides *what* changed while the arithmetic stays in one place. An open
+     * account never carries a global discount, so recomposing every line is
+     * lossless: untouched lines resolve to exactly the values already stored.
+     *
+     * @param  callable(array<int, array<string, mixed>>): array<int, array<string, mixed>>  $mutate
+     * @return array{items: array<int, array<string, mixed>>, subtotal: float, iva_total: float, total: float, discount_total: float}
+     */
+    private function recomposeAccount(Order $order, callable $mutate): array
+    {
+        $lines = $mutate($this->calculator->linesFromOrderItems($order->items()->get()));
+
+        $composed = $this->calculator->compose($lines, $this->taxRate());
+
+        foreach ($composed['items'] as $composedItem) {
+            if (! isset($composedItem['ref'])) {
+                continue;
+            }
+
+            OrderItem::whereKey($composedItem['ref'])->update([
+                'quantity' => $composedItem['quantity'],
+                'base_price_at_sale' => $composedItem['base_price_at_sale'],
+                'discount_amount_at_sale' => $composedItem['discount_amount_at_sale'],
+                'final_price_at_sale' => $composedItem['final_price_at_sale'],
+                'tax_amount_at_sale' => $composedItem['tax_amount_at_sale'],
+            ]);
+        }
+
+        $order->update([
+            'subtotal' => $composed['subtotal'],
+            'iva_total' => $composed['iva_total'],
+            'total' => $composed['total'],
+        ]);
+
+        return $composed;
+    }
+
+    /**
+     * Rescales one raw line to a new quantity.
+     *
+     * The unit price comes from the stored line, not from the catalog: a price
+     * change after the product was ordered must not rewrite what the guest was
+     * quoted. The promotion discount is recomputed over the new gross because
+     * fixed-amount and freebie promotions do not scale linearly with quantity.
+     *
+     * @param  array<int, array<string, mixed>>  $lines
+     * @return array<int, array<string, mixed>>
+     */
+    private function replaceLine(array $lines, string $itemId, int $newQuantity): array
+    {
+        foreach ($lines as $index => $line) {
+            if (($line['ref'] ?? null) !== $itemId) {
+                continue;
+            }
+
+            $previousQuantity = max(1, (int) $line['quantity']);
+            $unitGross = (float) $line['line_gross'] / $previousQuantity;
+            $newGross = round($unitGross * $newQuantity, 2);
+
+            $promotion = $line['promotion_id']
+                ? Promotion::withTrashed()->find($line['promotion_id'])
+                : null;
+
+            $lines[$index]['quantity'] = $newQuantity;
+            $lines[$index]['line_gross'] = $newGross;
+            $lines[$index]['item_discount'] = match (true) {
+                $promotion !== null => $this->calculator->promotionDiscount($promotion, $newGross),
+                // Promotion purged from the catalog: keep the discount the
+                // guest was already granted, scaled to the new quantity, rather
+                // than silently repricing the line upwards.
+                (bool) $line['promotion_id'] => round((float) $line['item_discount'] / $previousQuantity * $newQuantity, 2),
+                default => 0.0,
+            };
+
+            break;
+        }
+
+        return $lines;
+    }
+
+    /**
+     * Drops a line from the raw set.
+     *
+     * @param  array<int, array<string, mixed>>  $lines
+     * @return array<int, array<string, mixed>>
+     */
+    private function dropLine(array $lines, string $itemId): array
+    {
+        return array_values(array_filter(
+            $lines,
+            fn (array $line) => ($line['ref'] ?? null) !== $itemId
+        ));
+    }
+
+    /**
+     * Gives units back to inventory and leaves the movement on the ledger.
+     *
+     * Sales only decrement `current_stock`, but every reversal in the system
+     * writes a StockMovement so a warehouse count can be reconciled against an
+     * explicit adjustment instead of an unexplained jump.
+     */
+    private function returnStock(?Product $product, int $quantity, OrderItem $orderItem, User $user): void
+    {
+        if (! $product || ! $product->track_stock || $quantity <= 0) {
+            return;
+        }
+
+        $product->increment('current_stock', $quantity);
+
+        StockMovement::create([
+            'product_id' => $product->id,
+            'user_id' => $user->id,
+            'type' => 'adjustment',
+            'quantity' => $quantity,
+            'cost_price_at_movement' => $orderItem->base_price_at_sale ?? 0,
+            'reason' => null,
+            'created_at' => now(),
+        ]);
     }
 
     /**

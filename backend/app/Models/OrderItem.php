@@ -24,6 +24,9 @@ class OrderItem extends Model
         // Sellado a mano (timestamps desactivados): marca el momento en que el
         // producto entro a la comanda y sostiene la trazabilidad por rondas.
         'created_at',
+        // Stamped when a table cancellation voids the line. The amounts stay
+        // untouched: a voided consumption is evidence, not garbage.
+        'canceled_at',
     ];
 
     protected function serializeDate(\DateTimeInterface $date): string
@@ -37,6 +40,7 @@ class OrderItem extends Model
             // Con timestamps desactivados el cast no es automatico, y sin el la
             // hora de comanda llegaria como string crudo.
             'created_at' => 'datetime',
+            'canceled_at' => 'datetime',
             'quantity' => 'integer',
             'base_price_at_sale' => 'decimal:2',
             'discount_amount_at_sale' => 'decimal:2',

@@ -69,14 +69,13 @@ if (app()->environment('local')) {
                 closingId: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890',
                 operatorName: 'Carlos Martinez',
                 closingDate: now()->format('d/m/Y H:i:s'),
-                expectedAmount: 15420.50,
-                declaredAmount: 15380.00,
-                differenceAmount: -40.50,
+                totalAmount: 15420.50,
                 paymentBreakdown: [
                     'Efectivo' => 8200.00,
                     'Tarjeta de Credito/Debito' => 5120.50,
                     'Transferencia' => 2100.00,
                 ],
+                isAutomated: true,
             );
         });
     });

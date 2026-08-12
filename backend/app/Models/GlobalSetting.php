@@ -12,6 +12,14 @@ class GlobalSetting extends Model
     protected $keyType = 'string';
     protected $table = 'global_settings';
 
+    /**
+     * Keys that hold secrets and must never travel through the generic
+     * settings endpoints. They are stripped from every read and rejected on
+     * write, so the only way to change them is their own dedicated endpoint,
+     * which hashes the value before storing it.
+     */
+    public const PROTECTED_KEYS = ['cancellation_authorization'];
+
     protected $fillable = ['key', 'value', 'updated_by'];
 
     protected function casts(): array
