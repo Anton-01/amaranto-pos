@@ -6,6 +6,7 @@
 - Base de Datos: Managed PostgreSQL (DigitalOcean)
 - Cache / Colas: Redis 7 Alpine (cache global + queue worker)
 - WebSockets: Laravel Reverb (puerto 8080, tiempo real)
+- Última corrección: [🟢 SECCIÓN 51: FLYSYSTEM V3 EN BACKUPS + BLINDAJE DEL CIERRE AUTOMÁTICO] — Eliminado el `assertDependenciesInstalled()` obsoleto que hacía pasar un error de código por una caída de GCP (503), verificación de disco reducida a `Storage::disk(…)->exists('/')` en try/catch con degradación reportada; zona horaria `America/Mexico_City` fijada explícitamente en el schedule de las 21:00; y `AutoCloseCashRegisters` envuelto en try/catch con bitácora propia en `job_execution_logs` para que nunca vuelva a morir en silencio (ver sección 51).
 - Estado del Proyecto: [🟢 FASE 11: TRANSICIONES INSTANTÁNEAS POS ↔ MESAS COMPLETADO] — Caché SWR suscribible con render inmediato desde memoria y revalidación silenciosa, shell persistente que deja de desmontar sidebar y header, cascada serial del POS eliminada (4 lecturas en paralelo) y prefetch por intención en hover/focus. Medido con Playwright sobre el bundle de producción: parpadeo eliminado (7-8 → 0 frames con spinner), Mesas→POS de 241 ms a ~110 ms y 24 → 1 peticiones HTTP en cuatro idas y vueltas (ver sección 44).
 - Fase previa: [🟢 FASE 10: TELEMETRÍA DE JOBS, HISTÓRICO DE EJECUCIÓN Y ECOSISTEMA DE ROLLBACK/BACKUPS AISLADOS EN GCP COMPLETADO] — Bitácora forense `job_execution_logs` alimentada por los eventos nativos de la cola (un renglón por intento, con traza y disparador), panel admin `/admin/jobs-monitor` con catálogo, histórico y reintento manual; y bóveda de respaldos cifrada AES-256 en Google Cloud Storage —aislada de la infraestructura primaria en DigitalOcean— con rollback transaccional validado por checksum SHA-256 (ver sección 43).
 - Fase 9: [🟢 ESCUDO DE SEGURIDAD Y THROTTLING COMPLETADO] — Blindaje perimetral en cuatro capas: candado anti fuerza bruta en el login (5 fallos/min por email+IP → bloqueo de 15 min con `Retry-After`), cupo global de API (100 req/min por usuario/IP), middleware global de cabeceras de seguridad con CSP calibrada, y Cloudflare Turnstile invisible validado server-side antes de las credenciales (ver sección 42).
@@ -64,6 +65,8 @@
 | Escudo de Seguridad y Throttling | [🟢 FASE 9: COMPLETADO] | [🟢 FASE 9: COMPLETADO] | Candado de login 5 fallos/min por email+IP → bloqueo 15 min con `Retry-After`; cupo global 100 req/min (guard sanctum explícito + `trustProxies`); middleware global `SecurityHeaders` (XFO DENY, nosniff, HSTS, CSP calibrada para Turnstile / agente local 9100 / Reverb WSS); Cloudflare Turnstile invisible validado server-side antes de las credenciales; interceptor Axios 429 + alerta de bloqueo con cuenta regresiva en LoginPage; 18 pruebas en verde — ver sección 42 |
 | Optimizacion Modal de Cobro (Rendimiento) | [🟢 COMPLETADO Y OPERATIVO] | [🟢 COMPLETADO Y OPERATIVO] | Catálogo de métodos de pago servido desde Redis (`Cache::remember`, TTL 60 min, invalidación automática en alta/edición/baja); input de "Dinero Recibido" con sanitización estricta en `onChange` (sin `onBlur`), cálculo del cambio y habilitación de "Confirmar Cobro" en tiempo real desde la primera tecla |
 | Mailing Dinamico (SendGrid) por Proceso | [🟢 COMPLETADO Y OPERATIVO] | [🟢 COMPLETADO Y OPERATIVO] | Tabla `email_configurations` (una fila por `process_type`, API Key cifrada, destinatarios JSONB); transporte armado al vuelo con `Config::set()` sobre el relay SMTP de SendGrid; `SendConfiguredProcessMail` resuelve credenciales dentro del worker; cierre automatico de caja desacoplado (encola, no envia); reporte sin PDF ni diferencias y con membrete fiscal; pestana "Notificaciones / Emails" admin-only — ver seccion 48 |
+| Flysystem V3 en la Bóveda de Respaldos | [🟢 CORREGIDO] | N/A | `/api/admin/backups` devolvía `503 ERR_BACKUP_VAULT_UNREACHABLE` culpando a GCP por un defecto propio: la clausura de `Storage::extend('gcs')` llamaba `$this->assertDependenciesInstalled()`, un método privado del proveedor que acababa resolviéndose contra `League\Flysystem\Filesystem` (donde no existe en V3) y lanzaba un fatal. Método eliminado, clausura `static`, sondeo `exists('/')` en try/catch y degradación reportada al disco local si falta el adaptador — ver sección 51 |
+| Blindaje del Cierre Automático de Caja | [🟢 CORREGIDO] | N/A | `AutoCloseCashRegisters` es un comando de consola y la telemetría de la Fase 10 sólo escucha eventos de la COLA: la operación financiera más crítica del día no dejaba rastro y podía morir en silencio. Instrumentado a mano en `job_execution_logs` (`running` → `success`/`failed` con traza), `try/catch (Throwable)` envolvente, doble destino BD + `Log::error()`, opción `--source` y schedule 21:00 con `timezone('America/Mexico_City')` explícita — ver sección 51 |
 | Control de Partidas y Cancelacion Segura de Mesas | [🟢 COMPLETADO Y OPERATIVO] | [🟢 COMPLETADO Y OPERATIVO] | `PUT`/`DELETE` de partidas en la cuenta viva bajo `role:admin,manager`, con reescalado desde el precio almacenado, reintegro de stock con `StockMovement` y `item_removed_from_table` en auditoria; `POST /tables/{id}/cancel` transaccional (sesion canceled + mesa available + items sellados con `canceled_at`) autorizado por rol admin o por contrasena hasheada en `global_settings.cancellation_authorization`; controles +/-/papelera y modal estricto de cancelacion en el detalle de mesa — ver seccion 49 |
 
 ## 3. Detalle del Modulo Completado: Migraciones & Modelos Base
@@ -4928,3 +4931,175 @@ Ejecutado contra PostgreSQL 16 real, con el esquema completo:
 - `backend/database/seeders/DatabaseSeeder.php` — encadena los seeders de demo bajo `shouldSeedDemoData()`
 - `backend/.env.example` — `SEED_DEMO_DATA` documentado
 - `SETUP_LOCAL.md` — arranque por roles y tabla de datos de demostración
+
+## 51. CORRECCIÓN CRÍTICA: FLYSYSTEM V3 EN LA BÓVEDA Y BLINDAJE DEL CIERRE AUTOMÁTICO [🟢 CORREGIDO]
+
+Dos defectos de producción sin relación aparente, unidos por el mismo patrón: el
+sistema fallaba **en el sitio equivocado** y contaba una historia falsa. El panel
+de respaldos culpaba a la bóveda de un error de código propio, y el cierre de las
+21:00 no dejaba rastro alguno de por qué no había corrido.
+
+### 51.1 El 503 de `/api/admin/backups` no venía de GCP
+
+**Síntoma:** el panel de puntos de restauración respondía `503
+ERR_BACKUP_VAULT_UNREACHABLE` con el mensaje
+`Call to undefined method League\Flysystem\Filesystem::assertDependenciesInstalled()`.
+
+**Diagnóstico.** `assertDependenciesInstalled()` **nunca fue un método de
+Flysystem**: era un método privado de `App\Providers\CloudStorageServiceProvider`,
+invocado con `$this->` desde dentro de la clausura registrada en
+`Storage::extend('gcs', …)`. Ese callback no lo ejecuta el proveedor que lo
+registró: lo resuelve `FilesystemManager` desde su maquinaria interna de drivers,
+y el `$this` que llega ahí no es de fiar. La llamada terminaba resolviéndose
+contra el objeto equivocado —una `League\Flysystem\Filesystem`, la clase que en
+Flysystem **V3** ya no expone ese helper (en V1/V2 el método sí existía en la
+jerarquía, que es de donde viene el nombre)— y PHP lanzaba un **error fatal**.
+
+Lo grave no era el fatal, sino su disfraz: el `catch (Throwable)` de
+`BackupController::index()` lo capturaba y lo presentaba como *"la bóveda no
+responde"*. **GCP estaba perfectamente sano.** El operador veía un incidente de
+infraestructura donde había un defecto de código de dos líneas.
+
+**Corrección en tres capas:**
+
+1. **`CloudStorageServiceProvider`** — la clausura de `Storage::extend` se declara
+   ahora `static`: *no puede* recibir un `$this`, así que ningún refactor futuro
+   puede volver a colgarle una llamada de instancia. El método
+   `assertDependenciesInstalled()` **se eliminó**; la guarda de dependencias es un
+   `class_exists()` en línea dentro de la propia clausura, y `clientConfig()` pasó
+   a `private static` (se invoca con `self::`).
+2. **`BackupService::vaultConfigured()`** — comprueba `adapterAvailable()` antes de
+   dar por buena la bóveda de GCS. Sin el adaptador instalado, el motor se degrada
+   al disco local **y lo reporta**, en vez de resolver un driver que no puede
+   construirse. Esto es lo que la sección 43.5 siempre prometió ("sin el paquete el
+   sistema no se rompe") y que el código no cumplía: sólo miraba bucket y
+   credenciales, nunca si la clase existía.
+3. **`BackupService::probe()`** — sondeo de alcanzabilidad nuevo: un
+   `Storage::disk(…)->exists('/')` envuelto en `try/catch (Throwable)`. Todo lo que
+   pueda salir mal aguas abajo —credenciales caducadas, bucket inexistente, DNS
+   caído, adaptador ausente— se convierte **ahí** en un booleano con motivo. Se
+   captura `Throwable` y no `Exception` a propósito: un `Error` de PHP también debe
+   degradar el diagnóstico, nunca tumbar la petición.
+
+`status()` gana la llave **`reachable`** y `BackupController::index()` la consulta
+**antes** de listar. El `503` se conserva —una lista vacía se leería como "todo en
+orden, sin respaldos aún", y eso es peor que un error— pero ahora es un fallo
+*diagnosticado*: llega con el motivo real y con el comando exacto a ejecutar si lo
+que falta es el adaptador.
+
+> **Regla que deja este defecto:** una clausura registrada en el contenedor de
+> servicios (`Storage::extend`, `Cache::extend`, macros…) **no debe depender de
+> `$this`**. Si necesita un helper de la clase, que sea `static`.
+
+### 51.2 Zona horaria del scheduler
+
+El contenedor opera en **UTC** (`docker-compose.prod.yml` no fija `TZ`), de modo
+que `timezone()` es lo único que ata el arqueo al reloj de pared del negocio: sin
+él, las 21:00 se evalúan en UTC y el cierre cae a las **15:00** hora local.
+
+La declaración de `routes/console.php` se reescribió en la forma canónica, con la
+zona fijada **antes** de la hora y de manera **explícita** —no heredada de
+`config('app.timezone')`— porque un cambio de configuración global no debe poder
+mover en silencio la hora del arqueo:
+
+```php
+Schedule::command('cronos:auto-close-registers --source=scheduler')
+    ->weekdays()
+    ->timezone('America/Mexico_City')
+    ->at('21:00')
+    ->withoutOverlapping()
+    ->onOneServer();
+```
+
+> **Nota honesta de auditoría.** El `->timezone('America/Mexico_City')` **ya
+> estaba presente** en la línea anterior (iba después de `at()`, orden que en
+> Laravel es indiferente: `timezone()` sólo fija una propiedad que `isDue()` lee
+> al evaluar), y `config/app.php` ya declaraba la misma zona. Es decir: **la
+> declaración del schedule no explica por sí sola una ejecución fuera de hora.**
+> Si el cierre volviera a desfasarse, la causa está en otra capa y hay que
+> buscarla ahí — el contenedor `scheduler` caído o reiniciado (corre
+> `schedule:work`, que **no** es un cron del sistema y no recupera ejecuciones
+> perdidas), `->weekdays()` saltándose un sábado o domingo, un `withoutOverlapping()`
+> con el mutex trabado por una corrida previa que murió sin liberarlo, o el
+> desfase de `timestamptz` de la sección 47. La instrumentación de 51.3 existe
+> justamente para poder distinguir esos casos en vez de conjeturarlos.
+
+### 51.3 Escudo de telemetría del Job de cierre
+
+**El hueco:** `AutoCloseCashRegisters` es un **comando de consola**, no un job
+encolado. La telemetría automática de la Fase 10 (`JobTelemetrySubscriber`)
+escucha los eventos de la **cola** —`JobQueued`, `JobProcessing`, `JobProcessed`,
+`JobFailed`— y un comando de consola no emite ninguno. Resultado: la operación
+financiera más crítica del día era **la única que no dejaba rastro** en
+`job_execution_logs`. Si moría, moría en silencio, y nadie se enteraba hasta que a
+la mañana siguiente las cajas seguían abiertas.
+
+Por eso este comando —y sólo este— se instrumenta **a mano**:
+
+| Momento | Efecto en `job_execution_logs` |
+| :--- | :--- |
+| Inicio | INSERT `running` con `job_uuid` propio, `attempt = 1`, `started_at` |
+| Fin correcto | UPDATE `success` + `duration_ms` + `context` (cajas cerradas / fallidas) |
+| Excepción | UPDATE `failed` + `exception_class`, `exception_message` (2 000 car.) y `exception_trace` (`telemetry.jobs.max_trace_length`) + `Log::error()` |
+
+Detalles no obvios:
+
+- **`job_uuid` propio y `attempt = 1`.** El índice único es `(job_uuid, attempt)`;
+  un comando no pasa por la cola ni se reintenta solo, así que cada corrida es un
+  UUID nuevo con un único intento. La fila aparece en `/admin/jobs-monitor` como
+  cualquier otra, con `shortName()` → `AutoCloseCashRegisters`.
+- **Cronómetro monotónico** (`microtime(true)`), no resta de timestamps releídos:
+  eso arrastraría el sesgo de 6 h documentado en 43.3.
+- **La telemetría observa, nunca interfiere.** Tanto la apertura como el cierre de
+  la bitácora van en su propio `try/catch`. Si la BD rechaza la escritura, el
+  cierre de cajas **continúa** y el fallo se registra en el log de aplicación: una
+  bitácora rota jamás debe impedir un arqueo ni marcar como fallido un cierre que
+  funcionó.
+- **Se captura `Throwable`, no `Exception`.** Un `TypeError` o un
+  `Error` de PHP también deben quedar en la bitácora; el requisito era "nunca morir
+  en silencio", y `Exception` sola deja fuera media jerarquía de PHP 8.
+- **Doble destino del fallo.** Va a la BD *y* a `Log::error()` con traza. El log
+  vive en el sistema de archivos y sobrevive a un rollback de base de datos, que es
+  precisamente cuando más falta hace (misma lección que 43.3, trampa 3).
+- **`--dry-run` no abre bitácora.** Un simulacro no es una ejecución y no debe
+  contaminar el histórico forense.
+- **`--source=`** (default `console`) alimenta `trigger_source`, y el schedule pasa
+  `--source=scheduler`. Así el panel distingue una corrida programada de una
+  lanzada a mano, que es la primera pregunta ante un arqueo inesperado.
+
+`handle()` quedó como envoltura delgada: el cuerpo se extrajo a
+`closeOpenRegisters()`, que devuelve el conteo de cajas cerradas y fallidas y
+alimenta tanto el código de salida como el `context` de la bitácora. El
+`try/catch` por caja individual **se conserva**: un fallo en una caja no debe
+bloquear el cierre de las demás.
+
+### 51.4 Verificación
+
+| Comprobación | Resultado |
+| :--- | :--- |
+| `php -l` sobre los 5 archivos modificados | Sin errores de sintaxis |
+| Revisión de la clausura `Storage::extend` | `static`, sin un solo `$this` en su cuerpo |
+| Rastreo de `assertDependenciesInstalled` en el árbol | **0 apariciones** (era la única del repositorio) |
+
+> ⚠️ **La suite automatizada NO pudo ejecutarse en esta sesión.** El proxy de
+> egress bloquea `repo.packagist.org` (`CONNECT tunnel failed, 403`), así que no
+> hay `vendor/` y por tanto no hay PHPUnit — la misma restricción documentada en
+> 43.5. La verificación anterior es **estática**. Antes de desplegar hay que correr
+> en un entorno con dependencias:
+> ```
+> composer install
+> php artisan test --filter=BackupVaultTest
+> php artisan schedule:list          # confirma 21:00 America/Mexico_City
+> php artisan cronos:auto-close-registers --dry-run
+> ```
+> `BackupVaultTest` merece atención particular: `status()` cambió de forma (llave
+> `reachable` nueva) y `vaultConfigured()` ganó una condición, de modo que las
+> pruebas de "diagnóstico degradado" son las candidatas naturales a requerir
+> ajuste.
+
+### Archivos Modificados
+- `backend/app/Providers/CloudStorageServiceProvider.php` — clausura `static`, guarda `class_exists` en línea, `assertDependenciesInstalled()` **eliminado**, `clientConfig()` a `private static`, `adapterAvailable()` público
+- `backend/app/Services/Backup/BackupService.php` — `probe()` con `exists('/')` en try/catch, `status()` con llave `reachable`, `vaultConfigured()` verifica el adaptador
+- `backend/app/Http/Controllers/Admin/BackupController.php` — `index()` sondea antes de listar; el 503 llega diagnosticado
+- `backend/app/Console/Commands/AutoCloseCashRegisters.php` — blindaje try/catch, bitácora en `job_execution_logs`, opción `--source`, cuerpo extraído a `closeOpenRegisters()`
+- `backend/routes/console.php` — schedule en forma canónica con `timezone()` explícita y `--source=scheduler`

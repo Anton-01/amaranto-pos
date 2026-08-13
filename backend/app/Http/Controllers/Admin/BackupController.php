@@ -26,24 +26,43 @@ class BackupController extends Controller
      */
     public function index(): JsonResponse
     {
-        try {
-            $snapshots = $this->backups->listSnapshots();
-        } catch (Throwable $e) {
+        // El diagnostico va PRIMERO y sondea la boveda con un `exists('/')`
+        // envuelto en try/catch (BackupService::probe). Cualquier fallo de GCP
+        // —credenciales, red, bucket, adaptador ausente— queda capturado ahi y
+        // se convierte en un booleano con motivo; ninguna excepcion (ni un
+        // error fatal por un metodo inexistente) escapa hasta aqui.
+        $vault = $this->backups->status();
+
+        if (! $vault['reachable']) {
             // Boveda inalcanzable: el panel debe DECIRLO, no mostrar una lista
             // vacia que se lee como "todo en orden, sin respaldos aun".
             return response()->json([
                 'status' => 'error',
                 'code' => 'ERR_BACKUP_VAULT_UNREACHABLE',
+                'message' => 'No se pudo consultar la boveda de respaldos: '.$vault['reason'],
+                'errors' => [],
+                'metadata' => ['vault' => $vault],
+            ], 503);
+        }
+
+        try {
+            $snapshots = $this->backups->listSnapshots();
+        } catch (Throwable $e) {
+            // La boveda respondio al sondeo pero el listado fallo (permisos de
+            // lectura sobre el prefijo, por ejemplo). Mismo contrato.
+            return response()->json([
+                'status' => 'error',
+                'code' => 'ERR_BACKUP_VAULT_UNREACHABLE',
                 'message' => 'No se pudo consultar la boveda de respaldos: '.$e->getMessage(),
                 'errors' => [],
-                'metadata' => ['vault' => $this->backups->status()],
+                'metadata' => ['vault' => $vault],
             ], 503);
         }
 
         return response()->json([
             'status' => 'success',
             'data' => [
-                'vault' => $this->backups->status(),
+                'vault' => $vault,
                 'restore_phrase' => (string) config('backup.restore.require_confirmation_phrase'),
                 'pre_restore_snapshot' => (bool) config('backup.restore.pre_restore_snapshot', true),
                 'retention_days' => (int) config('backup.retention_days', 30),

@@ -23,10 +23,29 @@ class CloudStorageServiceProvider extends ServiceProvider
 {
     public function boot(): void
     {
-        Storage::extend('gcs', function ($app, array $config) {
-            $this->assertDependenciesInstalled();
+        // La clausura se declara `static` A PROPOSITO: asi no puede recibir un
+        // `$this` y ningun refactor futuro puede volver a colgarle una llamada
+        // a un metodo de instancia. Laravel resuelve este callback desde dentro
+        // de su maquinaria de drivers (FilesystemManager::callCustomCreator),
+        // muy lejos del proveedor que lo registro, y una llamada `$this->…()`
+        // ahi dentro reventaba con
+        //   "Call to undefined method League\Flysystem\Filesystem::…()"
+        // — un error fatal que subia hasta el `catch (Throwable)` de
+        // BackupController::index() y se presentaba al operador como un 503
+        // opaco, escondiendo la causa real (falta el adaptador de GCS).
+        Storage::extend('gcs', static function ($app, array $config): FilesystemAdapter {
+            // Guardia de dependencias EN LINEA. El adaptador de GCS es una
+            // dependencia opcional: el POS arranca sin ella y solo la necesita
+            // quien active la boveda. Si falta hay que decir EXACTAMENTE que
+            // instalar, no reventar con un "class not found".
+            if (! class_exists(GoogleCloudStorageAdapter::class) || ! class_exists(StorageClient::class)) {
+                throw new RuntimeException(
+                    'El disco "gcs_backups" requiere el adaptador de Google Cloud Storage. '
+                    .'Ejecuta: composer require league/flysystem-google-cloud-storage'
+                );
+            }
 
-            $client = new StorageClient($this->clientConfig($config));
+            $client = new StorageClient(self::clientConfig($config));
 
             $bucket = $client->bucket((string) $config['bucket']);
 
@@ -51,7 +70,7 @@ class CloudStorageServiceProvider extends ServiceProvider
      * @param  array<string, mixed>  $config
      * @return array<string, mixed>
      */
-    private function clientConfig(array $config): array
+    private static function clientConfig(array $config): array
     {
         $client = array_filter([
             'projectId' => $config['project_id'] ?? null,
@@ -91,19 +110,14 @@ class CloudStorageServiceProvider extends ServiceProvider
     }
 
     /**
-     * El adaptador de GCS es una dependencia opcional: el POS arranca sin ella
-     * y solo la necesita quien active la boveda de respaldos. Si falta, hay que
-     * decir EXACTAMENTE que instalar, no reventar con un "class not found".
+     * Disponibilidad del adaptador opcional de GCS.
+     *
+     * Publica y estatica a proposito: `BackupService::vaultConfigured()` la
+     * consulta ANTES de pedirle el disco a `Storage`, para degradarse al disco
+     * local en vez de resolver un driver que no puede construirse.
      */
-    private function assertDependenciesInstalled(): void
+    public static function adapterAvailable(): bool
     {
-        if (class_exists(GoogleCloudStorageAdapter::class) && class_exists(StorageClient::class)) {
-            return;
-        }
-
-        throw new RuntimeException(
-            'El disco "gcs_backups" requiere el adaptador de Google Cloud Storage. '
-            .'Ejecuta: composer require league/flysystem-google-cloud-storage'
-        );
+        return class_exists(GoogleCloudStorageAdapter::class) && class_exists(StorageClient::class);
     }
 }
