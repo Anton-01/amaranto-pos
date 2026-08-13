@@ -4808,3 +4808,123 @@ endpoint genérico.
 - `backend/routes/api.php` — 3 rutas de comedor + 2 de la contraseña de autorización
 - `frontend/src/components/dining/TableDetailModal.jsx` — controles +/-/papelera y botón de cancelación
 - `frontend/src/pages/admin/SystemSettingsPage.jsx` — pestaña "Autorizaciones"
+
+## 50. CORRECCIÓN: EL ARRANQUE DE DOCKER SE PISABA A SÍ MISMO + DATOS DE DEMOSTRACIÓN [🟢 CORREGIDO]
+
+`docker compose up --build` moría con dos errores distintos, ninguno de ellos
+reproducible fuera de Docker. Los dos tienen la misma causa: **tres contenedores
+ejecutando el mismo arranque a la vez sobre los mismos recursos.**
+
+### 50.1 Los dos síntomas
+
+```
+cronos-queue-worker-dev  | In Filesystem.php line 123:
+cronos-queue-worker-dev  |   require(/var/www/html/bootstrap/cache/packages.php): Failed to open stream:
+cronos-queue-worker-dev  |    No such file or directory
+cronos-queue-worker-dev exited with code 1
+```
+
+```
+cronos-postgres | ERROR:  relation "users" does not exist
+cronos-backend  |   2026_08_03_000001_create_job_execution_logs_table ....... FAIL
+cronos-backend  |   SQLSTATE[42P01]: Undefined table: 7 ERROR: relation "users" does not exist
+cronos-backend exited with code 1
+```
+
+La migración señalada no tenía ningún defecto: `users` se crea 30 migraciones
+antes y su llave foránea es correcta. El log lo delata en la línea siguiente —
+mientras `cronos-backend` iba por la migración 36, `cronos-scheduler-dev`
+ejecutaba **su propio** `migrate:fresh` y estaba dropeando todas las tablas.
+
+### 50.2 Causa raíz: tres contenedores, un solo entrypoint
+
+`backend`, `scheduler` y `queue-worker` comparten imagen, bind-mount de
+`./backend`, volumen `backend-vendor` y base de datos. `Dockerfile.dev` declara
+`ENTRYPOINT ["docker-entrypoint.sh"]` y el script terminaba en
+`exec php artisan serve`, **sin usar `"$@"`**. Consecuencias:
+
+1. **Tres `composer install` simultáneos** regenerando el autoload sobre el
+   mismo `bootstrap/cache/`: el que llegaba tarde leía `packages.php` mientras
+   otro lo estaba reescribiendo → el crash del queue worker.
+2. **Tres `migrate:fresh --seed` simultáneos** sobre la misma base: uno borraba
+   las tablas que otro estaba migrando → el 42P01.
+3. **El `command:` del compose se ignoraba.** El scheduler nunca ejecutó
+   `schedule:work`: levantaba un `artisan serve` idéntico al del backend (visible
+   en su propio log: `Starting Laravel server on port 8000`). Los cierres
+   automáticos de caja y el prune de telemetría **nunca habían corrido en
+   local**.
+
+### 50.3 La corrección: un solo dueño del arranque
+
+`CONTAINER_ROLE` divide responsabilidades en `docker-entrypoint.sh`:
+
+| Rol | Servicios | Hace |
+| :--- | :--- | :--- |
+| `app` | `backend` | composer install, `.env`, `APP_KEY`, Reverb, `migrate:fresh --seed`, caches, servidor HTTP |
+| `worker` | `scheduler`, `queue-worker` | Nada del arranque compartido: espera y ejecuta `exec "$@"` |
+
+El orden lo garantiza Docker, no un `sleep`: `backend` publica un healthcheck
+—que solo responde 200 *después* de migrar, porque el servidor HTTP arranca al
+final del script— y los workers declaran `depends_on: condition:
+service_healthy`. El entrypoint conserva además una espera acotada por
+`vendor/autoload.php` y `.env` como red de seguridad.
+
+Dos efectos secundarios buscados: el `command:` vuelve a respetarse (el
+scheduler por fin corre `schedule:work`) y el queue worker en segundo plano
+desaparece del entrypoint — el servicio `queue-worker` es su único dueño, ya no
+hay dos procesos compitiendo por la misma cola.
+
+### 50.4 Datos de demostración
+
+Un arranque limpio dejaba el sistema operable pero **vacío**: sin productos no
+se puede cobrar, y sin cobrar no se puede probar ni el ticket, ni el arqueo, ni
+el inventario. Dos seeders nuevos, encadenados desde `DatabaseSeeder`:
+
+- **`DemoCatalogSeeder`** — Bebidas, Paquetes y Refrescos con 16 productos
+  (precios con IVA incluido, la convención de la casa), y dos promociones
+  vigentes: una por porcentaje y una por monto fijo, para ejercitar las dos
+  ramas de `OrderCalculator`. `track_stock` queda en `false` en lo que se
+  prepara al momento y en los paquetes: descontarles stock dejaría el inventario
+  en negativo desde la primera venta.
+- **`DemoSalesSeeder`** — entradas de compra que respaldan el stock inicial, una
+  merma, un turno de caja ABIERTO (sin él el POS responde
+  `ERR_POS_CASH_REGISTER_REQUIRED`), tres ventas cobradas —una con descuento
+  global del 10% prorrateado—, una venta cancelada con devolución de stock y
+  `Mesa 3` ocupada con una cuenta viva lista para cobrar.
+
+Los importes **no se escriben a mano**: pasan por `App\Services\OrderCalculator`,
+el mismo motor que usan `OrderController` y `TableSessionController`. Un dato
+sembrado es indistinguible de uno producido por la aplicación, de modo que un
+descuadre en el arqueo sobre estos datos sería un defecto real y no ruido del
+seeder.
+
+`SEED_DEMO_DATA` manda en ambas direcciones; vacío, se activan solo fuera de
+producción. Un ticket falso en la base real contamina el histórico de ventas.
+
+### 50.5 Verificación
+
+Ejecutado contra PostgreSQL 16 real, con el esquema completo:
+
+| Prueba | Resultado |
+| :--- | :--- |
+| `migrate:fresh --seed --drop-types` (3 corridas seguidas) | Sin errores; el arranque es repetible |
+| Cuadre de cada orden sembrada (líneas vs total, subtotal + IVA vs total) | Exacto al centavo |
+| Arqueo (`CashClosingService::snapshot`) | Ventas $712.60 sobre fondo $1,500 → esperado $2,212.60; la cancelada no cuenta |
+| Ticket de una venta sembrada (`TicketBuilder` + `PrinterService`) | Renderiza folio, líneas, IVA, descuento, recibido/cambio y ESC/POS de 1364 bytes |
+| `SEED_DEMO_DATA=false` | 0 productos, 0 órdenes: solo el catálogo base |
+| Rol `worker` del entrypoint | Ejecuta su `command:`, falla claro si no lo tiene y espera si `backend` no ha terminado |
+| Healthcheck de `backend` | `exit 0` con el servidor arriba, `exit 1` con el puerto muerto |
+| `tests/Feature/Database/` | 21/21, 98 aserciones |
+| Suite completa | 96/101 — los 5 fallos restantes son previos a este cambio y ajenos a él (verificado con el árbol limpio) |
+
+### Archivos Creados
+- `backend/database/seeders/DemoCatalogSeeder.php`
+- `backend/database/seeders/DemoSalesSeeder.php`
+- `backend/tests/Feature/Database/DemoDataSeederTest.php`
+
+### Archivos Modificados
+- `backend/docker-entrypoint.sh` — roles `app`/`worker`, `exec "$@"` y sin queue worker embebido
+- `docker-compose.yml` — `CONTAINER_ROLE`, healthcheck de `backend`, `depends_on: service_healthy` en scheduler y queue-worker, `SEED_DEMO_DATA`
+- `backend/database/seeders/DatabaseSeeder.php` — encadena los seeders de demo bajo `shouldSeedDemoData()`
+- `backend/.env.example` — `SEED_DEMO_DATA` documentado
+- `SETUP_LOCAL.md` — arranque por roles y tabla de datos de demostración
