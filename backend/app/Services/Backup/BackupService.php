@@ -4,6 +4,7 @@ namespace App\Services\Backup;
 
 use App\Models\AuditLog;
 use App\Models\User;
+use App\Providers\CloudStorageServiceProvider;
 use Illuminate\Contracts\Filesystem\Filesystem;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Log;
@@ -360,16 +361,24 @@ class BackupService
      * Diagnostico de la boveda para el panel de administracion: dice si el
      * aislamiento en GCP esta realmente activo o si el sistema opera degradado.
      *
-     * @return array{disk: string, isolated: bool, configured: bool, encrypted: bool, reason: string|null}
+     * @return array{disk: string, isolated: bool, configured: bool, encrypted: bool, reachable: bool, reason: string|null}
      */
     public function status(): array
     {
         $configuredDisk = (string) config('backup.disk');
         $effective = $this->diskName();
+        $probe = $this->probe();
         $reason = null;
 
-        if ($effective !== $configuredDisk) {
+        if (! $probe['reachable']) {
+            $reason = "La boveda '{$effective}' no responde: ".$probe['error'];
+        } elseif ($effective !== $configuredDisk) {
             $reason = "La boveda aislada '{$configuredDisk}' no esta configurada; se opera sobre '{$effective}'.";
+
+            if (! CloudStorageServiceProvider::adapterAvailable()) {
+                $reason .= ' Falta el adaptador de Google Cloud Storage'
+                    .' (composer require league/flysystem-google-cloud-storage).';
+            }
         } elseif (! $this->encryptionEnabled()) {
             $reason = 'El cifrado en reposo esta desactivado o sin BACKUP_ENCRYPTION_KEY.';
         }
@@ -379,8 +388,39 @@ class BackupService
             'isolated' => $effective === $configuredDisk && str_starts_with($effective, 'gcs'),
             'configured' => $effective === $configuredDisk,
             'encrypted' => $this->encryptionEnabled(),
+            'reachable' => $probe['reachable'],
             'reason' => $reason,
         ];
+    }
+
+    /**
+     * Sondeo de alcanzabilidad de la boveda.
+     *
+     * Una sola operacion barata contra la raiz del disco, envuelta en
+     * try/catch. Todo lo que pueda salir mal aguas abajo —credenciales
+     * caducadas, bucket inexistente, DNS caido, adaptador ausente— se
+     * convierte AQUI en un booleano con motivo, en lugar de propagarse como
+     * excepcion (o como error fatal) hasta el controlador. Se captura
+     * `Throwable`, no `Exception`: un `Error` de PHP tambien debe degradar el
+     * diagnostico, nunca tumbar la peticion.
+     *
+     * @return array{reachable: bool, error: string|null}
+     */
+    public function probe(): array
+    {
+        try {
+            $this->disk()->exists('/');
+
+            return ['reachable' => true, 'error' => null];
+        } catch (Throwable $e) {
+            Log::warning('[Backup] La boveda de respaldos no respondio al sondeo.', [
+                'disk' => $this->diskName(),
+                'exception' => $e::class,
+                'error' => $e->getMessage(),
+            ]);
+
+            return ['reachable' => false, 'error' => $e->getMessage()];
+        }
     }
 
     // -----------------------------------------------------------------
@@ -419,6 +459,16 @@ class BackupService
         if (($config['driver'] ?? null) !== 'gcs') {
             // Discos no-GCS (local, s3, o un fake de pruebas) se usan tal cual.
             return true;
+        }
+
+        // El adaptador de GCS es una dependencia OPCIONAL (declarada en
+        // `suggest`, fuera del lock). Sin el, pedirle el disco a `Storage`
+        // dispara el driver `gcs` y este revienta al construirse. Se comprueba
+        // aqui para degradarse limpiamente al disco local: un respaldo local
+        // imperfecto, reportado como degradado en `status()`, vale mas que un
+        // 503 en el panel de administracion.
+        if (! CloudStorageServiceProvider::adapterAvailable()) {
+            return false;
         }
 
         return filled($config['bucket'] ?? null)

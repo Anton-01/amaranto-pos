@@ -7,11 +7,14 @@ use App\Mail\CashRegisterClosingReportMail;
 use App\Models\CashRegister;
 use App\Models\CashRegisterClosing;
 use App\Models\EmailConfiguration;
+use App\Models\JobExecutionLog;
 use App\Models\SystemNotification;
 use App\Models\User;
 use App\Services\CashClosingService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
+use Throwable;
 
 /**
  * Cierre automatico de cajas — programado todos los dias a las 21:00
@@ -30,33 +33,77 @@ use Illuminate\Support\Facades\Log;
 class AutoCloseCashRegisters extends Command
 {
     protected $signature = 'cronos:auto-close-registers
-                            {--dry-run : Lista las cajas que se cerrarian sin ejecutar el cierre}';
+                            {--dry-run : Lista las cajas que se cerrarian sin ejecutar el cierre}
+                            {--source=console : Origen del disparo para la bitacora: scheduler|console|system}';
 
     protected $description = 'Cierra automaticamente las cajas abiertas sin arqueo bajo el usuario System Automated Process';
 
+    /**
+     * Punto de entrada BLINDADO.
+     *
+     * Este comando corre a las 21:00 sin nadie mirando la consola, de modo que
+     * un fallo aqui es, por definicion, un fallo silencioso: nadie se entera
+     * hasta que a la mañana siguiente las cajas siguen abiertas. Por eso toda
+     * la logica va envuelta en try/catch y deja rastro en `job_execution_logs`
+     * —la misma bitacora que alimenta /admin/jobs-monitor—.
+     *
+     * La telemetria automatica de la Fase 10 (JobTelemetrySubscriber) NO cubre
+     * este caso: escucha los eventos de la COLA, y un comando de consola nunca
+     * los emite. De ahi que aqui se instrumente a mano.
+     *
+     * Contrato: pase lo que pase la fila queda cerrada en `success` o `failed`,
+     * y ninguna excepcion escapa sin un `Log::error()`.
+     */
     public function handle(CashClosingService $closingService): int
     {
-        $openRegisters = CashRegister::with('user:id,name,email')
-            ->whereNull('closed_at')
-            ->whereDoesntHave('closing')
-            ->orderBy('opened_at')
-            ->get();
+        if ($this->option('dry-run')) {
+            return $this->listPending();
+        }
+
+        // Cronometro monotonico: restar timestamps releidos de PostgreSQL
+        // arrastraria el sesgo de zona horaria documentado en la Fase 10.
+        $startedAt = microtime(true);
+        $log = $this->openExecutionLog();
+
+        try {
+            $result = $this->closeOpenRegisters($closingService);
+
+            $this->finishExecutionLog($log, JobExecutionLog::STATUS_SUCCESS, $startedAt, context: $result);
+
+            return $result['registers_failed'] > 0 ? self::FAILURE : self::SUCCESS;
+        } catch (Throwable $e) {
+            // Nunca morir en silencio: la excepcion queda en la bitacora de BD
+            // (con traza), en el log de aplicacion —que vive en el sistema de
+            // archivos y sobrevive a un rollback— y en la salida del comando.
+            $this->finishExecutionLog($log, JobExecutionLog::STATUS_FAILED, $startedAt, exception: $e);
+
+            Log::error('[AutoCloseCashRegisters] El cierre automatico de cajas aborto.', [
+                'exception' => $e::class,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'job_execution_log_id' => $log?->id,
+            ]);
+
+            $this->error('El cierre automatico aborto: '.$e->getMessage());
+
+            return self::FAILURE;
+        }
+    }
+
+    /**
+     * Cierra toda caja abierta sin arqueo y notifica. Es el cuerpo que el
+     * blindaje de `handle()` envuelve.
+     *
+     * @return array{registers_closed: int, registers_failed: int}
+     */
+    private function closeOpenRegisters(CashClosingService $closingService): array
+    {
+        $openRegisters = $this->pendingRegisters();
 
         if ($openRegisters->isEmpty()) {
             $this->info('Sin cajas abiertas pendientes de cierre.');
-            return self::SUCCESS;
-        }
 
-        if ($this->option('dry-run')) {
-            foreach ($openRegisters as $register) {
-                $this->line(sprintf(
-                    '[dry-run] %s — %s (abierta %s)',
-                    strtoupper(substr($register->id, 0, 8)),
-                    $register->user?->name ?? 'N/D',
-                    $register->opened_at?->timezone('America/Mexico_City')->format('d/m/Y H:i')
-                ));
-            }
-            return self::SUCCESS;
+            return ['registers_closed' => 0, 'registers_failed' => 0];
         }
 
         $systemUser = User::systemProcess();
@@ -147,7 +194,138 @@ class AutoCloseCashRegisters extends Command
 
         $this->info(sprintf('Resumen: %d cerradas, %d fallidas.', count($closed), $failed));
 
-        return $failed > 0 ? self::FAILURE : self::SUCCESS;
+        return ['registers_closed' => count($closed), 'registers_failed' => $failed];
+    }
+
+    /** @return \Illuminate\Database\Eloquent\Collection<int, CashRegister> */
+    private function pendingRegisters()
+    {
+        return CashRegister::with('user:id,name,email')
+            ->whereNull('closed_at')
+            ->whereDoesntHave('closing')
+            ->orderBy('opened_at')
+            ->get();
+    }
+
+    /**
+     * `--dry-run`: solo lista. No abre bitacora porque no ejecuta nada — el
+     * histórico forense debe contener ejecuciones reales, no simulacros.
+     */
+    private function listPending(): int
+    {
+        $openRegisters = $this->pendingRegisters();
+
+        if ($openRegisters->isEmpty()) {
+            $this->info('Sin cajas abiertas pendientes de cierre.');
+
+            return self::SUCCESS;
+        }
+
+        foreach ($openRegisters as $register) {
+            $this->line(sprintf(
+                '[dry-run] %s — %s (abierta %s)',
+                strtoupper(substr($register->id, 0, 8)),
+                $register->user?->name ?? 'N/D',
+                $register->opened_at?->timezone('America/Mexico_City')->format('d/m/Y H:i')
+            ));
+        }
+
+        return self::SUCCESS;
+    }
+
+    // -----------------------------------------------------------------
+    // Telemetria (job_execution_logs)
+    // -----------------------------------------------------------------
+
+    /**
+     * Abre la fila del intento en estado `running`.
+     *
+     * Se le asigna un `job_uuid` propio para respetar el indice unico
+     * `(job_uuid, attempt)` y para que el panel pueda correlacionar la
+     * ejecucion igual que la de cualquier job encolado. `attempt = 1`: un
+     * comando de consola no pasa por la cola y no se reintenta solo.
+     *
+     * Si la escritura falla se devuelve null y el cierre CONTINUA: la
+     * telemetria observa, nunca interfiere (regla de oro de la Fase 10).
+     */
+    private function openExecutionLog(): ?JobExecutionLog
+    {
+        try {
+            return JobExecutionLog::create([
+                'job_uuid' => (string) Str::uuid(),
+                'job_name' => self::class,
+                'display_name' => 'cronos:auto-close-registers',
+                'connection' => 'sync',
+                'queue' => 'scheduler',
+                'attempt' => 1,
+                'status' => JobExecutionLog::STATUS_RUNNING,
+                'queued_at' => now(),
+                'started_at' => now(),
+                'trigger_source' => $this->triggerSource(),
+                'context' => ['scheduled_at' => '21:00 America/Mexico_City'],
+            ]);
+        } catch (Throwable $e) {
+            Log::error('[AutoCloseCashRegisters] No se pudo abrir la bitacora de ejecucion.', [
+                'error' => $e->getMessage(),
+            ]);
+
+            return null;
+        }
+    }
+
+    /**
+     * Cierra la fila en `success` o `failed`.
+     *
+     * @param  array<string, mixed>  $context
+     */
+    private function finishExecutionLog(
+        ?JobExecutionLog $log,
+        string $status,
+        float $startedAt,
+        array $context = [],
+        ?Throwable $exception = null,
+    ): void {
+        if ($log === null) {
+            return;
+        }
+
+        try {
+            $attributes = [
+                'status' => $status,
+                'finished_at' => now(),
+                'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
+                'context' => array_merge((array) $log->context, $context),
+            ];
+
+            if ($exception !== null) {
+                $attributes['exception_class'] = $exception::class;
+                $attributes['exception_message'] = Str::limit($exception->getMessage(), 2000);
+                $attributes['exception_trace'] = Str::limit(
+                    $exception->getTraceAsString(),
+                    (int) config('telemetry.jobs.max_trace_length', 20000),
+                    ' […traza truncada]'
+                );
+            }
+
+            $log->forceFill($attributes)->save();
+        } catch (Throwable $e) {
+            // Un fallo escribiendo la bitacora jamas debe enmascarar el
+            // resultado real del cierre.
+            Log::error('[AutoCloseCashRegisters] No se pudo cerrar la bitacora de ejecucion.', [
+                'job_execution_log_id' => $log->id,
+                'intended_status' => $status,
+                'error' => $e->getMessage(),
+            ]);
+        }
+    }
+
+    private function triggerSource(): string
+    {
+        $source = (string) $this->option('source');
+
+        return in_array($source, ['scheduler', 'console', 'system', 'user'], true)
+            ? $source
+            : 'console';
     }
 
     /**

@@ -10,8 +10,21 @@ Artisan::command('inspire', function () {$this->comment(Inspiring::quote());})->
 |--------------------------------------------------------------------------
 | Scheduler — Automatic Cash Register Closure
 |--------------------------------------------------------------------------
+|
+| El contenedor corre en UTC. `timezone()` es lo unico que ata este comando
+| al reloj de pared del negocio: sin el, las 21:00 se evaluarian en UTC y el
+| cierre caeria a las 15:00 hora local. Se declara ANTES de `at()` para que
+| la zona quede fijada al leer la expresion, y se deja explicita —no heredada
+| de `app.timezone`— porque un cambio de configuracion global no debe poder
+| mover en silencio la hora del arqueo.
+|
 */
-Schedule::command('cronos:auto-close-registers')->weekdays()->at('21:00')->timezone('America/Mexico_City')->withoutOverlapping()->onOneServer();
+Schedule::command('cronos:auto-close-registers --source=scheduler')
+    ->weekdays()
+    ->timezone('America/Mexico_City')
+    ->at('21:00')
+    ->withoutOverlapping()
+    ->onOneServer();
 
 /*
 |--------------------------------------------------------------------------
