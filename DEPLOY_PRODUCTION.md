@@ -16,8 +16,15 @@
 │  ┌──▼──┐  ┌───▼───┐    ┌────▼────┐    ┌──────────┐    │
 │  │React│  │Laravel│    │ Reverb  │    │  Redis   │    │
 │  │Nginx│  │  API  │    │WebSocket│    │ Cache+Q  │    │
-│  └─────┘  └───┬───┘    └─────────┘    └──────────┘    │
+│  └─────┘  └───┬───┘    └─────────┘    └────▲─────┘    │
+│               │                             │           │
+│               │        ┌──────────┐  ┌──────┴─────┐    │
+│               │        │Scheduler │  │Queue Worker│    │
+│               │        │sched:work│  │ queue:work │    │
+│               │        └──────────┘  └────────────┘    │
 │               │          DROPLET (Ubuntu LTS)            │
+│               │   1 contenedor = 1 proceso de primer     │
+│               │   plano, elegido por `command:`          │
 └───────────────┼──────────────────────────────────────────┘
                 │ SSL (puerto 25060)
         ┌───────▼───────────────┐
@@ -327,24 +334,35 @@ docker compose -f docker-compose.prod.yml exec backend php artisan optimize
 
 ---
 
-## Paso 7: Configurar Cron Jobs del Servidor
+## Paso 7: Scheduler (NO configurar cron en el host)
 
-Laravel Schedule necesita un cron job en el host que invoque `schedule:run` cada minuto.
+**No agregues ningun `crontab` para Laravel.** El contenedor `scheduler` corre
+`php artisan schedule:work`, que es un proceso residente que despierta cada
+minuto por su cuenta. Docker lo mantiene vivo con `restart: always`.
 
-```bash
-# Abrir crontab del usuario deploy
-crontab -e
-
-# Agregar la siguiente linea:
-* * * * * cd /opt/cronos-pos && docker compose -f docker-compose.prod.yml exec -T backend php artisan schedule:run >> /var/log/cronos-schedule.log 2>&1
-```
+> ⚠️ Guias anteriores pedian una linea de crontab en el host
+> (`* * * * * ... exec -T backend php artisan schedule:run`). Era un parche a la
+> epoca en la que el entrypoint ignoraba el `command:` del compose y el
+> contenedor `scheduler` jamas ejecutaba `schedule:work`. Con el entrypoint ya
+> corregido, **mantener ambos duplica cada tarea programada**: el cierre
+> automatico de caja de las 21:00 correria dos veces. Si ese cron existe en el
+> Droplet, eliminalo:
+>
+> ```bash
+> crontab -e   # borrar la linea que invoca schedule:run
+> ```
 
 ### Verificar que el scheduler funciona
 
 ```bash
-# Ejecutar manualmente para verificar
 cd /opt/cronos-pos
-docker compose -f docker-compose.prod.yml exec backend php artisan schedule:list
+
+# Tareas registradas y su proxima corrida
+docker compose -f docker-compose.prod.yml exec scheduler php artisan schedule:list
+
+# El proceso residente debe ser schedule:work, no artisan serve
+docker compose -f docker-compose.prod.yml exec scheduler ps -o args
+docker compose -f docker-compose.prod.yml logs --tail=20 scheduler
 ```
 
 ---
@@ -376,8 +394,8 @@ El script `deploy.sh` automatiza:
 | 80 | Nginx (HTTP → redirect HTTPS) | Publico |
 | 443 | Nginx (HTTPS proxy) | Publico |
 | 3000 | Frontend Nginx (SPA) | Solo 127.0.0.1 (via proxy) |
-| 8000 | Backend Laravel (API) | Solo 127.0.0.1 (via proxy) |
-| 8080 | Reverb WebSocket | Solo 127.0.0.1 (via proxy) |
+| 8000 | Backend Laravel (API — contenedor `backend`) | Solo 127.0.0.1 (via proxy) |
+| 8080 | Reverb WebSocket (contenedor `reverb`) | Solo 127.0.0.1 (via proxy) |
 | 6379 | Redis | Solo red Docker interna |
 | 25060 | PostgreSQL (Managed) | Solo IP del Droplet (Trusted Sources) |
 
@@ -402,11 +420,21 @@ docker compose -f docker-compose.prod.yml exec backend tail -f storage/logs/lara
 
 ### Reiniciar servicios individuales
 
+Cada contenedor corre un solo proceso, asi que se reinician de forma aislada:
+tumbar Reverb ya no corta la API, y reiniciar el worker no interrumpe las
+ventas.
+
 ```bash
-# Reiniciar solo el backend (sin rebuild)
+# API HTTP (sin rebuild)
 docker compose -f docker-compose.prod.yml restart backend
 
-# Reiniciar queue worker
+# WebSockets (los clientes reconectan solos)
+docker compose -f docker-compose.prod.yml restart reverb
+
+# Tareas programadas
+docker compose -f docker-compose.prod.yml restart scheduler
+
+# Cola: apagado ordenado (termina el job en curso y sale; Docker lo revive)
 docker compose -f docker-compose.prod.yml exec backend php artisan queue:restart
 ```
 

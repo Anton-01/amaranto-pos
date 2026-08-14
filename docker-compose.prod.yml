@@ -1,20 +1,53 @@
+# ==============================================================
+# Cronos POS — Produccion
+#
+# Un proceso de primer plano por contenedor. Los cuatro servicios PHP
+# comparten imagen (`cronos-backend:latest`, construida una sola vez) y se
+# diferencian UNICAMENTE por su `command:`, que el entrypoint respeta gracias
+# a `exec "$@"` (ver backend/docker-entrypoint.prod.sh).
+#
+#   backend      :8000  API HTTP
+#   reverb       :8080  WebSockets
+#   scheduler     ---   schedule:work (unico dueño del cron de Laravel)
+#   queue-worker  ---   queue:work    (unico consumidor de la cola Redis)
+# ==============================================================
+
+x-backend-service: &backend-service
+  build:
+    context: .
+    dockerfile: backend/Dockerfile.prod
+  # Mismo tag en los cuatro servicios: Compose construye la imagen una vez y
+  # la reutiliza, en lugar de resolver cuatro builds del mismo Dockerfile.
+  image: cronos-backend:latest
+  restart: always
+  env_file:
+    - .env.production
+  environment:
+    # Reverb dejo de vivir dentro del contenedor `backend`, asi que
+    # `REVERB_HOST=0.0.0.0` del .env ya no sirve para publicar eventos: ese
+    # valor es el host que usa el CLIENTE HTTP de broadcasting
+    # (config/broadcasting.php -> connections.reverb.options.host). Ahora
+    # apunta al nombre de servicio de la red interna. `environment` gana sobre
+    # `env_file`, de modo que un .env.production antiguo no rompe el deploy.
+    REVERB_HOST: reverb
+    REVERB_PORT: 8080
+    # Trafico servidor-a-servidor dentro de la red privada de Docker: sin TLS.
+    # Con el default 'https' el broadcaster intentaria handshake TLS contra un
+    # Reverb que habla HTTP plano y todo evento moriria en la publicacion.
+    REVERB_SCHEME: http
+  depends_on:
+    redis:
+      condition: service_healthy
+  networks:
+    - cronos-network
+
 services:
   backend:
-    build:
-      context: .
-      dockerfile: backend/Dockerfile.prod
+    <<: *backend-service
     container_name: cronos-backend
-    restart: always
+    command: php artisan serve --host=0.0.0.0 --port=8000
     ports:
       - "127.0.0.1:8000:8000"
-      - "127.0.0.1:8080:8080"
-    env_file:
-      - .env.production
-    depends_on:
-      redis:
-        condition: service_healthy
-    networks:
-      - cronos-network
     healthcheck:
       test: ["CMD-SHELL", "php artisan about > /dev/null 2>&1 || exit 1"]
       interval: 30s
@@ -22,35 +55,33 @@ services:
       retries: 3
       start_period: 40s
 
+  reverb:
+    <<: *backend-service
+    container_name: cronos-reverb
+    # Cuarto contenedor en lugar de un supervisor dentro de `backend`: Reverb
+    # es un proceso de larga vida con sockets abiertos y un perfil de fallo
+    # propio. Aislado, puede reiniciarse sin cortar la API, y el `restart:
+    # always` de Docker lo vigila de verdad — un proceso lanzado con `&` desde
+    # el entrypoint moria sin que el contenedor se enterara.
+    command: php artisan reverb:start --host=0.0.0.0 --port=8080
+    ports:
+      - "127.0.0.1:8080:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "php -r \"exit(@fsockopen('127.0.0.1', 8080) ? 0 : 1);\""]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
   scheduler:
-    build:
-      context: .
-      dockerfile: backend/Dockerfile.prod
+    <<: *backend-service
     container_name: cronos-scheduler
-    restart: always
     command: php artisan schedule:work
-    env_file:
-      - .env.production
-    depends_on:
-      redis:
-        condition: service_healthy
-    networks:
-      - cronos-network
 
   queue-worker:
-    build:
-      context: .
-      dockerfile: backend/Dockerfile.prod
+    <<: *backend-service
     container_name: cronos-queue-worker
-    restart: always
     command: php artisan queue:work --tries=3 --timeout=90
-    env_file:
-      - .env.production
-    depends_on:
-      redis:
-        condition: service_healthy
-    networks:
-      - cronos-network
 
   frontend:
     build:

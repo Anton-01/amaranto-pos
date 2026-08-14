@@ -60,17 +60,22 @@ log "→ Step 5/7: Running migrations..."
 docker compose -f "$COMPOSE_FILE" exec backend php artisan migrate --force
 
 # 6. Optimize production caches
+#    Only for `backend`: each container has its own writable layer, so these
+#    caches do NOT propagate to reverb/scheduler/queue-worker. Those three
+#    build their own on startup (backend/docker-entrypoint.prod.sh) — which is
+#    exactly why step 7 restarts them instead of running artisan inside each.
 log "→ Step 6/7: Optimizing caches..."
 docker compose -f "$COMPOSE_FILE" exec backend php artisan config:cache
 docker compose -f "$COMPOSE_FILE" exec backend php artisan route:cache
 docker compose -f "$COMPOSE_FILE" exec backend php artisan event:cache
 docker compose -f "$COMPOSE_FILE" exec backend php artisan view:cache
 
-# 7. Restart background services to load the new code
-log "→ Step 7/7: Restarting Queue Worker and Scheduler..."
+# 7. Restart the long-running single-process containers so they re-run the
+#    entrypoint against the new code (and rebuild their own caches).
+log "→ Step 7/7: Restarting Reverb, Queue Worker and Scheduler..."
 
 # Restart containers that run infinite processes
-docker compose -f "$COMPOSE_FILE" restart scheduler queue-worker
+docker compose -f "$COMPOSE_FILE" restart reverb scheduler queue-worker
 
 # Clean up dangling images
 log "→ Cleaning up unused images..."
