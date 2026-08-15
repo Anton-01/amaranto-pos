@@ -47,6 +47,8 @@ export default function EmailNotificationsPanel() {
   const [fieldErrors, setFieldErrors] = useState({});
   const [saving, setSaving] = useState(false);
 
+  const [testing, setTesting] = useState(false);
+
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [deleting, setDeleting] = useState(false);
 
@@ -119,6 +121,65 @@ export default function EmailNotificationsPanel() {
       }
     } finally {
       setSaving(false);
+    }
+  };
+
+  /**
+   * Mailing health check against the credentials currently on screen.
+   *
+   * It submits the live form state, not the saved row, so a configuration can
+   * be validated before it is ever persisted. The backend sends the message
+   * synchronously and answers with the provider's own error text, which is
+   * shown verbatim: a timed out socket and a rejected API key look identical
+   * from the outside, and only that string tells them apart.
+   */
+  const handleTestConnection = async () => {
+    // Cheap guards first: these three would come back as a 422 the user has to
+    // read in a toast, when the form can answer them without a round trip.
+    if (!formData.from_email || !formData.from_name) {
+      toast.warning('Captura el correo y el nombre del remitente antes de probar.');
+      return;
+    }
+    if ((formData.target_emails || []).length === 0) {
+      toast.warning('Agrega al menos un correo destino: la prueba envía un mensaje real.');
+      return;
+    }
+    if (!editing && !formData.api_key) {
+      toast.warning('Escribe la API Key del proveedor para poder probar la conexión.');
+      return;
+    }
+
+    setTesting(true);
+    try {
+      const { data } = await api.post('/admin/email-configurations/test-connection', {
+        process_type: formData.process_type,
+        provider: formData.provider,
+        // Blank while editing: the backend falls back to the stored credential
+        // of this row, since the API never returns the key to the browser.
+        api_key: formData.api_key,
+        configuration_id: editing?.id ?? null,
+        from_email: formData.from_email,
+        from_name: formData.from_name,
+        target_emails: formData.target_emails,
+      });
+
+      const { host, port } = data.data?.transport || {};
+      toast.success(data.metadata?.message || 'Conexión exitosa.', {
+        description: host ? `Ruta ${host}:${port} — ${data.data.elapsed_ms} ms` : undefined,
+        duration: 8000,
+      });
+    } catch (err) {
+      const response = err.response?.data;
+      const detail = response?.message || 'No se pudo completar la prueba de conexión.';
+
+      // Long-lived toast: the transport error is the payload of this feature,
+      // and a stack-trace-sized string needs time on screen to be read or copied.
+      toast.error('Falló la prueba de conexión', {
+        description: detail,
+        duration: 15000,
+      });
+    } finally {
+      setTesting(false);
     }
   };
 
@@ -243,6 +304,11 @@ export default function EmailNotificationsPanel() {
             activa al momento de enviar; si un proceso no tiene configuración activa, simplemente
             no notifica.
           </p>
+          <p className="mt-2 max-w-2xl text-sm text-slate-500">
+            Usa <strong className="font-semibold text-slate-600">Probar Conexión</strong> dentro del
+            formulario para validar credenciales y puerto de salida en el momento: envía un correo
+            real de diagnóstico sin necesidad de guardar ni de esperar a los procesos programados.
+          </p>
         </div>
         <Button
           label="Nueva Configuración"
@@ -272,12 +338,15 @@ export default function EmailNotificationsPanel() {
 
       <Dialog
         visible={showForm}
-        onHide={() => !saving && setShowForm(false)}
+        // A running health check is a synchronous request against the provider:
+        // closing the dialog mid-flight would leave its toast landing on a form
+        // that no longer exists.
+        onHide={() => !saving && !testing && setShowForm(false)}
         header={editing ? 'Editar Configuración de Correo' : 'Nueva Configuración de Correo'}
         style={{ width: '560px' }}
         modal
         draggable={false}
-        closable={!saving}
+        closable={!saving && !testing}
       >
         <form onSubmit={handleSave} className="space-y-4">
           <div className="grid grid-cols-2 gap-4">
@@ -398,24 +467,43 @@ export default function EmailNotificationsPanel() {
             </div>
           </div>
 
-          <div className="flex justify-end gap-2 pt-2">
+          <div className="flex flex-wrap items-center justify-between gap-2 pt-2">
+            {/* Diagnostic action. type="button" is load-bearing: inside a form,
+                the default type is "submit" and clicking it would save the
+                configuration instead of testing it. */}
             <Button
               type="button"
-              label="Cancelar"
+              label={testing ? 'Probando...' : 'Probar Conexión'}
+              icon={testing ? undefined : 'pi pi-send'}
+              loading={testing}
+              disabled={testing || saving}
+              onClick={handleTestConnection}
+              outlined
               severity="secondary"
-              text
-              onClick={() => setShowForm(false)}
-              disabled={saving}
-              className="cursor-pointer"
+              tooltip="Envía un correo real ahora mismo con los datos capturados, sin guardar la configuración"
+              tooltipOptions={{ position: 'top', showDelay: 300 }}
+              className="cursor-pointer rounded-lg px-4 py-2.5 text-sm font-semibold"
             />
-            <Button
-              type="submit"
-              label={saving ? 'Guardando...' : 'Guardar'}
-              loading={saving}
-              disabled={saving}
-              className="cursor-pointer rounded-lg bg-indigo-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-indigo-500"
-              pt={{ root: { className: 'border-0' } }}
-            />
+
+            <div className="flex gap-2">
+              <Button
+                type="button"
+                label="Cancelar"
+                severity="secondary"
+                text
+                onClick={() => setShowForm(false)}
+                disabled={saving || testing}
+                className="cursor-pointer"
+              />
+              <Button
+                type="submit"
+                label={saving ? 'Guardando...' : 'Guardar'}
+                loading={saving}
+                disabled={saving || testing}
+                className="cursor-pointer rounded-lg bg-indigo-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-indigo-500"
+                pt={{ root: { className: 'border-0' } }}
+              />
+            </div>
           </div>
         </form>
       </Dialog>

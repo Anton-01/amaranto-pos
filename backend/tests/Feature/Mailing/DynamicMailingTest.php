@@ -119,14 +119,30 @@ class DynamicMailingTest extends TestCase
 
         $job->handle(app(DynamicMailerFactory::class));
 
-        // MailFake files every ShouldQueue mailable under "queued" regardless
-        // of the method used to hand it over, so the assertion looks at that
-        // bucket. In production the same call sends immediately: the queueing
-        // already happened when this job was dispatched.
-        Mail::assertQueued(CashRegisterClosingReportMail::class, function (CashRegisterClosingReportMail $mail) use ($configuration) {
+        /*
+         * The assertion looks at the "sent" bucket, not the queued one:
+         * MailFake::sendNow() files the mailable as sent even when it is a
+         * ShouldQueue instance (it hardcodes shouldQueue: false), and that is
+         * the behaviour the job depends on. Queueing it again from inside the
+         * worker would push it back to Redis, where the run-time transport no
+         * longer exists — the asynchronous leg already happened when this job
+         * was dispatched.
+         */
+        Mail::assertSent(CashRegisterClosingReportMail::class, function (CashRegisterClosingReportMail $mail) use ($configuration) {
+            /*
+             * The sender is read off the property instead of through
+             * hasFrom(): that helper consults envelope() first, and
+             * Envelope::isFrom() dereferences its own $from without a null
+             * check. This Mailable's envelope declares only a subject — the
+             * identity is applied by the job — so the helper fatals before it
+             * ever compares anything.
+             */
+            $from = $mail->from[0] ?? [];
+
             return $mail->hasTo('contabilidad@cronos.pos')
                 && $mail->hasTo('direccion@cronos.pos')
-                && $mail->hasFrom($configuration->from_email, $configuration->from_name)
+                && ($from['address'] ?? null) === $configuration->from_email
+                && ($from['name'] ?? null) === $configuration->from_name
                 && $mail->subject === $configuration->subject;
         });
     }
@@ -165,6 +181,34 @@ class DynamicMailingTest extends TestCase
         // SendGrid's relay requires this literal username; the key is the password.
         $this->assertSame('apikey', $transport['username']);
         $this->assertSame('SG.testing-key-0001', $transport['password']);
+    }
+
+    public function test_el_transporte_de_sendgrid_relaya_por_el_puerto_alterno_2525(): void
+    {
+        /*
+         * Regression guard for the production timeout. Cloud providers block
+         * outbound port 587 as an anti-spam policy and drop the packets rather
+         * than rejecting them, so the SMTP handshake hangs until the socket
+         * expires and the job dies with "Operation timed out". SendGrid's
+         * alternate submission port 2525 is not covered by that block, so it
+         * stays the default for any deployment on a VPS or Droplet.
+         */
+        $transport = config("mail.mailers.{$this->registeredSendGridMailer()}");
+
+        $this->assertSame(2525, $transport['port']);
+        $this->assertNotSame(587, $transport['port']);
+        // STARTTLS still applies on 2525: the alternate port changes the route,
+        // never the encryption.
+        $this->assertSame('tls', $transport['encryption']);
+
+        // The skeleton is the single source of truth for the port, so the guard
+        // has to hold there too — not only on the transport it produced.
+        $this->assertSame(2525, (int) config('mailing.providers.sendgrid.port'));
+    }
+
+    private function registeredSendGridMailer(): string
+    {
+        return app(DynamicMailerFactory::class)->register($this->activeJobsConfiguration());
     }
 
     public function test_el_reporte_es_autocontenido_sin_pdf_ni_diferencias(): void

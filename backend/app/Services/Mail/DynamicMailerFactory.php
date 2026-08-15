@@ -75,6 +75,12 @@ class DynamicMailerFactory
      * SendGrid's relay authenticates with the fixed username "apikey" plus the
      * key as password; generic servers use the sender address as username. The
      * `credentials` flag on the skeleton selects between both shapes.
+     *
+     * The port always comes from the skeleton. Do not reintroduce 587 as the
+     * fallback: cloud providers block outbound 587 as an anti-spam measure and
+     * the connection times out instead of failing fast, so a skeleton missing
+     * its port would silently sink every message. 2525 is SendGrid's alternate
+     * submission port and is not covered by that block.
      */
     private function transportFor(array $provider, EmailConfiguration $configuration): array
     {
@@ -87,7 +93,7 @@ class DynamicMailerFactory
         return [
             'transport' => $provider['transport'] ?? 'smtp',
             'host' => $provider['host'] ?? '127.0.0.1',
-            'port' => $provider['port'] ?? 587,
+            'port' => $provider['port'] ?? 2525,
             'encryption' => $provider['encryption'] ?? 'tls',
             'username' => $username,
             'password' => $configuration->api_key,

@@ -29,6 +29,11 @@ use Illuminate\Support\Facades\Mail;
  * configuration. Resolving here keeps the transport and the send in the same
  * process, and has the side benefit of reading the freshest row: a key rotated
  * while the message sat in Redis is still honoured.
+ *
+ * If this job starts failing with "TransportException: Operation timed out",
+ * check the port of the transport before suspecting the provider: hosts block
+ * outbound 587 by default, which is why the SendGrid skeleton in
+ * config/mailing.php relays through the alternate port 2525.
  */
 class SendConfiguredProcessMail implements ShouldQueue
 {
