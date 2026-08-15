@@ -33,7 +33,10 @@ use Illuminate\Support\Facades\Mail;
  * If this job starts failing with "TransportException: Operation timed out",
  * check the port of the transport before suspecting the provider: hosts block
  * outbound 587 by default, which is why the SendGrid skeleton in
- * config/mailing.php relays through the alternate port 2525.
+ * config/mailing.php relays through the alternate port 2525. If it fails
+ * against 127.0.0.1 while the .env points somewhere else, the transport was
+ * overridden rather than inherited — run `php artisan app:debug-mail-config`
+ * to see the route the worker resolves in a live process.
  */
 class SendConfiguredProcessMail implements ShouldQueue
 {
@@ -99,9 +102,17 @@ class SendConfiguredProcessMail implements ShouldQueue
         // already inside the worker — this is the asynchronous leg.
         Mail::mailer($mailerName)->to($recipients)->sendNow($this->mailable);
 
+        /*
+         * The mailer name is logged because it is the answer to "which
+         * configuration actually won": a "dynamic-*" name means the database
+         * row supplied the transport, any other name means the row had nothing
+         * to override and the message left through the mailer declared in the
+         * .env. Without it, both cases produce an identical success line.
+         */
         Log::info('Correo de proceso enviado.', [
             'process_type' => $this->processType,
             'provider' => $configuration->provider,
+            'mailer' => $mailerName,
             'recipients' => count($recipients),
             'mailable' => $this->mailable::class,
         ]);

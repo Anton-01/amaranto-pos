@@ -6211,3 +6211,203 @@ y la plantilla imprime fecha, proceso y ruta de salida.
 - `backend/routes/api.php` — ruta con cuota propia dentro del grupo `role:admin`
 - `backend/tests/Feature/Mailing/DynamicMailingTest.php` — aserción corregida (nota de mantenimiento)
 - `frontend/src/components/settings/EmailNotificationsPanel.jsx` — botón, estado `testing` y toasts de diagnóstico
+
+---
+
+## 58. CONFIGURACIÓN DE CORREO SECUESTRADA: EL `.env` VUELVE A MANDAR CUANDO LA BASE NO TIENE DATOS [🟢 CORREGIDO]
+
+`.env.production` declaraba `MAIL_HOST=smtp.resend.com` y el sistema seguía
+marcando `127.0.0.1`. El archivo estaba bien: lo que estaba mal era que
+**alguien lo sobrescribía en memoria** después de leerlo. Esta sección elimina
+ese secuestro y fija la regla de precedencia que faltaba.
+
+### 58.1 El diagnóstico: un `Config::set()` incondicional sobre valores que no existían
+
+`DynamicMailerFactory::register()` ejecutaba **siempre** esta línea, sin
+preguntarse si tenía algo real que inyectar:
+
+```php
+Config::set("mail.mailers.{$mailerName}", $this->transportFor($provider, $configuration));
+```
+
+Y `transportFor()` armaba el transporte a partir de la plantilla del proveedor
+con literales de respaldo:
+
+```php
+'host' => $provider['host'] ?? '127.0.0.1',
+'port' => $provider['port'] ?? 2525,
+```
+
+La plantilla del proveedor genérico, a su vez, traía el literal incorporado en
+el propio `env()`:
+
+```php
+'smtp' => [
+    'host' => env('DYNAMIC_SMTP_HOST', '127.0.0.1'),   // ← el secuestro
+    'port' => (int) env('DYNAMIC_SMTP_PORT', 587),
+],
+```
+
+**Ningún despliegue define `DYNAMIC_SMTP_HOST`.** Nunca se pensó como variable
+obligatoria: era el gancho para un relay alterno. Pero al llevar el literal
+dentro del segundo argumento, la ausencia de la variable no producía "sin
+configurar", producía `127.0.0.1` — un valor tan válido para el código como
+cualquier otro, que bajaba por `transportFor()` hasta `Config::set()` y
+**reemplazaba** el `MAIL_HOST` correcto en `config('mail.mailers.*')`.
+
+De ahí el síntoma exacto que se reportó:
+
+| Capa | Qué contenía |
+| :--- | :--- |
+| `.env.production` | `MAIL_HOST=smtp.resend.com` ✅ |
+| `config/mail.php` | `smtp.resend.com` ✅ (leído correctamente) |
+| `config/mailing.php` | `127.0.0.1` (literal, sin variable que lo desplazara) |
+| `config('mail.mailers.dynamic-jobs')` tras `register()` | **`127.0.0.1`** ❌ |
+
+El `.env` se leía siempre y siempre se descartaba, un microsegundo después. Por
+eso revisar el archivo, el `docker-compose` o el contenedor no llevaba a ningún
+lado: la evidencia no estaba en disco, estaba en memoria y solo existía dentro
+del worker.
+
+**La lección de diseño.** `Config::set()` no es "configurar", es **sobrescribir
+lo que el servidor ya decidió**. Ejecutarlo sin condiciones convierte cada valor
+que la fábrica no pudo resolver en un pisotón silencioso sobre uno que sí era
+correcto. Un valor ausente en la base de datos no es un valor: es la instrucción
+de no tocar nada.
+
+### 58.2 La regla: prioridad campo por campo
+
+```
+    base de datos   >   config/mailing.php   >   config/mail.php (.env.production)
+```
+
+Se aplica **por campo**, no por bloque: que la fila aporte la credencial no le
+da derecho a decidir el host. Cada capa solo sobrescribe lo que realmente
+declara, y lo que no declara se hereda intacto de la capa de abajo.
+
+| Campo | Lo aporta | Notas |
+| :--- | :--- | :--- |
+| `password` | La fila (`api_key`, cifrada) | Manda sobre `MAIL_PASSWORD` siempre que exista |
+| `host` / `port` / `encryption` / `timeout` | La plantilla del proveedor | Solo si la plantilla los declara |
+| `username` | Plantilla → `MAIL_USERNAME` → remitente | El remitente es el **último** recurso, no el primero |
+| Remitente, asunto, destinatarios | La fila | Se aplican al Mailable, nunca al transporte |
+| Todo lo demás | `config/mail.php` | La base que produce el `.env` |
+
+Con proveedor **SendGrid**, la plantilla sí fija host y puerto: elegir SendGrid
+en el panel es pedir `smtp.sendgrid.net:2525` explícitamente (sección 56), no
+"lo que diga `MAIL_HOST`".
+
+Con proveedor **SMTP Genérico**, la plantilla ya no declara nada y el envío sale
+por el servidor de correo del `.env`. Las `DYNAMIC_SMTP_*` siguen disponibles
+para quien necesite desviar el correo del panel a otro relay, y se leen **solo
+si están definidas**.
+
+### 58.3 La corrección: el `Config::set()` es ahora condicional
+
+`register()` calcula primero qué está sobrescribiendo de verdad. Si la
+respuesta es "nada", no inyecta ningún transporte y devuelve el nombre del
+mailer que declara el `.env`:
+
+```php
+$native = $this->nativeTransport($provider);
+$overrides = $this->overridesFor($provider, $configuration, $native);
+
+if ($overrides === []) {
+    return $this->nativeMailerName($provider);   // sin Config::set()
+}
+
+Config::set("mail.mailers.{$mailerName}", $this->transportFor($provider, $native, $overrides));
+```
+
+Tres detalles que sostienen la regla:
+
+- **`transport` no cuenta como sobrescritura.** Todas las plantillas lo
+  declaran (`'transport' => 'smtp'`), así que incluirlo en la cuenta habría
+  hecho `$overrides` siempre distinto de vacío y la rama de herencia
+  inalcanzable — el secuestro de vuelta, con otra ropa.
+- **El `username` se resuelve al final y solo si ya hay algo más que
+  sobrescribir.** Por sí solo no autentica nada, y añadirlo bastaría para
+  forzar un `Config::set()` cuyo único efecto sería cambiar el `MAIL_USERNAME`
+  del servidor por la dirección del remitente.
+- **Con host propio se descartan `url` y `scheme` heredados.** Symfony arma el
+  DSN a partir de ellos **antes** que de host y puerto: heredarlos dejaría que
+  un `MAIL_URL` del `.env` desviara el tráfico de SendGrid mientras todos los
+  valores impresos seguirían diciendo `smtp.sendgrid.net`.
+
+`config/mailing.php` quedó sin literales de endpoint en el proveedor genérico y
+con una clave nueva, `inherits`, que nombra el mailer de `config/mail.php` que
+cada proveedor completa. El propio archivo lleva escrito por qué un `null` ahí
+no significa "sin servidor" sino "lo que diga el `.env`", porque rellenarlo
+parece una mejora en cualquier diff.
+
+### 58.4 `php artisan app:debug-mail-config`
+
+El incidente duró lo que duró porque no había forma de preguntarle al framework
+qué estaba usando. El comando responde eso, y se ejecuta dentro del contenedor
+de la API o del worker:
+
+```bash
+docker compose -f docker-compose.prod.yml exec api php artisan app:debug-mail-config
+```
+
+Imprime cuatro secciones, en el orden en que las capas se aplican:
+
+1. **Entorno de ejecución** — si la configuración está cacheada y, por lo
+   tanto, si el `.env` se leyó siquiera en este arranque.
+2. **Mailer nativo** — `config('mail.mailers.smtp.host')` y
+   `config('mail.mailers.smtp.port')` impresos textualmente, más el bloque
+   completo y `config('mail.default')`.
+3. **Variables de entorno** — las `MAIL_*` y `DYNAMIC_SMTP_*` crudas,
+   contrastadas contra la configuración cargada; si `MAIL_HOST` y
+   `config(...smtp.host)` no coinciden, lo dice con todas sus letras.
+4. **Filas almacenadas** — qué mailer resolvería cada proceso y si el
+   transporte sale de la base de datos o del `.env`.
+
+Es de solo lectura: no envía nada y no escribe nada. Las contraseñas salen
+enmascaradas a los últimos cuatro caracteres, porque esta salida termina pegada
+en tickets y conversaciones.
+
+**El hallazgo que suele aparecer aquí.** Con `config:cache` activo (lo ejecuta
+`docker-entrypoint.prod.sh` en cada arranque), Laravel **no lee el `.env`**:
+trabaja contra `bootstrap/cache/config.php`. Editar el archivo no cambia nada
+hasta reconstruir el caché, y las lecturas de `env()` vuelven vacías — que es
+distinto de que la variable no exista. El comando avisa de esa condición antes
+de que se interprete como una segunda falla:
+
+```bash
+php artisan config:cache && php artisan queue:restart
+```
+
+`queue:restart` no es opcional: los workers son procesos largos y conservan en
+memoria la configuración con la que arrancaron.
+
+### 58.5 Pruebas
+
+`tests/Feature/Mailing/MailConfigurationPrecedenceTest.php` — 7 pruebas, sin
+tocar la base de datos (el modelo viaja en memoria, como en la sección 57):
+
+- Sin datos en la fila y sin plantilla, `register()` devuelve el mailer nativo,
+  **no** crea `mail.mailers.dynamic-jobs` y deja el bloque `smtp` intacto.
+- Una credencial guardada inyecta transporte pero hereda host y puerto del
+  `.env`: la aserción explícita es que el host **no** es `127.0.0.1`.
+- Una plantilla con `DYNAMIC_SMTP_HOST` gana sobre el `.env`, con el puerto
+  convertido a entero.
+- SendGrid conserva `smtp.sendgrid.net:2525` y no hereda el host del `.env`.
+- Un `MAIL_URL` en el `.env` no desvía al proveedor elegido.
+- Guardia sobre el archivo: `config/mailing.php` no vuelve a declarar host ni
+  puerto literales en el proveedor genérico.
+- El comando de diagnóstico imprime host y puerto vigentes y **no** filtra la
+  contraseña.
+
+Las nueve pruebas de `DynamicMailingTest.php` siguen aplicando sin cambios: el
+transporte de SendGrid conserva credenciales, puerto 2525 y cifrado `tls`.
+
+### Archivos Creados
+- `backend/app/Console/Commands/DebugMailConfig.php` — comando `app:debug-mail-config`
+- `backend/tests/Feature/Mailing/MailConfigurationPrecedenceTest.php`
+
+### Archivos Modificados
+- `backend/app/Services/Mail/DynamicMailerFactory.php` — `Config::set()` condicional, herencia del mailer del `.env` y resolución de `username` por prioridad
+- `backend/config/mailing.php` — se elimina el literal `127.0.0.1` del proveedor genérico, clave `inherits` y orden de precedencia documentado en el archivo
+- `backend/app/Jobs/SendConfiguredProcessMail.php` — se registra el mailer resuelto en la bitácora de envío y nota de diagnóstico
+- `.env.production.example` — orden de prioridad, comprobación con `app:debug-mail-config` y bloque opcional `DYNAMIC_SMTP_*`
