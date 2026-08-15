@@ -14,7 +14,16 @@ class CategoryController extends Controller
 {
     public function index(Request $request): JsonResponse
     {
-        $query = Category::query();
+        // The category list renders a name, a status and the product counter.
+        // The soft-delete audit trail and the timestamps stay in PostgreSQL.
+        $columns = ['id', 'name', 'is_active'];
+
+        if ($request->has('include_deleted') && $request->boolean('include_deleted')) {
+            // SoftDeletes reads this column to resolve `trashed()`.
+            $columns[] = 'deleted_at';
+        }
+
+        $query = Category::query()->select($columns);
 
         if ($request->has('include_deleted') && $request->boolean('include_deleted')) {
             $query->withTrashed();

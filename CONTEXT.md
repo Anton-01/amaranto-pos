@@ -5,11 +5,16 @@
 - Frontend: React 18/19, Tailwind CSS v4, PrimeReact, Sonner
 - Base de Datos: Managed PostgreSQL (DigitalOcean)
 - Cache / Colas: Redis 7 Alpine (cache global + queue worker)
+- **Caché de lecturas pesadas: dinámico, gobernado por base de datos.** La ventana de refresco de cada módulo (`dashboard_stats`, `dashboard_hourly_trend`, `dashboard_top_products`, `monthly_analytics`, `product_catalog`) vive en la tabla `cache_configurations` y se administra desde `Configuración → Caché de Módulos` (15 min / 30 min / 1 h / 1 día / 2 días). `App\Support\ModuleCache` la resuelve en cada petición; `Order` y `Product` purgan sus módulos en `saved`/`deleted`, así que una venta nueva tira el Dashboard de "Hoy" al instante — ver sección 54.
+- **Estándar de payload: prohibido el `SELECT *` implícito.** Toda vista principal proyecta columnas con `select()` y acota sus relaciones (`with('user:id,name')`). No es solo peso: `cost_price` y las cuentas completas de los cajeros dejaron de viajar al navegador — ver sección 54.
 - WebSockets: Laravel Reverb (puerto 8080, tiempo real)
 - **Estándar de Zona Horaria: `America/Mexico_City` en las tres capas (Docker `TZ` → Laravel `APP_TIMEZONE` → sesión de PostgreSQL).** Fuente única de verdad: `config('app.timezone')`, expuesta al código por `App\Support\Timezone`. **El código NO vuelve a escribir la zona a mano** — `Carbon::now()` / `Carbon::today()` sin argumento ya nacen en hora local. Única excepción deliberada: el `->timezone()` del arqueo de las 21:00 en `routes/console.php` (ver secciones 53 y 47).
-- Última corrección: [🟢 SECCIÓN 53: HOMOLOGACIÓN HORARIA DE TRES CAPAS] — Las ventas posteriores a las 18:00 CST se filtraban como del día siguiente porque la frontera del día se dibujaba en UTC. Alineados el reloj del SO de los contenedores (`TZ`), la zona de Laravel (`APP_TIMEZONE`, antes literal en `config/app.php`) y el servidor PostgreSQL de desarrollo (`-c timezone`, que `TZ` por sí solo no mueve en un volumen ya creado). Eliminadas ~40 cadenas `'America/Mexico_City'` escritas a mano que se habrían vuelto una segunda fuente de verdad, y corregidos 4 filtros que usaban la cadena cruda del request como límite de día — ver sección 53.
-- Corrección previa: [🟢 SECCIÓN 52: DESACOPLAMIENTO DEL ENTRYPOINT DE PRODUCCIÓN] — `docker-entrypoint.prod.sh` dejó de cablear `serve` + `queue:work` + `reverb:start` y ahora solo prepara (`storage:link` y las 4 cachés) antes de ceder el control con `exec "$@"`, de modo que el `command:` de `docker-compose.prod.yml` por fin manda: Reverb salió a su propio contenedor y el servicio `scheduler` ejecuta `schedule:work` por primera vez (antes levantaba un servidor HTTP duplicado y las tareas de las 21:00 dependían del cron del host, ahora eliminado) — ver sección 52.
-- Corrección anterior: [🟢 SECCIÓN 51: FLYSYSTEM V3 EN BACKUPS + BLINDAJE DEL CIERRE AUTOMÁTICO] — Eliminado el `assertDependenciesInstalled()` obsoleto que hacía pasar un error de código por una caída de GCP (503), verificación de disco reducida a `Storage::disk(…)->exists('/')` en try/catch con degradación reportada; zona horaria `America/Mexico_City` fijada explícitamente en el schedule de las 21:00; y `AutoCloseCashRegisters` envuelto en try/catch con bitácora propia en `job_execution_logs` para que nunca vuelva a morir en silencio (ver sección 51).
+- **Estándar de Fechas en el Cliente (4.ª capa): `toISOString()` está PROHIBIDO para fechas calendario.** Toda cadena `'YYYY-MM-DD'` que viaja a la API (`date_from`, `date_to`) se genera desde los componentes locales del navegador con `frontend/src/lib/dates.js` (`toLocalYmd` / `todayYmd`), nunca convirtiendo a UTC. `toISOString()` se conserva **solo** para instantes (`created_at`, `_queued_at`), que es su uso correcto — ver sección 55.
+- Último trabajo: [🟢 SECCIÓN 55: ESTANDARIZACIÓN DE FECHAS EN EL CLIENTE] — El filtro rápido "Hoy" devolvía la lista vacía después de las 18:00 CST: el frontend construía el día con `new Date().toISOString().split('T')[0]`, que imprime el día **UTC**, y a partir de las 6 PM pedía a la API las ventas de mañana. El backend nunca estuvo mal (sección 53); la pregunta que le llegaba sí. Creada `lib/dates.js` como fuente única, corregidas 7 pantallas (incluidas 3 que ya calculaban bien pero con su propia copia del formateador) y detectado de paso que la vigencia de las promociones se guardaba 6 horas tarde por el mismo motivo — ver sección 55.
+- Trabajo previo: [🟢 SECCIÓN 54: PROYECCIÓN DE COLUMNAS, CACHÉ DINÁMICO EN REDIS Y PERCEPCIÓN DE CARGA] — Cuatro capas del mismo problema. (1) Eliminado el `SELECT *` implícito de las vistas principales: el Historial de Ventas ya no publica `cost_price` de cada partida ni la cuenta completa del cajero, y el catálogo del POS dejó de exponer el margen del negocio. (2) El TTL salió de PHP a la tabla `cache_configurations`, con invalidación crítica colgada de los modelos `Order` y `Product` para que una venta o un movimiento de stock purguen el Dashboard de inmediato. (3) El spinner del Dashboard se sustituyó por un esqueleto que calca su geometría final, de modo que al llegar los datos nada se mueve. (4) El Sidebar centra su enlace activo tras el montaje, resolviendo la pérdida de posición al refrescar — ver sección 54.
+- Corrección previa: [🟢 SECCIÓN 53: HOMOLOGACIÓN HORARIA DE TRES CAPAS] — Las ventas posteriores a las 18:00 CST se filtraban como del día siguiente porque la frontera del día se dibujaba en UTC. Alineados el reloj del SO de los contenedores (`TZ`), la zona de Laravel (`APP_TIMEZONE`, antes literal en `config/app.php`) y el servidor PostgreSQL de desarrollo (`-c timezone`, que `TZ` por sí solo no mueve en un volumen ya creado). Eliminadas ~40 cadenas `'America/Mexico_City'` escritas a mano que se habrían vuelto una segunda fuente de verdad, y corregidos 4 filtros que usaban la cadena cruda del request como límite de día — ver sección 53.
+- Corrección anterior: [🟢 SECCIÓN 52: DESACOPLAMIENTO DEL ENTRYPOINT DE PRODUCCIÓN] — `docker-entrypoint.prod.sh` dejó de cablear `serve` + `queue:work` + `reverb:start` y ahora solo prepara (`storage:link` y las 4 cachés) antes de ceder el control con `exec "$@"`, de modo que el `command:` de `docker-compose.prod.yml` por fin manda: Reverb salió a su propio contenedor y el servicio `scheduler` ejecuta `schedule:work` por primera vez (antes levantaba un servidor HTTP duplicado y las tareas de las 21:00 dependían del cron del host, ahora eliminado) — ver sección 52.
+- Corrección más antigua: [🟢 SECCIÓN 51: FLYSYSTEM V3 EN BACKUPS + BLINDAJE DEL CIERRE AUTOMÁTICO] — Eliminado el `assertDependenciesInstalled()` obsoleto que hacía pasar un error de código por una caída de GCP (503), verificación de disco reducida a `Storage::disk(…)->exists('/')` en try/catch con degradación reportada; zona horaria `America/Mexico_City` fijada explícitamente en el schedule de las 21:00; y `AutoCloseCashRegisters` envuelto en try/catch con bitácora propia en `job_execution_logs` para que nunca vuelva a morir en silencio (ver sección 51).
 - Estado del Proyecto: [🟢 FASE 11: TRANSICIONES INSTANTÁNEAS POS ↔ MESAS COMPLETADO] — Caché SWR suscribible con render inmediato desde memoria y revalidación silenciosa, shell persistente que deja de desmontar sidebar y header, cascada serial del POS eliminada (4 lecturas en paralelo) y prefetch por intención en hover/focus. Medido con Playwright sobre el bundle de producción: parpadeo eliminado (7-8 → 0 frames con spinner), Mesas→POS de 241 ms a ~110 ms y 24 → 1 peticiones HTTP en cuatro idas y vueltas (ver sección 44).
 - Fase previa: [🟢 FASE 10: TELEMETRÍA DE JOBS, HISTÓRICO DE EJECUCIÓN Y ECOSISTEMA DE ROLLBACK/BACKUPS AISLADOS EN GCP COMPLETADO] — Bitácora forense `job_execution_logs` alimentada por los eventos nativos de la cola (un renglón por intento, con traza y disparador), panel admin `/admin/jobs-monitor` con catálogo, histórico y reintento manual; y bóveda de respaldos cifrada AES-256 en Google Cloud Storage —aislada de la infraestructura primaria en DigitalOcean— con rollback transaccional validado por checksum SHA-256 (ver sección 43).
 - Fase 9: [🟢 ESCUDO DE SEGURIDAD Y THROTTLING COMPLETADO] — Blindaje perimetral en cuatro capas: candado anti fuerza bruta en el login (5 fallos/min por email+IP → bloqueo de 15 min con `Retry-After`), cupo global de API (100 req/min por usuario/IP), middleware global de cabeceras de seguridad con CSP calibrada, y Cloudflare Turnstile invisible validado server-side antes de las credenciales (ver sección 42).
@@ -21,6 +26,10 @@
 ## 2. Matriz de Modulos y Progreso
 | Modulo | Estado Backend | Estado Frontend | Observaciones |
 | :--- | :--- | :--- | :--- |
+| Fechas en el Cliente (hora local) | N/A | [🟢 SECCIÓN 55: CORREGIDO] | `frontend/src/lib/dates.js` como fuente única: `toLocalYmd` / `todayYmd` construyen `'YYYY-MM-DD'` desde los componentes locales del navegador. `toISOString()` prohibido para fechas calendario (imprimía el día UTC y rompía el filtro "Hoy" a partir de las 18:00 CST) y conservado solo para instantes. Incluye `toLocalDateTime` para pickers con `showTime` y `parseLocalYmd` para el problema inverso — ver sección 55 |
+| Caché Dinámico de Módulos (Redis) | [🟢 SECCIÓN 54: COMPLETADO] | [🟢 SECCIÓN 54: COMPLETADO] | Tabla `cache_configurations` (`module_name` único, `duration_minutes`, `is_active`) + `App\Support\ModuleCache` resolviendo el TTL en cada petición. 5 módulos cacheables y 5 ventanas cerradas (15 / 30 / 60 / 1440 / 2880 min) administradas desde `Configuración → Caché de Módulos` (admin-only). Sin *cache tags*: índice de claves por módulo, así funciona igual en Redis, `database` y `array`. Invalidación crítica en `Order::booted()` y `Product::booted()` — ver sección 54 |
+| Reducción de Payload / Data Masking | [🟢 SECCIÓN 54: COMPLETADO] | N/A | `select()` explícito + *eager loading* acotado en Dashboard, Historial de Ventas, catálogo POS, productos, usuarios, cierres de caja, plano de mesas y export a Excel. `cost_price` fuera del POS y del historial; cuentas de cajero reducidas a `id,name(,email)` — ver sección 54 |
+| Rendimiento Percibido (Skeletons + Sidebar) | N/A | [🟢 SECCIÓN 54: COMPLETADO] | `DashboardSkeleton` calca la geometría final (KPIs, gráfica, dona y leyenda) con `animate-pulse`, solo en la primera carga; el Sidebar centra su enlace activo con `scrollIntoView({behavior:'auto',block:'center'})` sin mover el documento — ver sección 54 |
 | Infraestructura & Docker | [🟢 Completado y Operativo] | [🟢 Completado y Operativo] | Docker Compose multi-contenedor, Alpine, Hot-Reload, Reverb WS :8080 |
 | Desacoplamiento del Entrypoint (Docker) | [🟢 SECCIÓN 52: CORREGIDO] | N/A | `docker-entrypoint.prod.sh` era rígido (`queue:work &` + `reverb:start &` + `exec artisan serve`) y, como `ENTRYPOINT` gana sobre `command:`, los tres contenedores levantaban la pila completa: 3 servidores HTTP, 3 Reverb peleando por :8080, 3 consumidores de la misma cola y **cero** `schedule:work`. Ahora el script solo prepara (`storage:link`, `config/route/event/view:cache`) y termina en `exec "$@"`; Reverb pasó a un 4.º contenedor propio, `REVERB_HOST` apunta al servicio interno con `REVERB_SCHEME=http`, y el cron `schedule:run` del host se eliminó para no duplicar el arqueo de las 21:00 — ver sección 52 |
 | Despliegue Produccion (DigitalOcean) | [🟢 FASE 7: DEPLOY ÁGIL Y DOCKER OPTIMIZADO] | [🟢 FASE 7: DEPLOY ÁGIL Y DOCKER OPTIMIZADO] | Imagenes pre-compiladas (serversideup/php + nginx:alpine), frontend pre-construido en local, build en Droplet < 2 min, Nginx HTTPS/WSS proxy, Managed PostgreSQL SSL, Certbot, deploy.sh, scheduler residente en contenedor propio (`schedule:work`, **sin** cron en el host — ver sección 52) |
@@ -5512,3 +5521,412 @@ la pantalla del cajero puedan cuadrar entre sí.
 - `backend/app/Models/{Order,OrderItem,Table,TableSession,SystemNotification}.php` — `serializeDate()` vía `Timezone::app()`
 - `backend/app/Console/Commands/AutoCloseCashRegisters.php` — `now()` y `Timezone::app()`
 - `backend/routes/console.php` — comentario actualizado; el literal del schedule de las 21:00 **se conserva a propósito** (53.7)
+
+---
+
+## 54. RENDIMIENTO Y BLINDAJE DEL PAYLOAD: PROYECCIÓN DE COLUMNAS, CACHÉ DINÁMICO EN REDIS Y PERCEPCIÓN DE CARGA [🟢 COMPLETADO Y OPERATIVO]
+
+Cuatro trabajos que atacan el mismo problema desde capas distintas: **cuánto
+viaja**, **cada cuánto se calcula**, **qué ve el usuario mientras espera** y
+**dónde queda parado al volver**. Las tres primeras son de rendimiento medible;
+la primera es, además, de seguridad de datos.
+
+### 54.1 Data Masking / Payload Reduction: se prohíbe el `SELECT *` implícito
+
+Un `Model::with('relacion')->get()` sin `select()` es un `SELECT *` en las dos
+tablas. Eso no es solo peso: es **superficie de exposición**. Cada columna que
+nadie pinta viaja igual al navegador y queda en el *network tab* de cualquier
+terminal del piso.
+
+El caso más caro estaba en el Historial de Ventas. `Order::with(['items.product',
+...])` traía, por cada renglón de la tabla, el producto completo de cada partida
+del ticket —**incluido `cost_price`**—: el margen del negocio publicado a
+cualquier cajero que abriera el historial. Y `cashRegister.user` sin acotar
+adjuntaba la cuenta entera del cajero (teléfono, estado de 2FA,
+`password_restored_at`, rastro de borrado lógico) a cada venta listada.
+
+La regla aplicada en toda vista principal es doble:
+
+| Mecanismo | Qué resuelve | Ejemplo |
+| :--- | :--- | :--- |
+| `select([...])` explícito | El `SELECT *` de la tabla base | `Order::settled()->select(self::LIST_COLUMNS)` |
+| Eager loading acotado (`with('user:id,name')`) | El `SELECT *` de la relación | `'cashRegister.user:id,name'` |
+
+Las columnas se eligen **por lo que el componente de React realmente pinta**, no
+por lo que "podría servir":
+
+| Endpoint | Antes | Ahora |
+| :--- | :--- | :--- |
+| `GET /orders` (Historial) | Orden completa + `items.product` + `ticketConfig` + `promotion` + `table` + usuario completo | 11 columnas + `cashRegister.user:id,name` + `paymentMethod:id,name` |
+| `GET /orders/{id}` (detalle/reimpresión) | `items.product` completo, usuarios completos | `items.product:id,name,sku`, usuarios a `id,name` |
+| `GET /products/grouped` (POS) | Producto completo + categoría | 8 columnas, **sin `cost_price`**, sin categoría (nadie la pinta) |
+| `GET /products` (catálogo) | Producto completo | 11 columnas; fuera `maximum_stock`, `image_url`, rastro de borrado y timestamps |
+| `GET /admin/users` | Cuenta completa + roles completos | `id,name,email,status,created_at` + `roles:id,name` |
+| `GET /admin/cierres` | `cashRegister.user` y `closedByUser` completos | ambos a `id,name,email` |
+| `GET /tables` (plano) | Mesa completa + orden viva completa | 6 columnas + orden a `id,subtotal,iva_total,total` + `items_count` |
+| `GET /sales/export` (Excel, sin paginar) | Orden completa + 4 relaciones | 11 columnas + 2 relaciones acotadas |
+
+> **Por qué el `select()` y no solo `$hidden`.** El modelo `User` ya oculta
+> `password` y los secretos de 2FA, pero `$hidden` es una **lista de negación**:
+> la próxima columna que se agregue a la tabla queda expuesta por omisión. El
+> `select()` explícito invierte la lógica a lista de permitidos.
+
+Dos detalles que hay que respetar al tocar estas consultas:
+
+- **La llave foránea no es decorativa.** `category_id`, `cash_register_id` y
+  `payment_method_id` viajan porque son la columna con la que Eloquent empareja
+  el *eager load*. Quitarlas deja todas las relaciones en `null`.
+- **`deleted_at` viaja solo cuando se pide `include_deleted`.** `SoftDeletes`
+  resuelve `trashed()` leyendo esa columna, así que se agrega al `select()` de
+  forma condicional en `ProductController` y `CategoryController`.
+
+### 54.2 Caché dinámico en base de datos: la ventana la decide un administrador
+
+El TTL dejó de vivir en PHP. La tabla **`cache_configurations`**
+(`module_name` único, `duration_minutes`, `is_active`) guarda una fila por cada
+lectura pesada, y `App\Support\ModuleCache` la resuelve justo antes de responder.
+Ampliar la ventana del Dashboard es una escritura en base de datos desde
+`Configuración → Caché de Módulos`, no un *redeploy*.
+
+**Módulos cacheables** (`CacheConfiguration::MODULES`): `dashboard_stats`,
+`dashboard_hourly_trend`, `dashboard_top_products`, `monthly_analytics`,
+`product_catalog`.
+
+**Ventanas ofrecidas** (lista cerrada, `DURATION_OPTIONS`): 15 min, 30 min, 1 h,
+1 día (1440) y 2 días (2880). Es deliberadamente cerrada: un TTL arbitrario
+escrito a mano es como un Dashboard termina congelado una semana.
+
+El flujo de una lectura:
+
+```
+Petición  →  ModuleCache::remember($módulo, $clave, $consulta)
+                 │
+                 ├─ CacheConfiguration::durationFor($módulo)
+                 │     ├─ null  (política inactiva o duración inválida)
+                 │     │        → se ejecuta la consulta y NO se guarda nada
+                 │     └─ N minutos
+                 │
+                 ├─ registra la clave en el índice del módulo
+                 └─ Cache::remember("module_cache:{módulo}:{clave}", N*60, …)   → Redis
+```
+
+Tres decisiones de diseño que conviene no deshacer:
+
+1. **El mapa de políticas también se cachea.** Leer la tabla en cada petición
+   para decidir si cachear anularía el beneficio. `CacheConfiguration::policies()`
+   guarda las cinco filas como un solo arreglo bajo
+   `cache_configurations:policies`, y cualquier escritura lo invalida en el
+   `saved`/`deleted` del modelo.
+
+2. **No se usan *cache tags* de Redis.** Los tags no existen en el driver
+   `database`, y atarse a un driver por comodidad es una deuda. En su lugar cada
+   clave guardada se apunta en un índice por módulo
+   (`module_cache_index:{módulo}`, podado a 200 claves) y `flush()` recorre ese
+   índice llamando `Cache::forget()`. Funciona igual en Redis, en `database` y
+   con el driver `array` de las pruebas.
+
+3. **Las claves llevan la fecha dentro.** `dashboard_stats` se guarda bajo el día
+   (`2026-08-15`) y `monthly_analytics` bajo el mes (`2026-08`). El cambio de día
+   cae naturalmente en una entrada nueva en lugar de reproducir las cifras de
+   ayer, y navegar meses históricos se sirve siempre de Redis porque esos meses
+   ya no cambian.
+
+Driver: **Redis** (`CACHE_STORE=redis` en `docker-compose.yml` y en
+`.env.production.example`). La suite de pruebas corre sobre el driver `array`
+sin ningún cambio de código.
+
+### 54.3 Invalidación crítica: una venta nueva tira el Dashboard de "Hoy"
+
+Una ventana de dos días sería inaceptable si "Órdenes Hoy" tardara dos días en
+reflejar la venta que el cajero acaba de cobrar. Por eso la invalidación **no
+vive en los controladores sino en los modelos**:
+
+| Modelo | Evento | Módulos purgados | Por qué |
+| :--- | :--- | :--- | :--- |
+| `Order` | `saved`, `deleted` | `dashboard_stats`, `dashboard_hourly_trend`, `dashboard_top_products`, `monthly_analytics` | Toda cifra del Dashboard se deriva de esta tabla |
+| `Product` | `saved`, `deleted` | `product_catalog`, `dashboard_stats` | Precio, baja lógica y **cada decremento de stock** de una venta |
+
+Colgar el *hook* del modelo y no del controlador es intencional: una orden se
+escribe desde cuatro caminos distintos —venta de mostrador, cobro de mesa,
+cancelación y cierre automático de las 21:00— y enganchar cada uno es como
+eventualmente se olvida uno. En `saved` la purga es incondicional, y sigue siendo
+barata: un puñado de `DEL` en Redis.
+
+El mismo criterio aplica al cambio de política: acortar la ventana de 2 días a 15
+minutos purga de inmediato lo guardado bajo la ventana anterior, en lugar de
+esperar a que expire el TTL viejo que ya nadie configuró.
+
+Además, cada módulo tiene un botón **Purgar ahora** en la UI
+(`POST /admin/cache-configurations/{id}/flush`) para el caso en que los datos se
+muevan por un camino que el sistema no observa: una corrección directa en base de
+datos o un rollback desde la bóveda de respaldos.
+
+### 54.4 Administración: nueva pestaña `Caché de Módulos`
+
+Vive en `Configuración del Sistema`, junto a `Notificaciones / Emails`, y como
+ella está detrás de `role:admin` en las dos capas (la pestaña no se renderiza
+para *manager*, y las rutas llevan el middleware). Decidir cuán vieja puede ser
+la cifra que ve todo el negocio es una facultad de administrador.
+
+La tabla lista **siempre el catálogo completo**: los módulos sin política
+aparecen como *Sin configurar* y corren con la ventana por defecto (15 min), de
+modo que las consultas más pesadas nunca quedan sin cachear esperando a que
+alguien visite la pantalla. El `module_name` no se puede reasignar en una fila
+existente —cambiarlo dejaría huérfanos los *payloads* guardados bajo el módulo
+anterior—: se elimina la política y se crea otra.
+
+### 54.5 Skeleton Loaders: el Dashboard se dibuja a sí mismo mientras carga
+
+El *spinner* centrado desapareció. `DashboardSkeleton` reproduce la geometría
+final —cuatro tarjetas de KPI en la misma grilla `1 / 2 / 4`, el panel ancho de
+la gráfica con barras escalonadas, y el panel de Top 5 con su dona (núcleo blanco
+que imita el `innerRadius` real) y sus cinco renglones de leyenda— usando las
+mismas clases de Tailwind que el componente real.
+
+Ese calco es el punto: las cajas caen en los píxeles que ocupará el contenido, así
+que cuando llegan los datos **nada se mueve**. Un *spinner* no le da al ojo ningún
+ancla y todo aparece de golpe; un esqueleto que coincide con la estructura final
+se lee como "ya estoy cargando *esta* pantalla", y por eso la latencia percibida
+baja aunque las peticiones tarden exactamente lo mismo.
+
+Dos matices de implementación:
+
+- **`animate-pulse` solo en los bloques placeholder**, nunca en la tarjeta ni en
+  su `ring`. Animar el contenedor completo hace latir la página entera y se ve
+  notoriamente peor.
+- **El esqueleto solo aparece cuando no hay nada que dibujar** (`loading && !stats`).
+  En una recarga posterior `stats` conserva el payload anterior y la pantalla
+  sigue mostrando cifras reales en lugar de degradarse a cajas grises, que se
+  leería como una regresión y no como carga.
+
+El envoltorio lleva `role="status"` y `aria-busy`, y los bloques decorativos van
+con `aria-hidden`.
+
+### 54.6 UX: el Sidebar recuerda dónde estaba parado el usuario
+
+El scroll de un `<nav>` es estado del navegador, no de React: al refrescar la
+página en `/admin/papelera`, el menú se reconstruía arriba del todo y la opción
+en la que se estaba trabajando quedaba debajo del pliegue.
+
+`Sidebar` ahora localiza el enlace activo **en el DOM** —`nav.querySelector('a[aria-current="page"]')`—
+en lugar de compararlo contra `pathname`. La razón es que React Router ya resolvió
+ese problema: `NavLink` estampa `aria-current="page"` en la entrada que considera
+activa, incluyendo coincidencias parciales y anidadas que una comparación de
+cadenas fallaría. El `useRef` sobre el `<nav>` acota la búsqueda para que ningún
+otro `aria-current` de la página se cuele.
+
+```js
+element.scrollIntoView({ behavior: 'auto', block: 'center' });
+```
+
+- **`behavior: 'auto'` y nunca `'smooth'`**: la corrección tiene que estar
+  terminada en el primer fotograma que el usuario ve, para que se lea como la
+  posición en la que el sidebar siempre estuvo y no como una animación que
+  reacciona a su llegada.
+- **`block: 'center'`** deja entradas visibles arriba y abajo, que es el contexto
+  que vuelve legible la posición.
+- **Dos guardas** lo vuelven un *no-op* en el caso ordinario: no hace nada si la
+  lista no desborda, y no hace nada si el enlace ya está completamente dentro de
+  la banda visible. Solo desplazar cuando de verdad está fuera de pantalla es lo
+  que evita que un clic normal sacuda el menú bajo el cursor.
+- **El scroll de la ventana se restaura.** `scrollIntoView` sube por todos los
+  ancestros desplazables y puede arrastrar el documento; el sidebar es `fixed` y
+  la página detrás no debe moverse, así que se captura y se repone el offset.
+
+### 54.7 Pruebas
+
+`tests/Feature/Performance/DynamicCacheTest.php` fija las propiedades por las que
+existe el módulo (11 casos):
+
+- La duración se lee de la base de datos; un módulo sin fila cae en el default.
+- Una política **inactiva** hace que la consulta corra en vivo y no guarde nada.
+- Una política activa memoriza, y `flush()` obliga a reconstruir.
+- **Una venta nueva invalida el Dashboard de hoy** aun con ventana de 2 días.
+- Acortar la ventana purga lo guardado bajo la anterior.
+- Solo `admin` gobierna las políticas; un `manager` recibe 403.
+- El catálogo lista los módulos sin configurar.
+- Solo se aceptan las cinco ventanas del catálogo, y hay una política por módulo.
+- **`GET /orders` no contiene `cost_price` en ninguna parte del cuerpo**, ni el
+  correo del cajero, ni `items`.
+- **`GET /products/grouped` no publica el margen del negocio.**
+- `GET /admin/users` no devuelve `two_factor_confirmed_at`, `password_restored_at`
+  ni `deleted_at`.
+
+### Archivos Creados
+- `backend/database/migrations/2026_08_15_000001_create_cache_configurations_table.php` — tabla de políticas
+- `backend/app/Models/CacheConfiguration.php` — catálogo de módulos, ventanas, `durationFor()` y purga en `saved`/`deleted`
+- `backend/app/Support/ModuleCache.php` — `remember()` / `flush()` con TTL dinámico e índice de claves por módulo
+- `backend/app/Http/Controllers/Admin/CacheConfigurationController.php` — CRUD, catálogos y purga manual (admin-only)
+- `backend/app/Http/Requests/CacheConfiguration/{Store,Update}CacheConfigurationRequest.php` — validación contra el catálogo cerrado
+- `backend/tests/Feature/Performance/DynamicCacheTest.php` — 11 casos de caché dinámico y enmascarado de payload
+- `frontend/src/components/settings/CacheSettingsPanel.jsx` — pestaña de administración de caché
+- `frontend/src/components/dashboard/DashboardSkeleton.jsx` — esqueleto que calca la geometría del Dashboard
+
+### Archivos Modificados
+- `backend/routes/api.php` — grupo `admin/cache-configurations` bajo `role:admin`
+- `backend/app/Models/Order.php` — invalidación de los cuatro módulos de venta en `saved`/`deleted`
+- `backend/app/Models/Product.php` — invalidación de catálogo POS y alertas de stock
+- `backend/app/Http/Controllers/Dashboard/DashboardController.php` — las tres consultas envueltas en `ModuleCache`; mes y promedio en una sola agregación
+- `backend/app/Http/Controllers/Dashboard/MonthlyAnalyticsController.php` — payload completo memoizado por mes (`buildPayload()`)
+- `backend/app/Http/Controllers/Catalog/ProductController.php` — `LIST_COLUMNS`, `grouped()` cacheado y sin `cost_price`
+- `backend/app/Http/Controllers/Catalog/CategoryController.php` — `select()` explícito
+- `backend/app/Http/Controllers/Sales/OrderController.php` — `LIST_COLUMNS` y relaciones acotadas en `index()` y `show()`
+- `backend/app/Http/Controllers/Sales/SalesExportController.php` — proyección de las 11 columnas del Excel; fuera `promotion` y `table`
+- `backend/app/Http/Controllers/Admin/UserController.php` — `select()` explícito y `roles:id,name`
+- `backend/app/Http/Controllers/Finance/CashRegisterClosingController.php` — `cashRegister.user` y `closedByUser` acotados a `id,name,email` en las seis consultas
+- `backend/app/Http/Controllers/Dining/TableController.php` — `select()` del plano y orden viva reducida a sus columnas de dinero
+- `frontend/src/pages/DashboardPage.jsx` — esqueleto en lugar del spinner, solo en la primera carga
+- `frontend/src/pages/admin/SystemSettingsPage.jsx` — pestaña `Caché de Módulos` (admin-only)
+- `frontend/src/components/layout/Sidebar.jsx` — auto-scroll silencioso al enlace activo (`useRef` + `useEffect` + `scrollIntoView`)
+
+---
+
+## 55. ESTANDARIZACIÓN DE FECHAS EN EL CLIENTE: `YYYY-MM-DD` SIEMPRE EN HORA LOCAL [🟢 CORREGIDO]
+
+La sección 53 alineó las tres capas del **servidor** (SO → Laravel → PostgreSQL)
+para que la frontera del día se dibujara en `America/Mexico_City`. Esta sección
+cierra el último eslabón, que quedó fuera de aquel trabajo: **el navegador**. El
+backend contestaba correctamente; la pregunta que le llegaba estaba mal.
+
+### 55.1 El síntoma: "Hoy" devolvía la lista vacía después de las 18:00
+
+A partir de las 6:00 PM CST, el filtro rápido **Hoy** del Historial de Ventas
+dejaba de mostrar las ventas del día —incluidos los tickets que el cajero acababa
+de cobrar minutos antes—. La causa es de una línea:
+
+```js
+new Date().toISOString().split('T')[0]
+```
+
+`toISOString()` **convierte el instante a UTC antes de formatearlo**, así que el
+día calendario que imprime es el día UTC, no el del reloj de pared del usuario.
+En México (UTC−6) ambos dejan de coincidir cada tarde a las 18:00:
+
+```
+Reloj local                 2026-08-14 18:30 (CST, UTC−6)
+new Date().toISOString()    "2026-08-15T00:30:00.000Z"
+      .split('T')[0]        "2026-08-14"  →  NO: "2026-08-15"   ← mañana
+```
+
+El frontend pedía `date_from=2026-08-15&date_to=2026-08-15` mientras el backend
+—correctamente anclado en hora local desde la sección 53— respondía que ese día
+todavía no tenía ventas. **Ninguna de las dos capas estaba mal por separado: no
+estaban hablando del mismo día.**
+
+### 55.2 La regla: `toISOString()` queda prohibido para fechas calendario
+
+Se creó **`frontend/src/lib/dates.js`** como fuente única, con la justificación
+del bug escrita en el propio archivo para prevenir la regresión. La regla es:
+
+| Tipo de dato | Qué es | Cómo se serializa |
+| :--- | :--- | :--- |
+| **Fecha calendario** (`date_from`, `date_to`, nombre de un archivo exportado) | Un día en el calendario del usuario | `toLocalYmd()` / `todayYmd()` — componentes locales, sin pasar por UTC |
+| **Fecha + hora elegida** (vigencia de una promoción) | Un reloj de pared que el admin escribió | `toLocalDateTime()` → `'YYYY-MM-DD HH:mm:ss'` |
+| **Instante** (`created_at`, `_queued_at`, sello de un ticket) | Un punto en la línea de tiempo | `toISOString()` **sigue siendo lo correcto**: es inequívoco y el receptor lo renderiza en local |
+
+La distinción importa: `toISOString()` no es el enemigo, lo es usarlo para algo
+que no es un instante. Las cuatro llamadas que quedan en el código
+(`CheckoutModal`, `useOnlineStatus`, dos en `TicketConfigPage`) son instantes y
+se conservan a propósito.
+
+Se eligió **no agregar `date-fns`**: el cálculo es aritmética de componentes que
+el navegador ya resolvió en hora local, y el bundle ya pesa 1.8 MB. La utilidad
+completa son ~40 líneas de código.
+
+### 55.3 API de `lib/dates.js`
+
+| Función | Devuelve | Para qué |
+| :--- | :--- | :--- |
+| `toLocalYmd(date)` | `'2026-08-14'` \| `null` | **La única** autorizada a producir `date_from` / `date_to` |
+| `todayYmd()` | `'2026-08-14'` | El día de hoy en el reloj del usuario |
+| `toLocalDateTime(date)` | `'2026-08-14 18:30:00'` \| `null` | Pickers con `showTime` |
+| `parseLocalYmd(value)` | `Date` a medianoche local \| `null` | El problema inverso (55.5) |
+| `addDays(date, n)` | `Date` nueva | Rangos rápidos, sin mutar el original |
+| `addMonths(date, n)` | `Date` nueva | Íd., recortando al último día del mes destino |
+| `startOfMonth(date)` | `Date` nueva | Filtro "Mes" |
+
+### 55.4 Alcance de la corrección
+
+| Archivo | Qué se corrigió |
+| :--- | :--- |
+| `components/layout/AppHeader.jsx` | Contador de "ventas de hoy": pedía el día UTC |
+| `pages/sales/SalesHistoryPage.jsx` | Filtros rápidos (Hoy / Semana / Mes), rango manual del `Calendar` y nombre del Excel |
+| `pages/admin/CashRegisterClosingsPage.jsx` | Íd. (Hoy / Semana / Mes), rango manual y nombre del Excel |
+| `pages/finance/FinanceDashboardPage.jsx` | Copia local del formateador → utilidad compartida |
+| `pages/admin/CashClosingsAuditPage.jsx` | Copia local de `toYmd` → utilidad compartida |
+| `pages/admin/JobsMonitorPage.jsx` | Íd. |
+| `pages/promotions/PromotionsPage.jsx` | Vigencia de la promoción (55.6) |
+
+> **Sobre las tres copias locales.** `FinanceDashboardPage`, `CashClosingsAuditPage`
+> y `JobsMonitorPage` **ya calculaban bien la fecha**, cada una con su propia
+> versión del mismo formateador. No estaban rotas, pero tres implementaciones
+> paralelas de una regla es exactamente cómo una de ellas se desvía en el
+> siguiente refactor. Ahora las siete pantallas comparten una sola función.
+
+### 55.5 El problema inverso: parsear `'YYYY-MM-DD'` de vuelta
+
+`new Date('2026-08-14')` está especificado para interpretar una fecha desnuda
+como **medianoche UTC**, que en México se renderiza como las 18:00 del **día 13**.
+Es el mismo error en espejo. `parseLocalYmd()` construye la fecha desde sus
+partes y la mantiene en el día que la cadena nombra. Se aplicó en el eje del
+gráfico de `FinanceDashboardPage`, que hasta ahora lo esquivaba con el truco de
+concatenar `'T12:00:00'` —funcionaba, pero por accidente y sin explicar por qué—.
+
+### 55.6 Hallazgo adicional: la vigencia de las promociones nacía 6 horas tarde
+
+Al revisar los *datepickers* (requisito 2) apareció un bug del mismo origen pero
+con otro efecto. Ambos `Calendar` del formulario de promociones corren con
+`showTime`: el administrador elige un **instante exacto**. El formulario enviaba
+`formData.start_date.toISOString()`, es decir el mismo instante expresado en UTC:
+
+```
+El admin elige          14/08/2026 00:00  (inicio de la promoción)
+Viajaba como            "2026-08-14T06:00:00.000Z"
+PHP (ya en CST) escribía 2026-08-14 06:00:00   ← 6 horas tarde
+```
+
+Una promoción configurada para arrancar a medianoche arrancaba a las 6 AM, y una
+configurada para terminar a medianoche seguía viva seis horas de más. La
+comparación que decide si aplica (`start_date <= now()`) usa un `now()` local, así
+que el valor comparado tiene que ser local también. Ahora viaja como
+`'2026-08-14 00:00:00'` vía `toLocalDateTime()`.
+
+> **Nota operativa.** Las promociones **ya guardadas** conservan su desfase de 6
+> horas: esto corrige lo que se escribe de aquí en adelante, no migra el
+> histórico. Si alguna promoción vigente tiene una hora de inicio o fin que no
+> cuadra, basta reabrirla y volver a guardarla para que quede con el reloj
+> correcto.
+
+### 55.7 Verificación
+
+Se ejecutó la utilidad bajo `TZ=America/Mexico_City` reproduciendo el escenario
+del reporte (14/08/2026 18:30) — 17 comprobaciones, todas en verde:
+
+```
+legacy toISOString().split("T")[0] => 2026-08-15      ← el bug, reproducido
+toLocalYmd(18:30)                  => 2026-08-14      ← corregido
+toLocalYmd(23:59:59)               => 2026-08-14
+week  -> date_from                 => 2026-08-07
+month -> date_from                 => 2026-07-14
+31/Mar addMonths(-1)               => 2026-02-28      ← sin desbordar a marzo
+addDays(-7) cruzando el año        => 2025-12-27
+toLocalDateTime(00:00)             => 2026-08-14 00:00:00
+legacy new Date("2026-08-14")      => día 13          ← el problema inverso
+parseLocalYmd("2026-08-14")        => 2026-08-14
+```
+
+> La prueba de humo que más importa: entrar al Historial de Ventas **después de
+> las 18:00** y confirmar que el filtro **Hoy** sigue mostrando las ventas del
+> día.
+
+### Archivos Creados
+- `frontend/src/lib/dates.js` — fuente única de fechas locales, con la explicación del bug documentada en el archivo
+
+### Archivos Modificados
+- `frontend/src/components/layout/AppHeader.jsx` — contador de ventas del día
+- `frontend/src/pages/sales/SalesHistoryPage.jsx` — filtros rápidos, rango manual y nombre del Excel
+- `frontend/src/pages/admin/CashRegisterClosingsPage.jsx` — íd.
+- `frontend/src/pages/admin/CashClosingsAuditPage.jsx` — `toYmd` local eliminado
+- `frontend/src/pages/admin/JobsMonitorPage.jsx` — íd.
+- `frontend/src/pages/finance/FinanceDashboardPage.jsx` — `formatDate` local eliminado; eje del gráfico con `parseLocalYmd`
+- `frontend/src/pages/promotions/PromotionsPage.jsx` — vigencia enviada como reloj de pared local

@@ -59,8 +59,18 @@ class CashRegisterClosingController extends Controller
 
     public function index(Request $request): JsonResponse
     {
-        $query = CashRegisterClosing::with(['cashRegister.user', 'closedByUser'])
-            ->orderByDesc('created_at');
+        /*
+         * Both relations resolve to a person's identity on screen, so they are
+         * narrowed to the three columns the table prints. Loading the bare
+         * `user` model instead would attach the whole account to every row —
+         * phone number, two-factor state, `password_restored_at` and the
+         * soft-delete trail — for a grid that shows a name and an email.
+         */
+        $query = CashRegisterClosing::with([
+            'cashRegister:id,user_id',
+            'cashRegister.user:id,name,email',
+            'closedByUser:id,name,email',
+        ])->orderByDesc('created_at');
 
         if ($request->filled('date_from')) {
             $from = Carbon::parse($request->date_from)->startOfDay();
@@ -123,7 +133,7 @@ class CashRegisterClosingController extends Controller
             throw $e;
         }
 
-        $closing->load(['cashRegister.user', 'closedByUser']);
+        $closing->load(['cashRegister:id,user_id', 'cashRegister.user:id,name,email', 'closedByUser:id,name,email']);
 
         return response()->json([
             'status'   => 'success',
@@ -202,7 +212,7 @@ class CashRegisterClosingController extends Controller
 
     public function exportExcel(Request $request): StreamedResponse
     {
-        $query = CashRegisterClosing::with(['cashRegister.user', 'closedByUser'])
+        $query = CashRegisterClosing::with(['cashRegister:id,user_id', 'cashRegister.user:id,name,email', 'closedByUser:id,name,email'])
             ->orderByDesc('created_at');
 
         if ($request->filled('date_from')) {
@@ -324,7 +334,7 @@ class CashRegisterClosingController extends Controller
 
     public function exportPdf(CashRegisterClosing $closing): \Illuminate\Http\Response
     {
-        $closing->load(['cashRegister.user', 'closedByUser']);
+        $closing->load(['cashRegister:id,user_id', 'cashRegister.user:id,name,email', 'closedByUser:id,name,email']);
 
         $pdf = Pdf::loadView('pdf.cash-register-closing', compact('closing'));
         $pdf->setPaper('a4', 'portrait');
@@ -334,7 +344,7 @@ class CashRegisterClosingController extends Controller
 
     public function sendEmail(SendCashRegisterClosingEmailRequest $request): JsonResponse
     {
-        $query = CashRegisterClosing::with(['cashRegister.user', 'closedByUser'])
+        $query = CashRegisterClosing::with(['cashRegister:id,user_id', 'cashRegister.user:id,name,email', 'closedByUser:id,name,email'])
             ->orderByDesc('created_at');
 
         if ($request->filled('date_from')) {

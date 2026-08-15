@@ -15,6 +15,7 @@ import api from '../../api/axios';
 import { useAuth } from '../../context/AuthContext';
 import AppLayout from '../../components/layout/AppLayout';
 import DeleteDialog from '../../components/catalog/DeleteDialog';
+import { toLocalDateTime } from '../../lib/dates';
 
 const typeOptions = [
   { label: 'Porcentaje', value: 'percentage' },
@@ -97,10 +98,24 @@ export default function PromotionsPage() {
     e.preventDefault();
     setSaving(true);
     try {
+      /*
+       * The validity window travels as a LOCAL wall clock, not as UTC.
+       *
+       * Both pickers run with `showTime`, so the administrator is choosing an
+       * exact moment — "this promotion starts at 00:00 on the 15th". Sending
+       * `toISOString()` handed the server that same instant expressed in UTC
+       * ('2026-08-15T06:00:00.000Z'), and PHP — already running in
+       * `America/Mexico_City` — wrote the shifted reading into the column: a
+       * promotion set to open at midnight quietly opened at 6 AM, and one set
+       * to close at midnight stayed live six hours too long. The comparison
+       * that decides whether a promotion applies is `start_date <= now()`
+       * against a local `now()`, so the value it is compared with has to be
+       * local too. See lib/dates.
+       */
       const payload = {
         ...formData,
-        start_date: formData.start_date?.toISOString(),
-        end_date: formData.end_date?.toISOString(),
+        start_date: toLocalDateTime(formData.start_date),
+        end_date: toLocalDateTime(formData.end_date),
       };
 
       if (editingPromo) {

@@ -19,8 +19,33 @@ class SalesExportController extends Controller
     public function export(Request $request): StreamedResponse
     {
         // settled() deja fuera las cuentas de mesa abiertas: aun no son ventas.
+        /*
+         * The export is unpaginated — a year of sales is one query — so a wide
+         * row is a memory problem, not just a slow one. The projection lists
+         * exactly the eleven columns written to the spreadsheet, and the two
+         * relations it reads are narrowed to the label each cell prints. The
+         * `promotion` and `table` relations are gone: no column of the report
+         * touches them.
+         */
         $query = Order::settled()
-            ->with(['paymentMethod', 'cashRegister.user', 'promotion', 'table'])
+            ->select([
+                'id',
+                'cash_register_id',
+                'payment_method_id',
+                'created_at',
+                'status',
+                'subtotal',
+                'iva_total',
+                'total',
+                'discount_total',
+                'table_name_at_sale',
+                'waiter_name_at_sale',
+            ])
+            ->with([
+                'cashRegister:id,user_id',
+                'cashRegister.user:id,name',
+                'paymentMethod:id,name',
+            ])
             ->orderByDesc('created_at');
 
         if ($request->filled('date_from')) {

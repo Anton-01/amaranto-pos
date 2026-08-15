@@ -6,15 +6,54 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\Product\DeleteProductRequest;
 use App\Http\Requests\Product\StoreProductRequest;
 use App\Http\Requests\Product\UpdateProductRequest;
+use App\Models\CacheConfiguration;
 use App\Models\Product;
+use App\Support\ModuleCache;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
 class ProductController extends Controller
 {
+    /**
+     * Columns the product DataTable actually renders.
+     *
+     * Everything the grid does not paint stays in PostgreSQL: `maximum_stock`,
+     * `image_url`, the audit trail of the soft delete (`deleted_by`,
+     * `deletion_reason`) and the `created_at` / `updated_at` timestamps. With
+     * a catalog of a few thousand rows that is the difference between a
+     * payload the browser parses instantly and one it has to stream.
+     *
+     * `category_id` is not decorative: it is the foreign key the
+     * `category:id,name` eager load matches on, and dropping it would leave
+     * every row without its category label.
+     */
+    private const LIST_COLUMNS = [
+        'id',
+        'sku',
+        'parent_sku',
+        'name',
+        'category_id',
+        'cost_price',
+        'sale_price',
+        'current_stock',
+        'minimum_stock',
+        'is_active',
+        'track_stock',
+    ];
+
     public function index(Request $request): JsonResponse
     {
-        $query = Product::with('category:id,name');
+        $columns = self::LIST_COLUMNS;
+
+        if ($request->has('include_deleted') && $request->boolean('include_deleted')) {
+            // SoftDeletes decides `trashed()` by reading this column, so it
+            // has to travel whenever the caller asks for deleted rows.
+            $columns[] = 'deleted_at';
+        }
+
+        $query = Product::query()
+            ->select($columns)
+            ->with('category:id,name');
 
         if ($request->has('include_deleted') && $request->boolean('include_deleted')) {
             $query->withTrashed();
@@ -142,23 +181,48 @@ class ProductController extends Controller
         ]);
     }
 
+    /**
+     * Product grid of the POS and of the dine-in order modal.
+     *
+     * Payload discipline — this is the single largest response the cashier
+     * downloads, and the terminal only paints a name, a SKU, a price and the
+     * stock guard. `cost_price` is therefore deliberately absent: leaving it
+     * in would publish the business margin of every article to whoever opens
+     * the network tab of a POS terminal, which is a data leak, not a byte
+     * count. The category relation is not loaded either — no consumer of this
+     * endpoint renders it.
+     *
+     * Caching — the catalog changes far less often than it is read, so it is
+     * memoized under the `product_catalog` module. Product::booted() drops the
+     * entry on any write, including the stock decrement of a sale, so the grid
+     * never advertises units that are no longer there.
+     */
     public function grouped(): JsonResponse
     {
-        $products = Product::with('category:id,name')
-            ->where('is_active', true)
-            ->orderBy('parent_sku')
-            ->orderBy('name')
-            ->get()
-            ->groupBy(fn ($p) => $p->parent_sku ?? 'sin_grupo_' . $p->id);
+        $groups = ModuleCache::remember(
+            CacheConfiguration::MODULE_PRODUCT_CATALOG,
+            'active',
+            function (): array {
+                $products = Product::query()
+                    ->select(['id', 'sku', 'parent_sku', 'name', 'sale_price', 'current_stock', 'minimum_stock', 'track_stock'])
+                    ->where('is_active', true)
+                    ->orderBy('parent_sku')
+                    ->orderBy('name')
+                    ->get()
+                    ->groupBy(fn (Product $p) => $p->parent_sku ?? 'sin_grupo_' . $p->id);
 
-        $groups = [];
-        foreach ($products as $key => $items) {
-            $groups[] = [
-                'parent_sku' => str_starts_with($key, 'sin_grupo_') ? null : $key,
-                'display_name' => $items->first()->name,
-                'items' => $items->values(),
-            ];
-        }
+                $groups = [];
+                foreach ($products as $key => $items) {
+                    $groups[] = [
+                        'parent_sku' => str_starts_with($key, 'sin_grupo_') ? null : $key,
+                        'display_name' => $items->first()->name,
+                        'items' => $items->values()->toArray(),
+                    ];
+                }
+
+                return $groups;
+            }
+        );
 
         return response()->json([
             'status' => 'success',

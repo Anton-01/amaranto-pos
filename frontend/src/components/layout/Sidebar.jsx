@@ -1,4 +1,5 @@
-import { NavLink } from 'react-router-dom';
+import { useEffect, useRef } from 'react';
+import { NavLink, useLocation } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { prefetchRoute } from '../../api/resources';
 
@@ -48,7 +49,62 @@ const navGroups = [
 
 export default function Sidebar({ collapsed, onToggle }) {
   const { user } = useAuth();
+  const { pathname } = useLocation();
+  const navRef = useRef(null);
   const isAdmin = user?.roles?.includes('admin');
+
+  /*
+   * Keeps the selected menu entry visible after a mount.
+   *
+   * WHAT — the navigation is taller than the viewport on laptop screens, and
+   * its scroll position is browser state, not React state: refreshing the page
+   * on /admin/papelera rebuilt the list scrolled to the top, with the entry the
+   * user was working on somewhere below the fold. This centers it instead.
+   *
+   * HOW — the active link is found in the DOM rather than derived from
+   * `pathname`, because React Router already solved the matching: NavLink
+   * stamps `aria-current="page"` on whichever entry it considers active,
+   * including partial and nested matches that a string comparison would get
+   * wrong. `navRef` scopes the query to this nav so no other `aria-current` on
+   * the page can be picked up.
+   *
+   * The effect runs after every navigation, but the two guards make it a no-op
+   * in the ordinary case: nothing happens if the list does not overflow, and
+   * nothing happens if the entry is already fully inside the visible band.
+   * Scrolling only when it is actually off-screen is what keeps a normal click
+   * from yanking the menu under the cursor.
+   *
+   * `behavior: 'auto'` (never 'smooth') is deliberate: the correction has to
+   * be finished by the first frame the user sees, so it reads as the position
+   * the sidebar was always in, not as an animation reacting to their arrival.
+   * `block: 'center'` leaves neighbouring entries visible above and below,
+   * which is the context that makes the position legible.
+   */
+  useEffect(() => {
+    const nav = navRef.current;
+    if (!nav) return;
+
+    const active = nav.querySelector('a[aria-current="page"]');
+    if (!active) return;
+
+    // Nothing to correct when every entry already fits.
+    if (nav.scrollHeight <= nav.clientHeight) return;
+
+    const navBox = nav.getBoundingClientRect();
+    const linkBox = active.getBoundingClientRect();
+    const isFullyVisible = linkBox.top >= navBox.top && linkBox.bottom <= navBox.bottom;
+    if (isFullyVisible) return;
+
+    /*
+     * scrollIntoView walks up every scrollable ancestor, so on a short window
+     * it can drag the document along with the nav. The sidebar is fixed and
+     * the page behind it must not move, so the window offset is captured and
+     * restored — the visible effect is confined to the menu.
+     */
+    const { scrollX, scrollY } = window;
+    active.scrollIntoView({ behavior: 'auto', block: 'center' });
+    window.scrollTo(scrollX, scrollY);
+  }, [pathname]);
 
   // Los items adminOnly no se renderizan para manager/vendor; el backend
   // ademas protege sus endpoints con middleware role:admin.
@@ -80,7 +136,7 @@ export default function Sidebar({ collapsed, onToggle }) {
         </span>
       </div>
 
-      <nav className="flex-1 overflow-y-auto px-3 py-4">
+      <nav ref={navRef} className="flex-1 overflow-y-auto px-3 py-4">
         {visibleGroups.map((group) => (
           <div key={group.label} className="mb-5">
             {!collapsed && (

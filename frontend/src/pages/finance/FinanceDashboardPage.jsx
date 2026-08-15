@@ -7,6 +7,7 @@ import {
 import { toast } from 'sonner';
 import api from '../../api/axios';
 import AppLayout from '../../components/layout/AppLayout';
+import { addDays, parseLocalYmd, toLocalYmd } from '../../lib/dates';
 
 const paymentColors = {
   efectivo: '#22c55e',
@@ -49,27 +50,20 @@ function CustomTooltip({ active, payload, label }) {
 
 export default function FinanceDashboardPage() {
   const today = new Date();
-  const weekAgo = new Date(today);
-  weekAgo.setDate(weekAgo.getDate() - 6);
 
-  const [dateRange, setDateRange] = useState([weekAgo, today]);
+  const [dateRange, setDateRange] = useState([addDays(today, -6), today]);
   const [salesData, setSalesData] = useState([]);
   const [summary, setSummary] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  const formatDate = (d) => {
-    if (!d) return '';
-    const y = d.getFullYear();
-    const m = String(d.getMonth() + 1).padStart(2, '0');
-    const day = String(d.getDate()).padStart(2, '0');
-    return `${y}-${m}-${day}`;
-  };
-
   const fetchData = useCallback(async () => {
     if (!dateRange[0] || !dateRange[1]) return;
     setLoading(true);
-    const from = formatDate(dateRange[0]);
-    const to = formatDate(dateRange[1]);
+    // Local calendar days: this page used to carry its own copy of the
+    // formatter, which is how the rule drifts. It now shares lib/dates with
+    // the rest of the app.
+    const from = toLocalYmd(dateRange[0]);
+    const to = toLocalYmd(dateRange[1]);
 
     try {
       const [salesRes, summaryRes] = await Promise.all([
@@ -186,8 +180,12 @@ export default function FinanceDashboardPage() {
                       dataKey="date"
                       tick={{ fontSize: 11, fill: '#64748b' }}
                       tickFormatter={(v) => {
-                        const d = new Date(v + 'T12:00:00');
-                        return d.toLocaleDateString('es-MX', { day: '2-digit', month: 'short' });
+                        // `new Date('2026-08-14')` parses as UTC midnight and
+                        // renders as the 13th here; parseLocalYmd builds the
+                        // Date from its parts so the axis label matches the
+                        // day the bar belongs to.
+                        const d = parseLocalYmd(v);
+                        return d ? d.toLocaleDateString('es-MX', { day: '2-digit', month: 'short' }) : v;
                       }}
                     />
                     <YAxis tick={{ fontSize: 11, fill: '#64748b' }} tickFormatter={(v) => `$${v.toLocaleString()}`} />

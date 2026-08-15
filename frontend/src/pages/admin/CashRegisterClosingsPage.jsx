@@ -14,6 +14,7 @@ import { toast } from 'sonner';
 import api from '../../api/axios';
 import AppLayout from '../../components/layout/AppLayout';
 import useCronosAgent from '../../hooks/useCronosAgent';
+import { addDays, startOfMonth, todayYmd, toLocalYmd } from '../../lib/dates';
 
 const fmtMXN = (v) =>
   new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(v ?? 0);
@@ -87,24 +88,27 @@ export default function CashRegisterClosingsPage() {
     fetchClosings(page);
   }, [fetchClosings, page]);
 
+  /*
+   * Every boundary below comes from `toLocalYmd`, which reads the LOCAL
+   * calendar components. The previous `toISOString().split('T')[0]` formatted
+   * the UTC day instead, so from 18:00 CST onwards "Hoy" asked the API for
+   * tomorrow and the operator saw an empty list of closings minutes after
+   * closing their own register. See lib/dates.
+   */
   const handleQuickFilter = (val) => {
     setQuickFilter(val);
     setDateRange(null);
     const today = new Date();
-    const fmt = (d) => d.toISOString().split('T')[0];
 
     if (val === 'today') {
-      setDateFrom(fmt(today));
-      setDateTo(fmt(today));
+      setDateFrom(toLocalYmd(today));
+      setDateTo(toLocalYmd(today));
     } else if (val === 'week') {
-      const from = new Date(today);
-      from.setDate(today.getDate() - 6);
-      setDateFrom(fmt(from));
-      setDateTo(fmt(today));
+      setDateFrom(toLocalYmd(addDays(today, -6)));
+      setDateTo(toLocalYmd(today));
     } else if (val === 'month') {
-      const from = new Date(today.getFullYear(), today.getMonth(), 1);
-      setDateFrom(fmt(from));
-      setDateTo(fmt(today));
+      setDateFrom(toLocalYmd(startOfMonth(today)));
+      setDateTo(toLocalYmd(today));
     } else {
       setDateFrom(null);
       setDateTo(null);
@@ -115,10 +119,10 @@ export default function CashRegisterClosingsPage() {
     setDateRange(e.value);
     setQuickFilter(null);
     if (e.value && e.value[0]) {
-      setDateFrom(e.value[0].toISOString().split('T')[0]);
+      setDateFrom(toLocalYmd(e.value[0]));
     }
     if (e.value && e.value[1]) {
-      setDateTo(e.value[1].toISOString().split('T')[0]);
+      setDateTo(toLocalYmd(e.value[1]));
     }
   };
 
@@ -177,7 +181,8 @@ export default function CashRegisterClosingsPage() {
       const url = window.URL.createObjectURL(new Blob([res.data]));
       const a = document.createElement('a');
       a.href = url;
-      a.download = `cierres-caja-${new Date().toISOString().split('T')[0]}.xlsx`;
+      // Local day, so an export taken in the evening is not stamped tomorrow.
+      a.download = `cierres-caja-${todayYmd()}.xlsx`;
       document.body.appendChild(a);
       a.click();
       a.remove();
