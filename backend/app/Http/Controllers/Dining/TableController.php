@@ -17,10 +17,24 @@ class TableController extends Controller
      */
     public function index(Request $request): JsonResponse
     {
-        $query = Table::with([
-            'activeSession.user:id,name',
-            'activeSession.order' => fn ($q) => $q->withCount('items'),
-        ])->orderBy('zone')->orderBy('name');
+        /*
+         * The floor plan refreshes on a timer for every terminal in the room,
+         * so its payload is projected twice: `select()` keeps the SQL result
+         * to the six table columns presentTable() reads, and the live account
+         * is loaded as four money columns plus its item count — not the whole
+         * order with its ticket configuration, discounts and cancellation
+         * trail, none of which the plan draws.
+         */
+        $query = Table::query()
+            ->select(['id', 'name', 'capacity', 'zone', 'status', 'is_active'])
+            ->with([
+                'activeSession.user:id,name',
+                'activeSession.order' => fn ($q) => $q
+                    ->select(['id', 'subtotal', 'iva_total', 'total'])
+                    ->withCount('items'),
+            ])
+            ->orderBy('zone')
+            ->orderBy('name');
 
         if ($request->filled('zone')) {
             $query->where('zone', $request->zone);

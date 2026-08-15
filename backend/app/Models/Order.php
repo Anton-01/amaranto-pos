@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Support\ModuleCache;
 use App\Support\Timezone;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
@@ -120,5 +121,25 @@ class Order extends Model
     public function scopeSettled($query)
     {
         return $query->where('status', '!=', self::STATUS_OPEN);
+    }
+
+    protected static function booted(): void
+    {
+        /*
+         * Critical invalidation of the sales caches.
+         *
+         * WHAT — every dashboard figure (today's orders, the hourly curve, the
+         * month's top products, the financial analytics) is derived from this
+         * table, so any write here makes those cached payloads wrong.
+         *
+         * HOW — the hook hangs on the model rather than on the controllers on
+         * purpose: an order is written from four different paths (counter
+         * sale, dine-in checkout, cancellation, automatic cash closing) and
+         * hooking each one is how a path eventually gets forgotten. Sitting on
+         * `saved`/`deleted` makes the purge unconditional, and it stays cheap
+         * because a flush is a handful of Redis DELs.
+         */
+        static::saved(static fn () => ModuleCache::flushMany(ModuleCache::salesDependentModules()));
+        static::deleted(static fn () => ModuleCache::flushMany(ModuleCache::salesDependentModules()));
     }
 }

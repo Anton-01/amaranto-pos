@@ -9,6 +9,7 @@ import api from '../../api/axios';
 import AppLayout from '../../components/layout/AppLayout';
 import PrinterSetupPanel from '../../components/settings/PrinterSetupPanel';
 import EmailNotificationsPanel from '../../components/settings/EmailNotificationsPanel';
+import CacheSettingsPanel from '../../components/settings/CacheSettingsPanel';
 import CancellationPasswordPanel from '../../components/settings/CancellationPasswordPanel';
 import useCronosAgent from '../../hooks/useCronosAgent';
 import { useAuth } from '../../context/AuthContext';
@@ -238,6 +239,15 @@ export default function SystemSettingsPage() {
           {isAdmin && (
             <TabPanel header="Notificaciones / Emails" pt={{ headerAction: { className: 'text-sm' } }}>
               <EmailNotificationsPanel />
+            </TabPanel>
+          )}
+
+          {/* Cache policies decide how stale every dashboard in the business
+              may be, so the tab sits behind the same admin gate as the mailing
+              credentials and the backend enforces it with role:admin. */}
+          {isAdmin && (
+            <TabPanel header="Caché de Módulos" pt={{ headerAction: { className: 'text-sm' } }}>
+              <CacheSettingsPanel />
             </TabPanel>
           )}
 

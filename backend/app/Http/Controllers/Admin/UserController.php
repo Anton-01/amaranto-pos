@@ -19,7 +19,21 @@ class UserController extends Controller
 {
     public function index(Request $request): JsonResponse
     {
-        $query = User::with('roles')
+        /*
+         * The grid paints a name, an email, a role badge, a status and the
+         * count of live sessions. Everything else the accounts table holds —
+         * the two-factor state, `password_restored_at`, the phone, the avatar
+         * and the soft-delete trail — stays where it is. `password` and the
+         * two-factor secrets are already stripped by the model's $hidden, but
+         * relying on a denylist means the next column added to the table is
+         * exposed by default; the explicit select inverts that.
+         *
+         * `roles:id,name` narrows the pivot join to the single attribute the
+         * badge reads, instead of hydrating each role with its permission set.
+         */
+        $query = User::query()
+            ->select(['id', 'name', 'email', 'status', 'created_at'])
+            ->with('roles:id,name')
             ->withCount(['sessionsLog as active_tokens_count' => function ($q) {
                 $q->whereNull('logout_at');
             }])
@@ -65,7 +79,7 @@ class UserController extends Controller
 
     public function show(User $user): JsonResponse
     {
-        $user->load('roles');
+        $user->load('roles:id,name');
 
         $sessions = $user->sessionsLog()
             ->orderByDesc('login_at')
@@ -117,7 +131,7 @@ class UserController extends Controller
             return $user;
         });
 
-        $user->load('roles');
+        $user->load('roles:id,name');
 
         Mail::to($user->email)->queue(new UserWelcomeMail($user, $temporaryPassword));
 

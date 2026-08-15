@@ -29,11 +29,54 @@ class OrderController extends Controller
         private readonly PrinterService $printerService,
         private readonly OrderCalculator $calculator,
     ) {}
+    /**
+     * Columns painted by the sales history grid.
+     *
+     * The two foreign keys are required for the eager loads to match; the
+     * ticket internals (`subtotal`, `iva_total`, `custom_legend`, the
+     * cancellation trail) belong to the detail endpoint, which fetches a
+     * single order and can afford them.
+     */
+    private const LIST_COLUMNS = [
+        'id',
+        'cash_register_id',
+        'payment_method_id',
+        'created_at',
+        'status',
+        'total',
+        'discount_total',
+        'amount_received',
+        'amount_change',
+        'table_name_at_sale',
+        'waiter_name_at_sale',
+    ];
+
     public function index(Request $request): JsonResponse
     {
-        // settled() deja fuera las cuentas de mesa abiertas: aun no son ventas.
+        /*
+         * Payload discipline of the sales history.
+         *
+         * The previous version hydrated the entire ticket for every row:
+         * `items.product` alone brought back each article with its cost price
+         * and stock levels — the margin of the business, handed to any cashier
+         * who can open the history — while `ticketConfig`, `promotion` and
+         * `table` were never rendered by the grid at all. On a page of 20
+         * orders that is hundreds of models nobody paints.
+         *
+         * What survives is the two relations the columns really show, each
+         * narrowed to the columns they display: `cash_register.user.name` and
+         * `payment_method.name`. Constraining the nested user is what keeps
+         * emails, phone numbers, two-factor state and the soft-delete trail of
+         * every cashier out of a response the whole floor can request. The
+         * full ticket is still one click away through show().
+         */
         $query = Order::settled()
-            ->with(['items.product', 'items.promotion', 'ticketConfig', 'paymentMethod', 'cashRegister.user', 'promotion', 'table', 'waiter:id,name'])
+            ->select(self::LIST_COLUMNS)
+            ->with([
+                'cashRegister:id,user_id',
+                'cashRegister.user:id,name',
+                'paymentMethod:id,name',
+            ])
             ->orderByDesc('created_at');
 
         if ($request->filled('table_id')) {
@@ -89,10 +132,31 @@ class OrderController extends Controller
 
     public function show(Order $order): JsonResponse
     {
+        /*
+         * Full ticket for the detail modal and the reprint preview.
+         *
+         * Wider than the list on purpose — it is a single order — but every
+         * relation is still constrained. `items.product` resolves to the label
+         * the ticket prints and nothing else: reprinting a sale must not ship
+         * the cost price and stock of each article, and the line already
+         * carries its own frozen prices (`base_price_at_sale`,
+         * `final_price_at_sale`), so the product row is a caption, not a
+         * source of truth. The user relations are narrowed for the same
+         * reason — the modal prints a name, never an email or a phone.
+         */
         $order->load([
-            'items.product', 'items.promotion', 'ticketConfig', 'cashRegister.user',
-            'paymentMethod', 'canceledByUser', 'promotion',
-            'table', 'waiter:id,name,email', 'tableSession.user:id,name', 'tableSession.closedByUser:id,name',
+            'items.product:id,name,sku',
+            'items.promotion:id,name',
+            'ticketConfig',
+            'cashRegister:id,user_id',
+            'cashRegister.user:id,name',
+            'paymentMethod:id,name',
+            'canceledByUser:id,name',
+            'promotion:id,name',
+            'table:id,name,zone',
+            'waiter:id,name',
+            'tableSession.user:id,name',
+            'tableSession.closedByUser:id,name',
         ]);
 
         return response()->json([

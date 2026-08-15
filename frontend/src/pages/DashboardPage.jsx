@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
 import AppLayout from '../components/layout/AppLayout';
 import MonthlyAnalyticsModal from '../components/dashboard/MonthlyAnalyticsModal';
+import DashboardSkeleton from '../components/dashboard/DashboardSkeleton';
 import { toast } from 'sonner';
 import api from '../api/axios';
 import {
@@ -58,11 +59,19 @@ export default function DashboardPage() {
     slate: { bg: 'bg-slate-50', icon: 'text-slate-500', ring: 'ring-slate-100' },
   };
 
-  if (loading) {
+  /*
+   * Perceived performance of the first paint.
+   *
+   * The skeleton stands in only while there is nothing to draw yet. On a
+   * refetch `stats` still holds the previous payload, so the page keeps
+   * showing real numbers instead of collapsing back into grey boxes — which
+   * would look like a regression, not like loading.
+   */
+  if (loading && !stats) {
     return (
       <AppLayout>
-        <div className="flex h-96 items-center justify-center">
-          <div className="h-8 w-8 animate-spin rounded-full border-4 border-indigo-600 border-t-transparent" />
+        <div role="status" aria-busy="true" aria-label="Cargando el dashboard">
+          <DashboardSkeleton />
         </div>
       </AppLayout>
     );

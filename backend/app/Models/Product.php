@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Support\ModuleCache;
 use App\Traits\AdvancedSoftDeletes;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
@@ -69,5 +70,32 @@ class Product extends Model
     public function orderItems(): HasMany
     {
         return $this->hasMany(OrderItem::class);
+    }
+
+    protected static function booted(): void
+    {
+        /*
+         * Critical invalidation of the catalog caches.
+         *
+         * WHAT — two cached payloads read this table: the POS product grid and
+         * the "low stock alerts" counter of the dashboard. A price change, a
+         * deactivation or a stock movement invalidates both.
+         *
+         * HOW — `saved` also fires on the `decrement('current_stock')` a sale
+         * performs, which is exactly the point: the alert counter must react
+         * to the unit that just crossed the minimum, not to the next TTL
+         * expiry. Several decrements in one ticket cause several purges, and
+         * that is fine — forgetting an already-forgotten key is a no-op.
+         */
+        static::saved(static fn () => self::flushCatalogCaches());
+        static::deleted(static fn () => self::flushCatalogCaches());
+    }
+
+    private static function flushCatalogCaches(): void
+    {
+        ModuleCache::flushMany([
+            CacheConfiguration::MODULE_PRODUCT_CATALOG,
+            CacheConfiguration::MODULE_DASHBOARD_STATS,
+        ]);
     }
 }

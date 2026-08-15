@@ -3,6 +3,8 @@
 namespace App\Http\Controllers\Dashboard;
 
 use App\Http\Controllers\Controller;
+use App\Models\CacheConfiguration;
+use App\Support\ModuleCache;
 use App\Support\Timezone;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
@@ -32,6 +34,36 @@ class MonthlyAnalyticsController extends Controller
             ? Carbon::createFromFormat('Y-m-d', $request->month . '-01', Timezone::app())->startOfMonth()
             : Carbon::now()->startOfMonth();
 
+        /*
+         * The modal fires seven aggregations over two months in a single
+         * request, which makes it the heaviest read of the whole application.
+         * The assembled payload is memoized as a unit under the month being
+         * rendered, so browsing back through history is served from Redis and
+         * only the running month is ever rebuilt — and it rebuilds the moment
+         * a sale is registered, because Order::booted() purges this module.
+         *
+         * The refresh window is not hardcoded: ModuleCache resolves it from
+         * the `monthly_analytics` row of `cache_configurations`.
+         */
+        $data = ModuleCache::remember(
+            CacheConfiguration::MODULE_MONTHLY_ANALYTICS,
+            $month->format('Y-m'),
+            fn (): array => $this->buildPayload($month)
+        );
+
+        return response()->json([
+            'status' => 'success',
+            'data' => $data,
+        ]);
+    }
+
+    /**
+     * Assembles the whole analytics payload for one month.
+     *
+     * @return array<string, mixed>
+     */
+    private function buildPayload(Carbon $month): array
+    {
         $monthEnd = $month->copy()->endOfMonth();
         $previousMonth = $month->copy()->subMonthNoOverflow()->startOfMonth();
         $previousEnd = $previousMonth->copy()->endOfMonth();
@@ -39,24 +71,21 @@ class MonthlyAnalyticsController extends Controller
         $current = $this->totals($month, $monthEnd);
         $previous = $this->totals($previousMonth, $previousEnd);
 
-        return response()->json([
-            'status' => 'success',
-            'data' => [
-                'month' => $month->format('Y-m'),
-                'month_label' => ucfirst($month->locale('es')->translatedFormat('F Y')),
-                'totals' => $current,
-                'previous' => $previous + ['month' => $previousMonth->format('Y-m')],
-                'comparison' => [
-                    'sales_delta_pct' => $this->deltaPct($previous['total_sales'], $current['total_sales']),
-                    'orders_delta_pct' => $this->deltaPct($previous['order_count'], $current['order_count']),
-                    'avg_ticket_delta_pct' => $this->deltaPct($previous['avg_ticket'], $current['avg_ticket']),
-                ],
-                'by_payment_method' => $this->byPaymentMethod($month, $monthEnd),
-                'top_products' => $this->topProducts($month, $monthEnd),
-                'peak_hours' => $this->peakHours($month, $monthEnd),
-                'daily_trend' => $this->dailyTrend($month, $monthEnd),
+        return [
+            'month' => $month->format('Y-m'),
+            'month_label' => ucfirst($month->locale('es')->translatedFormat('F Y')),
+            'totals' => $current,
+            'previous' => $previous + ['month' => $previousMonth->format('Y-m')],
+            'comparison' => [
+                'sales_delta_pct' => $this->deltaPct($previous['total_sales'], $current['total_sales']),
+                'orders_delta_pct' => $this->deltaPct($previous['order_count'], $current['order_count']),
+                'avg_ticket_delta_pct' => $this->deltaPct($previous['avg_ticket'], $current['avg_ticket']),
             ],
-        ]);
+            'by_payment_method' => $this->byPaymentMethod($month, $monthEnd),
+            'top_products' => $this->topProducts($month, $monthEnd),
+            'peak_hours' => $this->peakHours($month, $monthEnd),
+            'daily_trend' => $this->dailyTrend($month, $monthEnd),
+        ];
     }
 
     /** @return array{total_sales: float, net_sales: float, tax_total: float, discount_total: float, order_count: int, avg_ticket: float} */

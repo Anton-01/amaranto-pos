@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\Admin\BackupController;
+use App\Http\Controllers\Admin\CacheConfigurationController;
 use App\Http\Controllers\Admin\EmailConfigurationController;
 use App\Http\Controllers\Admin\JobMonitorController;
 use App\Http\Controllers\Admin\MailPreviewController;
@@ -275,6 +276,22 @@ Route::middleware(['auth:sanctum', 'user.active'])->group(function () {
         Route::put('/{email_configuration}', [EmailConfigurationController::class, 'update']);
         Route::patch('/{email_configuration}/toggle-status', [EmailConfigurationController::class, 'toggleStatus']);
         Route::delete('/{email_configuration}', [EmailConfigurationController::class, 'destroy']);
+    });
+
+    /*
+     * Per-module cache policies. Admin-only — these rows decide for how long
+     * the whole operation reads figures from Redis instead of PostgreSQL, so
+     * a wrong window here makes every dashboard in the business show stale
+     * numbers.
+     */
+    Route::middleware('role:admin')->prefix('admin/cache-configurations')->group(function () {
+        Route::get('/', [CacheConfigurationController::class, 'index']);
+        Route::get('/catalogs', [CacheConfigurationController::class, 'catalogs']);
+        Route::post('/', [CacheConfigurationController::class, 'store']);
+        Route::put('/{cache_configuration}', [CacheConfigurationController::class, 'update']);
+        Route::patch('/{cache_configuration}/toggle-status', [CacheConfigurationController::class, 'toggleStatus']);
+        Route::post('/{cache_configuration}/flush', [CacheConfigurationController::class, 'flush']);
+        Route::delete('/{cache_configuration}', [CacheConfigurationController::class, 'destroy']);
     });
 
     Route::middleware('role:admin,manager')->prefix('analytics')->group(function () {
