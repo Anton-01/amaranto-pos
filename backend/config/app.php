@@ -60,12 +60,28 @@ return [
     |--------------------------------------------------------------------------
     |
     | Here you may specify the default timezone for your application, which
-    | will be used by the PHP date and date-time functions. The timezone
-    | is set to "UTC" by default as it is suitable for most use cases.
+    | will be used by the PHP date and date-time functions.
+    |
+    | Este POS opera en un solo huso: 'America/Mexico_City'. El valor NO es
+    | 'UTC' a proposito — es el ancla de la que cuelga toda la homologacion
+    | horaria del sistema (ver CONTEXT.md seccion 53):
+    |
+    |   - Laravel llama `date_default_timezone_set()` con este valor al
+    |     arrancar, de modo que `now()` y `Carbon::now()` ya devuelven hora
+    |     local sin necesidad de pasarles la zona a mano.
+    |   - `config/database.php` la reenvia a PostgreSQL como `SET TIME ZONE`
+    |     en cada conexion (seccion 47), asi que las columnas `timestamptz`
+    |     se escriben y se releen con el mismo offset.
+    |   - `App\Support\Timezone` la expone al resto del codigo, incluida la
+    |     interpolacion validada en SQL crudo (`AT TIME ZONE`).
+    |
+    | Se lee de `APP_TIMEZONE` para que un despliegue en otra plaza sea una
+    | linea del `.env`, pero el default deja la zona del negocio garantizada
+    | aunque la variable falte.
     |
     */
 
-    'timezone' => 'America/Mexico_City',
+    'timezone' => env('APP_TIMEZONE', 'America/Mexico_City'),
 
     /*
     |--------------------------------------------------------------------------

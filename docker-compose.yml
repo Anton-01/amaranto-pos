@@ -14,6 +14,14 @@ services:
       # Unico contenedor que instala dependencias, escribe .env y corre
       # migraciones/seeders. Ver el encabezado de backend/docker-entrypoint.sh.
       - CONTAINER_ROLE=app
+      # Reloj del SO del contenedor en hora del negocio. Sin esto la imagen
+      # Alpine corre en UTC y `date`, los logs y cualquier binario ajeno a
+      # PHP reportan 6 h adelantadas. Ver CONTEXT.md seccion 53.
+      - TZ=America/Mexico_City
+      # Zona de Laravel (config/app.php -> date_default_timezone_set).
+      # Se declara junto al TZ del SO para que ambas capas no puedan
+      # divergir en silencio.
+      - APP_TIMEZONE=America/Mexico_City
       - APP_NAME=Cronos POS
       - APP_ENV=local
       - APP_DEBUG=true
@@ -68,6 +76,14 @@ services:
       - backend-vendor:/var/www/html/vendor
     environment:
       - CONTAINER_ROLE=worker
+      # Reloj del SO del contenedor en hora del negocio. Sin esto la imagen
+      # Alpine corre en UTC y `date`, los logs y cualquier binario ajeno a
+      # PHP reportan 6 h adelantadas. Ver CONTEXT.md seccion 53.
+      - TZ=America/Mexico_City
+      # Zona de Laravel (config/app.php -> date_default_timezone_set).
+      # Se declara junto al TZ del SO para que ambas capas no puedan
+      # divergir en silencio.
+      - APP_TIMEZONE=America/Mexico_City
       - APP_NAME=Cronos POS
       - APP_ENV=local
       - APP_DEBUG=true
@@ -106,6 +122,14 @@ services:
       - backend-vendor:/var/www/html/vendor
     environment:
       - CONTAINER_ROLE=worker
+      # Reloj del SO del contenedor en hora del negocio. Sin esto la imagen
+      # Alpine corre en UTC y `date`, los logs y cualquier binario ajeno a
+      # PHP reportan 6 h adelantadas. Ver CONTEXT.md seccion 53.
+      - TZ=America/Mexico_City
+      # Zona de Laravel (config/app.php -> date_default_timezone_set).
+      # Se declara junto al TZ del SO para que ambas capas no puedan
+      # divergir en silencio.
+      - APP_TIMEZONE=America/Mexico_City
       - APP_NAME=Cronos POS
       - APP_ENV=local
       - APP_DEBUG=true
@@ -155,10 +179,24 @@ services:
     container_name: cronos-postgres
     ports:
       - "5432:5432"
+    # `TZ` solo ajusta el reloj del SO del contenedor; el parametro `timezone`
+    # del servidor lo fija initdb la PRIMERA vez y queda escrito en
+    # postgresql.conf, de modo que un volumen ya creado seguiria en UTC. Por eso
+    # se fuerza tambien por linea de comandos: asi el servidor arranca en hora
+    # local aunque `postgres-data` venga de antes de esta correccion.
+    # (En produccion no aplica: la Managed PostgreSQL de DigitalOcean corre en
+    # UTC y se alinea por sesion desde config/database.php — seccion 47.)
+    command: >
+      postgres
+      -c timezone=America/Mexico_City
+      -c log_timezone=America/Mexico_City
     environment:
       - POSTGRES_DB=cronos_pos
       - POSTGRES_USER=cronos
       - POSTGRES_PASSWORD=cronos_secret
+      - TZ=America/Mexico_City
+      # Zona del CLIENTE libpq (psql, pg_dump dentro del contenedor).
+      - PGTZ=America/Mexico_City
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:

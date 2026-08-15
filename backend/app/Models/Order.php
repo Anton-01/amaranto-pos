@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Support\Timezone;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -15,7 +16,7 @@ class Order extends Model
 
     protected function serializeDate(\DateTimeInterface $date): string
     {
-        return Carbon::instance($date)->timezone('America/Mexico_City')->toIso8601String();
+        return Carbon::instance($date)->timezone(Timezone::app())->toIso8601String();
     }
 
     /** Explicito: el modelo expone una relacion llamada table(). */

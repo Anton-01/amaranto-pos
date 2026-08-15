@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Support\Timezone;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -31,7 +32,7 @@ class OrderItem extends Model
 
     protected function serializeDate(\DateTimeInterface $date): string
     {
-        return \Illuminate\Support\Carbon::instance($date)->timezone('America/Mexico_City')->toIso8601String();
+        return \Illuminate\Support\Carbon::instance($date)->timezone(Timezone::app())->toIso8601String();
     }
 
     protected function casts(): array

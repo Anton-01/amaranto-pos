@@ -108,7 +108,10 @@ class JobMonitorController extends Controller
             )
             ->when(
                 $validated['date_from'] ?? null,
-                fn ($q, $from) => $q->where('created_at', '>=', $from)
+                // Simetrico al "hasta": Carbon ancla el limite al inicio del dia
+                // en hora local en lugar de dejar que PostgreSQL interprete la
+                // cadena cruda.
+                fn ($q, $from) => $q->where('created_at', '>=', Carbon::parse($from)->startOfDay())
             )
             ->when(
                 $validated['date_to'] ?? null,

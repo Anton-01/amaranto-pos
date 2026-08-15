@@ -63,11 +63,11 @@ class CashRegisterClosingController extends Controller
             ->orderByDesc('created_at');
 
         if ($request->filled('date_from')) {
-            $from = Carbon::parse($request->date_from, 'America/Mexico_City')->startOfDay();
+            $from = Carbon::parse($request->date_from)->startOfDay();
             $query->where('created_at', '>=', $from);
         }
         if ($request->filled('date_to')) {
-            $to = Carbon::parse($request->date_to, 'America/Mexico_City')->endOfDay();
+            $to = Carbon::parse($request->date_to)->endOfDay();
             $query->where('created_at', '<=', $to);
         }
 
@@ -146,11 +146,11 @@ class CashRegisterClosingController extends Controller
             ->orderByDesc('created_at');
 
         if ($request->filled('date_from')) {
-            $from = Carbon::parse($request->date_from, 'America/Mexico_City')->startOfDay();
+            $from = Carbon::parse($request->date_from)->startOfDay();
             $query->where('created_at', '>=', $from);
         }
         if ($request->filled('date_to')) {
-            $to = Carbon::parse($request->date_to, 'America/Mexico_City')->endOfDay();
+            $to = Carbon::parse($request->date_to)->endOfDay();
             $query->where('created_at', '<=', $to);
         }
         if ($request->filled('type') && in_array($request->type, ['manual', 'automated'], true)) {
@@ -206,11 +206,11 @@ class CashRegisterClosingController extends Controller
             ->orderByDesc('created_at');
 
         if ($request->filled('date_from')) {
-            $from = Carbon::parse($request->date_from, 'America/Mexico_City')->startOfDay();
+            $from = Carbon::parse($request->date_from)->startOfDay();
             $query->where('created_at', '>=', $from);
         }
         if ($request->filled('date_to')) {
-            $to = Carbon::parse($request->date_to, 'America/Mexico_City')->endOfDay();
+            $to = Carbon::parse($request->date_to)->endOfDay();
             $query->where('created_at', '<=', $to);
         }
 
@@ -338,11 +338,11 @@ class CashRegisterClosingController extends Controller
             ->orderByDesc('created_at');
 
         if ($request->filled('date_from')) {
-            $from = Carbon::parse($request->date_from, 'America/Mexico_City')->startOfDay();
+            $from = Carbon::parse($request->date_from)->startOfDay();
             $query->where('created_at', '>=', $from);
         }
         if ($request->filled('date_to')) {
-            $to = Carbon::parse($request->date_to, 'America/Mexico_City')->endOfDay();
+            $to = Carbon::parse($request->date_to)->endOfDay();
             $query->where('created_at', '<=', $to);
         }
 

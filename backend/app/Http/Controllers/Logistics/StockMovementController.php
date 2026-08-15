@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\StockMovement\StoreStockMovementRequest;
 use App\Models\Product;
 use App\Models\StockMovement;
+use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -26,11 +27,15 @@ class StockMovementController extends Controller
         if ($request->filled('reason')) {
             $query->where('reason', $request->reason);
         }
+        // La cadena cruda del request ('2026-08-15') se interpreta como las
+        // 00:00:00 en AMBOS extremos, asi que el filtro "hasta" dejaba fuera el
+        // dia entero que el usuario pidio. Carbon la ancla al dia completo en
+        // la zona de la aplicacion (America/Mexico_City).
         if ($request->filled('date_from')) {
-            $query->where('created_at', '>=', $request->date_from);
+            $query->where('created_at', '>=', Carbon::parse($request->date_from)->startOfDay());
         }
         if ($request->filled('date_to')) {
-            $query->where('created_at', '<=', $request->date_to);
+            $query->where('created_at', '<=', Carbon::parse($request->date_to)->endOfDay());
         }
 
         $movements = $query->paginate($request->input('per_page', 20));
@@ -84,8 +89,8 @@ class StockMovementController extends Controller
 
     public function summary(Request $request): JsonResponse
     {
-        $dateFrom = $request->input('date_from', now()->startOfMonth()->toDateString());
-        $dateTo = $request->input('date_to', now()->endOfDay()->toDateTimeString());
+        $dateFrom = Carbon::parse($request->input('date_from', now()->startOfMonth()))->startOfDay();
+        $dateTo = Carbon::parse($request->input('date_to', now()))->endOfDay();
 
         $byType = DB::table('stock_movements')
             ->select('type', DB::raw('COUNT(*) as count'), DB::raw('SUM(quantity) as total_quantity'), DB::raw('SUM(cost_price_at_movement * quantity) as total_cost'))
@@ -106,7 +111,9 @@ class StockMovementController extends Controller
             'data' => [
                 'by_type' => $byType,
                 'merma_by_reason' => $byReason,
-                'period' => ['from' => $dateFrom, 'to' => $dateTo],
+                // Se devuelven como cadena (no como Carbon) para no alterar el
+                // tipo que ya expone el endpoint.
+                'period' => ['from' => $dateFrom->toDateTimeString(), 'to' => $dateTo->toDateTimeString()],
             ],
         ]);
     }
