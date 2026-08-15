@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Dashboard;
 
 use App\Http\Controllers\Controller;
+use App\Support\Timezone;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -19,8 +20,6 @@ use Illuminate\Support\Facades\DB;
  */
 class MonthlyAnalyticsController extends Controller
 {
-    private const TZ = 'America/Mexico_City';
-
     public function __invoke(Request $request): JsonResponse
     {
         $request->validate([
@@ -30,8 +29,8 @@ class MonthlyAnalyticsController extends Controller
         // Se ancla el dia 1 explicitamente: createFromFormat('Y-m') hereda el
         // dia actual, y un 31 de enero pediria "2026-02" como 2 de marzo.
         $month = $request->filled('month')
-            ? Carbon::createFromFormat('Y-m-d', $request->month . '-01', self::TZ)->startOfMonth()
-            : Carbon::now(self::TZ)->startOfMonth();
+            ? Carbon::createFromFormat('Y-m-d', $request->month . '-01', Timezone::app())->startOfMonth()
+            : Carbon::now()->startOfMonth();
 
         $monthEnd = $month->copy()->endOfMonth();
         $previousMonth = $month->copy()->subMonthNoOverflow()->startOfMonth();
@@ -131,8 +130,8 @@ class MonthlyAnalyticsController extends Controller
         $rows = DB::table('orders')
             ->where('status', 'completed')
             ->whereBetween('created_at', [$from, $to])
-            ->groupBy(DB::raw("EXTRACT(HOUR FROM created_at AT TIME ZONE 'America/Mexico_City')::int"))
-            ->selectRaw("EXTRACT(HOUR FROM created_at AT TIME ZONE 'America/Mexico_City')::int as hour, COUNT(*) as orders, COALESCE(SUM(total), 0) as total")
+            ->groupBy(DB::raw("EXTRACT(HOUR FROM created_at AT TIME ZONE " . Timezone::sqlLiteral() . ")::int"))
+            ->selectRaw("EXTRACT(HOUR FROM created_at AT TIME ZONE " . Timezone::sqlLiteral() . ")::int as hour, COUNT(*) as orders, COALESCE(SUM(total), 0) as total")
             ->orderBy('hour')
             ->get()
             ->keyBy('hour');
@@ -149,8 +148,8 @@ class MonthlyAnalyticsController extends Controller
         return DB::table('orders')
             ->where('status', 'completed')
             ->whereBetween('created_at', [$from, $to])
-            ->groupBy(DB::raw("DATE(created_at AT TIME ZONE 'America/Mexico_City')"))
-            ->selectRaw("DATE(created_at AT TIME ZONE 'America/Mexico_City') as day, COUNT(*) as orders, COALESCE(SUM(total), 0) as total")
+            ->groupBy(DB::raw("DATE(created_at AT TIME ZONE " . Timezone::sqlLiteral() . ")"))
+            ->selectRaw("DATE(created_at AT TIME ZONE " . Timezone::sqlLiteral() . ") as day, COUNT(*) as orders, COALESCE(SUM(total), 0) as total")
             ->orderBy('day')
             ->get()
             ->map(fn ($row) => [

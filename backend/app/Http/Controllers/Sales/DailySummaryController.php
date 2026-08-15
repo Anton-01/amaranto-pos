@@ -11,8 +11,8 @@ class DailySummaryController extends Controller
 {
     public function __invoke(): JsonResponse
     {
-        $today = Carbon::now('America/Mexico_City')->startOfDay();
-        $endOfDay = Carbon::now('America/Mexico_City')->endOfDay();
+        $today = Carbon::now()->startOfDay();
+        $endOfDay = Carbon::now()->endOfDay();
 
         $sales = DB::table('orders')
             ->select(

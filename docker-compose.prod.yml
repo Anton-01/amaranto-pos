@@ -23,6 +23,22 @@ x-backend-service: &backend-service
   env_file:
     - .env.production
   environment:
+    # --- Homologacion horaria (ver CONTEXT.md seccion 53) ---
+    # `TZ` pone el reloj del SO Alpine en hora del negocio: sin el, `date`, los
+    # timestamps de los logs de Docker y todo binario ajeno a PHP reportan UTC.
+    # `APP_TIMEZONE` hace lo propio con Laravel (config/app.php). Van en el
+    # ancla, no en cada servicio, porque los cuatro contenedores PHP —API,
+    # Reverb, scheduler y queue worker— deben compartir el MISMO reloj: el
+    # arqueo de las 21:00 lo dispara `scheduler` y lo ejecuta el worker.
+    # Al ir en `environment` ganan sobre `env_file`, de modo que un
+    # .env.production viejo en el Droplet no puede revivir el desfase.
+    TZ: America/Mexico_City
+    APP_TIMEZONE: America/Mexico_City
+    # NOTA: aqui no hay servicio `postgres` que alinear — produccion usa la
+    # Managed PostgreSQL de DigitalOcean, que corre en UTC y no se reconfigura.
+    # La sesion se alinea sola: `config/database.php` emite `SET TIME ZONE`
+    # con `app.timezone` en cada conexion (seccion 47).
+    #
     # Reverb dejo de vivir dentro del contenedor `backend`, asi que
     # `REVERB_HOST=0.0.0.0` del .env ya no sirve para publicar eventos: ese
     # valor es el host que usa el CLIENTE HTTP de broadcasting

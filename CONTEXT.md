@@ -6,8 +6,10 @@
 - Base de Datos: Managed PostgreSQL (DigitalOcean)
 - Cache / Colas: Redis 7 Alpine (cache global + queue worker)
 - WebSockets: Laravel Reverb (puerto 8080, tiempo real)
-- Última corrección: [🟢 SECCIÓN 52: DESACOPLAMIENTO DEL ENTRYPOINT DE PRODUCCIÓN] — `docker-entrypoint.prod.sh` dejó de cablear `serve` + `queue:work` + `reverb:start` y ahora solo prepara (`storage:link` y las 4 cachés) antes de ceder el control con `exec "$@"`, de modo que el `command:` de `docker-compose.prod.yml` por fin manda: Reverb salió a su propio contenedor y el servicio `scheduler` ejecuta `schedule:work` por primera vez (antes levantaba un servidor HTTP duplicado y las tareas de las 21:00 dependían del cron del host, ahora eliminado) — ver sección 52.
-- Corrección previa: [🟢 SECCIÓN 51: FLYSYSTEM V3 EN BACKUPS + BLINDAJE DEL CIERRE AUTOMÁTICO] — Eliminado el `assertDependenciesInstalled()` obsoleto que hacía pasar un error de código por una caída de GCP (503), verificación de disco reducida a `Storage::disk(…)->exists('/')` en try/catch con degradación reportada; zona horaria `America/Mexico_City` fijada explícitamente en el schedule de las 21:00; y `AutoCloseCashRegisters` envuelto en try/catch con bitácora propia en `job_execution_logs` para que nunca vuelva a morir en silencio (ver sección 51).
+- **Estándar de Zona Horaria: `America/Mexico_City` en las tres capas (Docker `TZ` → Laravel `APP_TIMEZONE` → sesión de PostgreSQL).** Fuente única de verdad: `config('app.timezone')`, expuesta al código por `App\Support\Timezone`. **El código NO vuelve a escribir la zona a mano** — `Carbon::now()` / `Carbon::today()` sin argumento ya nacen en hora local. Única excepción deliberada: el `->timezone()` del arqueo de las 21:00 en `routes/console.php` (ver secciones 53 y 47).
+- Última corrección: [🟢 SECCIÓN 53: HOMOLOGACIÓN HORARIA DE TRES CAPAS] — Las ventas posteriores a las 18:00 CST se filtraban como del día siguiente porque la frontera del día se dibujaba en UTC. Alineados el reloj del SO de los contenedores (`TZ`), la zona de Laravel (`APP_TIMEZONE`, antes literal en `config/app.php`) y el servidor PostgreSQL de desarrollo (`-c timezone`, que `TZ` por sí solo no mueve en un volumen ya creado). Eliminadas ~40 cadenas `'America/Mexico_City'` escritas a mano que se habrían vuelto una segunda fuente de verdad, y corregidos 4 filtros que usaban la cadena cruda del request como límite de día — ver sección 53.
+- Corrección previa: [🟢 SECCIÓN 52: DESACOPLAMIENTO DEL ENTRYPOINT DE PRODUCCIÓN] — `docker-entrypoint.prod.sh` dejó de cablear `serve` + `queue:work` + `reverb:start` y ahora solo prepara (`storage:link` y las 4 cachés) antes de ceder el control con `exec "$@"`, de modo que el `command:` de `docker-compose.prod.yml` por fin manda: Reverb salió a su propio contenedor y el servicio `scheduler` ejecuta `schedule:work` por primera vez (antes levantaba un servidor HTTP duplicado y las tareas de las 21:00 dependían del cron del host, ahora eliminado) — ver sección 52.
+- Corrección anterior: [🟢 SECCIÓN 51: FLYSYSTEM V3 EN BACKUPS + BLINDAJE DEL CIERRE AUTOMÁTICO] — Eliminado el `assertDependenciesInstalled()` obsoleto que hacía pasar un error de código por una caída de GCP (503), verificación de disco reducida a `Storage::disk(…)->exists('/')` en try/catch con degradación reportada; zona horaria `America/Mexico_City` fijada explícitamente en el schedule de las 21:00; y `AutoCloseCashRegisters` envuelto en try/catch con bitácora propia en `job_execution_logs` para que nunca vuelva a morir en silencio (ver sección 51).
 - Estado del Proyecto: [🟢 FASE 11: TRANSICIONES INSTANTÁNEAS POS ↔ MESAS COMPLETADO] — Caché SWR suscribible con render inmediato desde memoria y revalidación silenciosa, shell persistente que deja de desmontar sidebar y header, cascada serial del POS eliminada (4 lecturas en paralelo) y prefetch por intención en hover/focus. Medido con Playwright sobre el bundle de producción: parpadeo eliminado (7-8 → 0 frames con spinner), Mesas→POS de 241 ms a ~110 ms y 24 → 1 peticiones HTTP en cuatro idas y vueltas (ver sección 44).
 - Fase previa: [🟢 FASE 10: TELEMETRÍA DE JOBS, HISTÓRICO DE EJECUCIÓN Y ECOSISTEMA DE ROLLBACK/BACKUPS AISLADOS EN GCP COMPLETADO] — Bitácora forense `job_execution_logs` alimentada por los eventos nativos de la cola (un renglón por intento, con traza y disparador), panel admin `/admin/jobs-monitor` con catálogo, histórico y reintento manual; y bóveda de respaldos cifrada AES-256 en Google Cloud Storage —aislada de la infraestructura primaria en DigitalOcean— con rollback transaccional validado por checksum SHA-256 (ver sección 43).
 - Fase 9: [🟢 ESCUDO DE SEGURIDAD Y THROTTLING COMPLETADO] — Blindaje perimetral en cuatro capas: candado anti fuerza bruta en el login (5 fallos/min por email+IP → bloqueo de 15 min con `Retry-After`), cupo global de API (100 req/min por usuario/IP), middleware global de cabeceras de seguridad con CSP calibrada, y Cloudflare Turnstile invisible validado server-side antes de las credenciales (ver sección 42).
@@ -59,6 +61,7 @@
 | Analítica Financiera Mensual (Dashboard) | [🟢 FASE 8: COMPLETADO] | [🟢 FASE 8: COMPLETADO] | Endpoint agregado role:admin,manager (totales, comparativa mensual, métodos de pago, top productos, horas pico, tendencia diaria), modal con skeleton + export CSV — ver sección 40 |
 | Auditoría Histórica de Cierres (Admin Only) | [🟢 FASE 8: COMPLETADO] | [🟢 FASE 8: COMPLETADO] | `/admin/cash-closings-audit` con middleware role:admin, tabla lazy paginada con filtros, radiografía forense de solo lectura, triple candado de inmutabilidad — ver sección 40 |
 | Sistema de Gestión de Mesas (Dine-in) | [🟢 FASE 7: IMPLEMENTADO] | [🟢 FASE 7: IMPLEMENTADO] | Tablas `tables` y `table_sessions`, orden base en estado `open`, 4 endpoints transaccionales con `lockForUpdate` + índice único parcial, botón de mesas a la izquierda del reloj en el header del POS, catálogo en sidebar de Administración, trazabilidad mesa/mesero en histórico y ticket — ver sección 39 |
+| Homologación Horaria Global (3 Capas) | [🟢 SECCIÓN 53: CORREGIDO] | N/A | Las ventas posteriores a las **18:00 CST** se filtraban como del día siguiente: la frontera del día se dibujaba en UTC. Estándar `America/Mexico_City` en las tres capas — `TZ` del SO en `backend`/`scheduler`/`queue-worker`/`postgres` (en producción, una sola vez en el ancla YAML que comparten los 4 contenedores PHP), `'timezone' => env('APP_TIMEZONE', 'America/Mexico_City')` en `config/app.php`, y `SET TIME ZONE` por sesión (sección 47). El contenedor de Postgres arranca además con `-c timezone` porque `TZ` no mueve un volumen ya inicializado. Nuevo `App\Support\Timezone` como fuente única (con `sqlLiteral()` validado contra el catálogo IANA para el `AT TIME ZONE` de SQL crudo): **~40 literales eliminados** del código. Corregidos 4 filtros que usaban la cadena cruda del request como límite (`StockMovement`, `PettyCash`, `JobMonitor`). Guardia estática `TimezoneAlignmentTest` — 5 mutaciones inyectadas, 5 detectadas — ver sección 53 |
 | Desfase Horario timestamptz (6 h) | [🟢 CORREGIDO] | N/A | Eloquent escribia la hora local SIN offset y PostgreSQL (sesion en UTC) la guardaba como UTC: toda columna `timestamptz` quedaba 6 h adelantada. Corregido con `'timezone'` en la conexion pgsql. Solo aplica a registros NUEVOS; el historico de produccion no se migra y conserva su instante absoluto intacto (verificado: 0 s de diferencia). 5 pruebas de viaje redondo — ver seccion 47 |
 | Seeder Operativo + Selector de Zonas | [🟢 CORREGIDO] | [🟢 CORREGIDO] | El seeder no creaba `ticket_config` activa y TODA instalacion nacia sin poder vender: `/api/orders` y `/api/tables/{id}/open` respondian 422 ERR_TICKET_NO_ACTIVE_CONFIG (verificado: ahora 201 en ambos). El selector de zonas del Plano de Mesas se pintaba vacio por falta de placeholder con `value=null`. 4 pruebas fijan el contrato minimo del seeder — ver seccion 46 |
 | Migraciones Idempotentes (ENUMs PostgreSQL) | [🟢 CORREGIDO] | N/A | `migrate:fresh` borra tablas pero NO los tipos ENUM: el segundo `docker compose up` moria con `type "discount_type" already exists`. Corregido en dos capas: `--drop-types` en el entrypoint y `App\Support\Database\PostgresEnum` (crea si falta, recrea si esta huerfano, respeta si esta en uso — nunca CASCADE) en las 6 migraciones que crean tipos. Guardia estatica que falla si una migracion nueva usa `CREATE TYPE` crudo en `up()`. Suite completa en verde 74/74 — ver seccion 45 |
@@ -5300,3 +5303,212 @@ guía ahora prohíbe explícitamente el cron y ordena borrarlo si existe.
 - `.env.production.example` — `REVERB_HOST=reverb`, `REVERB_SCHEME=http`, `REVERB_SERVER_HOST/PORT` documentados con la distinción cliente/servidor
 - `deploy.sh` — el paso 7 reinicia también `reverb`; nota sobre por qué las cachés del paso 6 no se propagan entre contenedores
 - `DEPLOY_PRODUCTION.md` — paso 7 prohíbe el cron del host (duplicaba el scheduler), diagrama con los 4 contenedores PHP, tabla de puertos y sección de reinicios individuales actualizados
+
+---
+
+## 53. HOMOLOGACIÓN HORARIA DE TRES CAPAS: `America/Mexico_City` COMO ESTÁNDAR GLOBAL [🟢 CORREGIDO]
+
+La sección 47 alineó la **base de datos** con la aplicación (`SET TIME ZONE` por
+sesión). Esta sección cierra el círculo hacia afuera: alinea el **reloj del
+sistema operativo** de los contenedores, vuelve la zona de Laravel una variable
+de entorno documentada y elimina las ~40 apariciones de la cadena
+`'America/Mexico_City'` escritas a mano por el código.
+
+### 53.1 El síntoma: la venta de las 18:00 se registraba "mañana"
+
+Toda venta posterior a las 18:00 CST aparecía en el día siguiente al filtrar el
+Historial de Ventas. La aritmética es directa —CST es UTC−6, así que a partir de
+las 18:00 locales ya es el día siguiente en UTC— y se reprodujo así:
+
+```
+Venta                        2026-08-15T18:30:00-06:00
+La misma venta en UTC        2026-08-16T00:30:00+00:00   ← día 16
+Filtro "Hoy" en hora local   15/ago 00:00:00-06 .. 15/ago 23:59:59-06  → SÍ entra
+Filtro "Hoy" evaluado en UTC 15/ago 00:00:00+00 .. 15/ago 23:59:59+00  → NO entra
+```
+
+El instante guardado nunca estuvo mal: lo que estaba mal era **la zona en que se
+dibujaba la frontera del día**.
+
+### 53.2 El estándar: una sola zona, tres capas que no pueden divergir
+
+| Capa | Mecanismo | Dónde vive |
+| :--- | :--- | :--- |
+| 1. Sistema operativo | `TZ=America/Mexico_City` | `docker-compose.yml`, `docker-compose.prod.yml` |
+| 2. Laravel / PHP | `date_default_timezone_set()` desde `app.timezone` | `config/app.php` ← `APP_TIMEZONE` |
+| 3. PostgreSQL | `SET TIME ZONE` por sesión (sección 47) + `-c timezone` en el servidor de desarrollo | `config/database.php`, `docker-compose.yml` |
+
+La **capa 2 es la única fuente de verdad**. Las otras dos la reciben: el `.env`
+alimenta `APP_TIMEZONE`, y `config/database.php` reenvía `app.timezone` a la
+sesión de Postgres. Cambiar de plaza es **una línea del `.env`**, no una cacería
+de literales.
+
+### 53.3 Capa 1 — Docker
+
+`TZ` en los cuatro servicios pedidos. En **desarrollo** se declara servicio por
+servicio (`backend`, `scheduler`, `queue-worker`, `postgres`); en **producción**
+va una sola vez en el ancla YAML `x-backend-service`, de modo que `backend`,
+`reverb`, `scheduler` y `queue-worker` no puedan quedarse con relojes distintos
+—el arqueo de las 21:00 lo dispara el `scheduler` y lo ejecuta el `queue-worker`,
+así que una divergencia entre ambos sería invisible y devastadora—.
+
+Dos detalles que no son obvios:
+
+- **En el contenedor de PostgreSQL, `TZ` no basta.** El parámetro `timezone` del
+  servidor lo escribe `initdb` la **primera** vez y queda grabado en
+  `postgresql.conf`: un volumen `postgres-data` creado antes de esta corrección
+  seguiría sirviendo en UTC por más `TZ` que se le pase. Por eso el servicio
+  arranca además con `-c timezone=… -c log_timezone=…`, que sí manda sobre un
+  volumen preexistente. Se añade también `PGTZ` para los clientes libpq (`psql`,
+  `pg_dump`) que corren dentro del contenedor.
+- **En producción no hay servicio `postgres` que alinear.** La base es la Managed
+  PostgreSQL de DigitalOcean: corre en UTC y **no se reconfigura**. No hace falta:
+  la sesión se alinea sola en cada conexión gracias a la sección 47. Alinear el
+  servidor gestionado habría sido un cambio de infraestructura sin beneficio
+  sobre uno de configuración de aplicación que ya funciona.
+
+### 53.4 Capa 2 — Laravel
+
+```php
+'timezone' => env('APP_TIMEZONE', 'America/Mexico_City'),
+```
+
+El default deja la zona del negocio garantizada aunque la variable falte, así que
+un `.env` viejo en el Droplet **no puede revivir el desfase**. `APP_TIMEZONE`
+queda documentada en `backend/.env.example` y en `.env.production.example`, y
+declarada explícitamente en los `environment:` de ambos compose junto al `TZ` del
+SO —las dos capas viajan pegadas para que nadie mueva una y olvide la otra—.
+
+### 53.5 Capa 3 — Consultas: el literal escrito a mano ERA el pasivo
+
+Los filtros ya pasaban la zona explícita (`Carbon::parse($fecha, 'America/Mexico_City')`),
+así que **el Historial de Ventas ya calculaba bien sus fronteras**. El problema
+era otro: con `app.timezone` convertida en variable de entorno, esas ~40 cadenas
+literales se vuelven una **segunda fuente de verdad que el `.env` no puede
+mover**. Alguien que cambiara `APP_TIMEZONE` obtendría una mitad del sistema en
+una zona y la otra mitad en la anterior — un bug peor que el original, porque
+sería intermitente.
+
+La regla quedó invertida: **el código no vuelve a escribir la zona**.
+
+- `Carbon::now(…)` / `now(…)` / `Carbon::parse($x, …)` → **sin argumento de
+  zona**. Laravel ya llamó `date_default_timezone_set()` al arrancar, así que
+  `Carbon::now()`, `Carbon::today()` y `Carbon::now()->endOfDay()` nacen en hora
+  local por construcción.
+- Conversión de un instante ya hidratado (`serializeDate()` de `Order`,
+  `OrderItem`, `Table`, `TableSession`, `SystemNotification`) → `Timezone::app()`.
+- Agrupaciones en SQL crudo (`AT TIME ZONE`) → `Timezone::sqlLiteral()`.
+
+**`App\Support\Timezone`** (nuevo) es el único lugar que menciona la zona:
+
+| Método | Uso |
+| :--- | :--- |
+| `Timezone::app()` | Lee `config('app.timezone')`, con la zona del negocio como respaldo |
+| `Timezone::sqlLiteral()` | El mismo valor **validado contra el catálogo IANA de PHP** y entrecomillado para SQL |
+
+La validación de `sqlLiteral()` no es decorativa: `AT TIME ZONE` se usa dentro de
+expresiones de `GROUP BY` que deben coincidir carácter por carácter con las del
+`SELECT`, así que el valor viaja **interpolado** y no como binding. Verificar que
+sea un identificador IANA real antes de entrecomillarlo es lo que impide que un
+`APP_TIMEZONE` manipulado se convierta en un vector de inyección; si no lo es, la
+consulta ni siquiera se construye.
+
+### 53.6 Bugs reales de frontera encontrados de paso
+
+Tres listados **sí** usaban la cadena cruda del request como límite, sin anclarla
+al día. `'2026-08-15'` se interpreta como las **00:00:00** en ambos extremos, de
+modo que el filtro "hasta" excluía el día entero que el usuario acababa de pedir:
+
+| Archivo | Defecto | Corrección |
+| :--- | :--- | :--- |
+| `StockMovementController@index` | `where('created_at', '<=', $request->date_to)` | `Carbon::parse(…)->startOfDay()` / `->endOfDay()` |
+| `StockMovementController@summary` | Límites por defecto mezclando `toDateString()` y `toDateTimeString()` | Ambos extremos como `Carbon` anclado |
+| `PettyCashController@index` | Igual que el anterior, y con `has()` en vez de `filled()` (un `?date_from=` vacío llegaba a Carbon) | `filled()` + anclaje al día |
+| `JobMonitorController@index` | `date_to` ya anclaba, `date_from` no — asimétrico | `->startOfDay()` en el "desde" |
+
+### 53.7 La excepción deliberada: el arqueo de las 21:00
+
+`routes/console.php` **conserva el literal** en el `->timezone('America/Mexico_City')`
+del schedule, y es la única excepción a 53.5. Desde que el contenedor `scheduler`
+corre con `TZ`, la línea es redundante en la práctica — y se queda justamente por
+eso: el cierre automático de caja es la operación financiera más crítica del día y
+no debe poder moverse de hora por un `APP_TIMEZONE` mal escrito ni por un `TZ` que
+alguien quite del compose. **Aquí la redundancia es el candado, no un descuido.**
+El comentario del bloque, que afirmaba "el contenedor corre en UTC", quedó
+actualizado: ya no es cierto.
+
+### 53.8 Guardia de regresión
+
+`tests/Unit/TimezoneAlignmentTest.php` (nuevo, sin base de datos: solo lee
+archivos del repositorio). `MexicoTimezoneTest` prueba la **aritmética** de los
+límites; esta clase prueba que las tres capas sigan **apuntando a la misma zona**:
+
+- `app.timezone` resuelve a `America/Mexico_City` y se lee de `APP_TIMEZONE`.
+- La conexión `pgsql` sigue heredando `app.timezone` (candado de la sección 47).
+- Los cuatro servicios exigidos declaran `TZ` en **cada** compose — reconociendo
+  tanto la declaración directa como la herencia vía `<<: *backend-service`.
+- El `TZ` de producción vive en el ancla compartida, no repetido por servicio.
+- El PostgreSQL de desarrollo arranca con `-c timezone=…`.
+- **Cero zonas escritas a mano** en `app/`: barre el árbol y falla nombrando el
+  archivo infractor.
+
+### 53.9 Verificación
+
+| Comprobación | Resultado |
+| :--- | :--- |
+| `php -l` sobre los 22 archivos modificados | Sin errores de sintaxis |
+| `docker compose -f docker-compose.yml config` | Válido |
+| `TZ` renderizado por servicio (ambos compose) | `America/Mexico_City` en los 4 exigidos de cada archivo; el ancla de prod se expande a los 4 contenedores PHP |
+| Venta 18:30 CST contra el filtro "Hoy" local | **Entra** en el día correcto |
+| La misma venta contra un filtro evaluado en UTC | Queda fuera — el bug reportado, reproducido |
+| Literales `'America/Mexico_City'` en `app/` | 0 en cálculos de fecha (quedan 2, ambos en texto: un docblock y una etiqueta de bitácora) |
+| Expresiones de `GROUP BY` vs. `SELECT` tras usar `sqlLiteral()` | Idénticas — ambas salen de la misma llamada |
+
+**Prueba de que la guardia sirve** (5 mutaciones inyectadas y revertidas): quitar
+el `TZ` de un servicio de desarrollo, revertir `app.timezone` a `'UTC'`, quitar el
+`TZ` del ancla de producción, reintroducir la zona a mano en `OrderController` y
+borrar el `SET TIME ZONE` de `config/database.php` → **las 5 fueron detectadas**,
+cada una nombrando su causa.
+
+> ⚠️ **Verificación estática.** La suite PHPUnit no se ejecutó en esta sesión: el
+> proxy de egress bloquea `repo.packagist.org` (misma restricción de las secciones
+> 43.5, 51.4 y 52.8), así que no hay `vendor/`. Las aserciones de
+> `TimezoneAlignmentTest` se ejecutaron con un script PHP equivalente que replica
+> su lógica (16/16 en verde). En el Droplet, tras el deploy, confirmar:
+> ```
+> docker compose -f docker-compose.prod.yml exec backend date       # CST, no UTC
+> docker compose -f docker-compose.prod.yml exec scheduler date     # el MISMO reloj
+> docker compose -f docker-compose.prod.yml exec backend php artisan tinker
+> #   >>> config('app.timezone')  -> "America/Mexico_City"
+> #   >>> now()->format('c')      -> ...-06:00
+> ```
+> La prueba de humo que más importa: registrar una venta después de las 18:00 y
+> confirmar que el Historial la muestra **en el día de hoy**.
+
+### 53.10 Nota operativa para cierres y reportes
+
+El histórico anterior a la sección 47 **sigue sin migrarse** y esa decisión no
+cambia aquí. Lo que esta sección garantiza es que, de ahora en adelante, la
+frontera del día sea la misma en los tres lugares donde se calcula —el filtro de
+Eloquent, la agregación de PostgreSQL y el `date` del contenedor que dispara el
+scheduler—, que es la condición para que un corte de caja, un reporte mensual y
+la pantalla del cajero puedan cuadrar entre sí.
+
+### Archivos Creados
+- `backend/app/Support/Timezone.php` — fuente única de la zona (`app()` y `sqlLiteral()` validado)
+- `backend/tests/Unit/TimezoneAlignmentTest.php` — guardia estática de las tres capas
+
+### Archivos Modificados
+- `docker-compose.yml` — `TZ` + `APP_TIMEZONE` en `backend`, `scheduler` y `queue-worker`; `TZ`/`PGTZ` y `-c timezone`/`-c log_timezone` en `postgres`
+- `docker-compose.prod.yml` — `TZ` + `APP_TIMEZONE` en el ancla `x-backend-service` (cubre los 4 contenedores PHP); nota sobre por qué no hay `postgres` que alinear
+- `backend/config/app.php` — `'timezone' => env('APP_TIMEZONE', 'America/Mexico_City')` y comentario que documenta el ancla de tres capas
+- `backend/.env.example`, `.env.production.example` — `APP_TIMEZONE` documentada
+- `backend/app/Http/Controllers/Sales/OrderController.php` — filtros del Historial sin zona a mano, con el porqué del bug en el comentario
+- `backend/app/Http/Controllers/Sales/SalesExportController.php`, `Sales/DailySummaryController.php` — íd.
+- `backend/app/Http/Controllers/Finance/CashRegisterClosingController.php`, `Finance/PettyCashController.php`, `Finance/AnalyticsController.php` — íd. (+ `sqlLiteral()` en `AT TIME ZONE`)
+- `backend/app/Http/Controllers/Dashboard/DashboardController.php`, `Dashboard/MonthlyAnalyticsController.php` — íd.; eliminada la constante local `TZ`
+- `backend/app/Http/Controllers/Logistics/StockMovementController.php` — **bug de frontera corregido** en `index` y `summary`
+- `backend/app/Http/Controllers/Admin/JobMonitorController.php` — `date_from` anclado con `startOfDay()` (era asimétrico)
+- `backend/app/Models/{Order,OrderItem,Table,TableSession,SystemNotification}.php` — `serializeDate()` vía `Timezone::app()`
+- `backend/app/Console/Commands/AutoCloseCashRegisters.php` — `now()` y `Timezone::app()`
+- `backend/routes/console.php` — comentario actualizado; el literal del schedule de las 21:00 **se conserva a propósito** (53.7)

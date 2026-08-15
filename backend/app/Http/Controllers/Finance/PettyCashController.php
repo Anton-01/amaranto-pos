@@ -21,12 +21,15 @@ class PettyCashController extends Controller
             $query->where('reason', $request->reason);
         }
 
-        if ($request->has('date_from')) {
-            $query->where('created_at', '>=', $request->date_from);
+        // `filled()` y no `has()`: un `?date_from=` vacio llegaba a Carbon y
+        // reventaba. Los limites se anclan al dia completo en hora local para
+        // que el filtro "hasta" no corte a las 00:00 del dia solicitado.
+        if ($request->filled('date_from')) {
+            $query->where('created_at', '>=', Carbon::parse($request->date_from)->startOfDay());
         }
 
-        if ($request->has('date_to')) {
-            $query->where('created_at', '<=', $request->date_to);
+        if ($request->filled('date_to')) {
+            $query->where('created_at', '<=', Carbon::parse($request->date_to)->endOfDay());
         }
 
         if ($request->has('user_id')) {
@@ -131,8 +134,8 @@ class PettyCashController extends Controller
     public function summary(): JsonResponse
     {
         $totalWithdrawals = PettyCashTransaction::sum('amount');
-        $todayStart = Carbon::now('America/Mexico_City')->startOfDay();
-        $todayEnd = Carbon::now('America/Mexico_City')->endOfDay();
+        $todayStart = Carbon::now()->startOfDay();
+        $todayEnd = Carbon::now()->endOfDay();
         $countToday = PettyCashTransaction::whereBetween('created_at', [$todayStart, $todayEnd])->count();
         $totalToday = PettyCashTransaction::whereBetween('created_at', [$todayStart, $todayEnd])->sum('amount');
 

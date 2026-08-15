@@ -43,12 +43,19 @@ class OrderController extends Controller
             $query->whereNotNull('table_id');
         }
 
+        // Filtros del Historial de Ventas. Los limites se construyen con Carbon
+        // —nunca con la cadena cruda del request— para que "Hoy" signifique el
+        // dia de pared del negocio y no el dia UTC: una venta de las 18:00 CST
+        // ocurre ya en el dia siguiente en UTC, y filtrar en esa zona la movia
+        // de fecha. Carbon los ancla en `app.timezone` (America/Mexico_City)
+        // porque Laravel ya fijo esa zona como default de PHP al arrancar; por
+        // eso NO se le pasa la zona a mano (ver CONTEXT.md seccion 53).
         if ($request->filled('date_from')) {
-            $from = Carbon::parse($request->date_from, 'America/Mexico_City')->startOfDay();
+            $from = Carbon::parse($request->date_from)->startOfDay();
             $query->where('created_at', '>=', $from);
         }
         if ($request->filled('date_to')) {
-            $to = Carbon::parse($request->date_to, 'America/Mexico_City')->endOfDay();
+            $to = Carbon::parse($request->date_to)->endOfDay();
             $query->where('created_at', '<=', $to);
         }
         if ($request->filled('payment_method_id')) {

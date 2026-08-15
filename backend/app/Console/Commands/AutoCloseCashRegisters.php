@@ -11,6 +11,7 @@ use App\Models\JobExecutionLog;
 use App\Models\SystemNotification;
 use App\Models\User;
 use App\Services\CashClosingService;
+use App\Support\Timezone;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
@@ -136,8 +137,8 @@ class AutoCloseCashRegisters extends Command
                     'declared_amount' => (float) $closing->declared_amount,
                     'difference_amount' => (float) $closing->difference_amount,
                     'was_stale' => $register->opened_at !== null
-                        && $register->opened_at->timezone('America/Mexico_City')->toDateString()
-                            !== now('America/Mexico_City')->toDateString(),
+                        && $register->opened_at->timezone(Timezone::app())->toDateString()
+                            !== now()->toDateString(),
                 ];
 
                 $reportable[] = [
@@ -226,7 +227,7 @@ class AutoCloseCashRegisters extends Command
                 '[dry-run] %s — %s (abierta %s)',
                 strtoupper(substr($register->id, 0, 8)),
                 $register->user?->name ?? 'N/D',
-                $register->opened_at?->timezone('America/Mexico_City')->format('d/m/Y H:i')
+                $register->opened_at?->timezone(Timezone::app())->format('d/m/Y H:i')
             ));
         }
 
@@ -364,7 +365,7 @@ class AutoCloseCashRegisters extends Command
                     closingId: $closing->id,
                     operatorName: $entry['operator'],
                     closingDate: ($closing->created_at ?? now())
-                        ->timezone('America/Mexico_City')
+                        ->timezone(Timezone::app())
                         ->format('d/m/Y H:i:s'),
                     totalAmount: (float) $closing->expected_amount,
                     paymentBreakdown: $this->breakdownForMail($closing),
