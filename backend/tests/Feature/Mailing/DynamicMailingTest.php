@@ -119,14 +119,30 @@ class DynamicMailingTest extends TestCase
 
         $job->handle(app(DynamicMailerFactory::class));
 
-        // MailFake files every ShouldQueue mailable under "queued" regardless
-        // of the method used to hand it over, so the assertion looks at that
-        // bucket. In production the same call sends immediately: the queueing
-        // already happened when this job was dispatched.
-        Mail::assertQueued(CashRegisterClosingReportMail::class, function (CashRegisterClosingReportMail $mail) use ($configuration) {
+        /*
+         * The assertion looks at the "sent" bucket, not the queued one:
+         * MailFake::sendNow() files the mailable as sent even when it is a
+         * ShouldQueue instance (it hardcodes shouldQueue: false), and that is
+         * the behaviour the job depends on. Queueing it again from inside the
+         * worker would push it back to Redis, where the run-time transport no
+         * longer exists — the asynchronous leg already happened when this job
+         * was dispatched.
+         */
+        Mail::assertSent(CashRegisterClosingReportMail::class, function (CashRegisterClosingReportMail $mail) use ($configuration) {
+            /*
+             * The sender is read off the property instead of through
+             * hasFrom(): that helper consults envelope() first, and
+             * Envelope::isFrom() dereferences its own $from without a null
+             * check. This Mailable's envelope declares only a subject — the
+             * identity is applied by the job — so the helper fatals before it
+             * ever compares anything.
+             */
+            $from = $mail->from[0] ?? [];
+
             return $mail->hasTo('contabilidad@cronos.pos')
                 && $mail->hasTo('direccion@cronos.pos')
-                && $mail->hasFrom($configuration->from_email, $configuration->from_name)
+                && ($from['address'] ?? null) === $configuration->from_email
+                && ($from['name'] ?? null) === $configuration->from_name
                 && $mail->subject === $configuration->subject;
         });
     }

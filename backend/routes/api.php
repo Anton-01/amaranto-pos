@@ -272,6 +272,16 @@ Route::middleware(['auth:sanctum', 'user.active'])->group(function () {
     Route::middleware('role:admin')->prefix('admin/email-configurations')->group(function () {
         Route::get('/', [EmailConfigurationController::class, 'index']);
         Route::get('/catalogs', [EmailConfigurationController::class, 'catalogs']);
+
+        /*
+         * Synchronous health check. It sends a real message through the real
+         * transport inside the request, so it is throttled apart from the
+         * global quota: each click costs an SMTP dial against the provider and
+         * an email in somebody's inbox.
+         */
+        Route::post('/test-connection', [EmailConfigurationController::class, 'testConnection'])
+            ->middleware('throttle:10,1');
+
         Route::post('/', [EmailConfigurationController::class, 'store']);
         Route::put('/{email_configuration}', [EmailConfigurationController::class, 'update']);
         Route::patch('/{email_configuration}/toggle-status', [EmailConfigurationController::class, 'toggleStatus']);
