@@ -39,10 +39,28 @@ class EmailConfiguration extends Model
         'inventory' => 'Inventario y Stock',
     ];
 
-    /** Transport families understood by config/mailing.php. */
+    /** Generic relay: the server's own mail server, described by the .env. */
+    public const PROVIDER_SMTP = 'smtp';
+
+    /** SendGrid's secured SMTP relay, over the alternate port 2525. */
+    public const PROVIDER_SENDGRID = 'sendgrid';
+
+    /** Resend's native HTTP API: HTTPS/443, no SMTP socket involved. */
+    public const PROVIDER_RESEND = 'resend';
+
+    /**
+     * Catalog of providers offered by the admin UI and accepted by validation.
+     *
+     * Every key here must have a `strategy` declared in config/mailing.php, or
+     * the row will validate and then fail at send time with
+     * ERR_MAIL_STRATEGY_UNSUPPORTED. The label is what the dropdown shows, and
+     * it names the outbound port on purpose: choosing between these providers
+     * is, in practice, choosing which port the VPS firewall has to let through.
+     */
     public const PROVIDERS = [
-        'sendgrid' => 'SendGrid',
-        'smtp' => 'SMTP Generico',
+        self::PROVIDER_SENDGRID => 'SendGrid (SMTP 2525)',
+        self::PROVIDER_RESEND => 'Resend (API HTTPS 443)',
+        self::PROVIDER_SMTP => 'SMTP Generico',
     ];
 
     protected $fillable = [
@@ -107,6 +125,29 @@ class EmailConfiguration extends Model
             ->unique()
             ->values()
             ->all();
+    }
+
+    /**
+     * Provider-agnostic payload handed to a mail strategy.
+     *
+     * The strategies take an array and not the model on purpose: the health
+     * check validates credentials that were never persisted, so nothing in
+     * that layer may assume a row exists. Recipients are already cleaned here,
+     * which keeps every strategy from having to filter them again.
+     *
+     * @return array<string, mixed>
+     */
+    public function toStrategyConfig(): array
+    {
+        return [
+            'process_type' => $this->process_type,
+            'provider' => $this->provider,
+            'api_key' => $this->api_key,
+            'from_email' => $this->from_email,
+            'from_name' => $this->from_name,
+            'subject' => $this->subject,
+            'target_emails' => $this->deliverableEmails(),
+        ];
     }
 
     /** True when a credential is stored, without revealing it. */
