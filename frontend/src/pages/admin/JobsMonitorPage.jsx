@@ -13,6 +13,7 @@ import { toast } from 'sonner';
 import api from '../../api/axios';
 import AppLayout from '../../components/layout/AppLayout';
 import { useAuth } from '../../context/AuthContext';
+import { toLocalYmd } from '../../lib/dates';
 
 /**
  * Monitor de Telemetria de Jobs y Boveda de Respaldos — EXCLUSIVO de admin.
@@ -41,9 +42,6 @@ const STATUS_OPTIONS = [
   { label: 'Todos los estatus', value: null },
   ...Object.entries(STATUS_META).map(([value, meta]) => ({ label: meta.label, value })),
 ];
-
-const toYmd = (d) =>
-  d ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` : null;
 
 const fmtDate = (value) =>
   value ? new Date(value).toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'medium' }) : '—';
@@ -150,8 +148,8 @@ export default function JobsMonitorPage() {
           per_page: 15,
           status: f.statusFilter ?? undefined,
           job_name: f.jobFilter ?? undefined,
-          date_from: toYmd(f.dateRange?.[0]) ?? undefined,
-          date_to: toYmd(f.dateRange?.[1]) ?? undefined,
+          date_from: toLocalYmd(f.dateRange?.[0]) ?? undefined,
+          date_to: toLocalYmd(f.dateRange?.[1]) ?? undefined,
           search: f.search || undefined,
         },
       });

@@ -12,10 +12,9 @@ import { toast } from 'sonner';
 import api from '../../api/axios';
 import AppLayout from '../../components/layout/AppLayout';
 import { useAuth } from '../../context/AuthContext';
+import { toLocalYmd } from '../../lib/dates';
 
 const fmt = (v) => `$${Number(v ?? 0).toLocaleString('es-MX', { minimumFractionDigits: 2 })}`;
-
-const toYmd = (d) => (d ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` : null);
 
 /**
  * Auditoria Historica de Cierres de Caja — EXCLUSIVA de administradores.
@@ -58,8 +57,8 @@ export default function CashClosingsAuditPage() {
           page: targetPage + 1,
           per_page: 15,
           type: f.typeFilter ?? undefined,
-          date_from: toYmd(f.dateRange?.[0]) ?? undefined,
-          date_to: toYmd(f.dateRange?.[1]) ?? undefined,
+          date_from: toLocalYmd(f.dateRange?.[0]) ?? undefined,
+          date_to: toLocalYmd(f.dateRange?.[1]) ?? undefined,
           search: f.search || undefined,
         },
       });

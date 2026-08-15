@@ -9,7 +9,9 @@
 - **Estándar de payload: prohibido el `SELECT *` implícito.** Toda vista principal proyecta columnas con `select()` y acota sus relaciones (`with('user:id,name')`). No es solo peso: `cost_price` y las cuentas completas de los cajeros dejaron de viajar al navegador — ver sección 54.
 - WebSockets: Laravel Reverb (puerto 8080, tiempo real)
 - **Estándar de Zona Horaria: `America/Mexico_City` en las tres capas (Docker `TZ` → Laravel `APP_TIMEZONE` → sesión de PostgreSQL).** Fuente única de verdad: `config('app.timezone')`, expuesta al código por `App\Support\Timezone`. **El código NO vuelve a escribir la zona a mano** — `Carbon::now()` / `Carbon::today()` sin argumento ya nacen en hora local. Única excepción deliberada: el `->timezone()` del arqueo de las 21:00 en `routes/console.php` (ver secciones 53 y 47).
-- Último trabajo: [🟢 SECCIÓN 54: PROYECCIÓN DE COLUMNAS, CACHÉ DINÁMICO EN REDIS Y PERCEPCIÓN DE CARGA] — Cuatro capas del mismo problema. (1) Eliminado el `SELECT *` implícito de las vistas principales: el Historial de Ventas ya no publica `cost_price` de cada partida ni la cuenta completa del cajero, y el catálogo del POS dejó de exponer el margen del negocio. (2) El TTL salió de PHP a la tabla `cache_configurations`, con invalidación crítica colgada de los modelos `Order` y `Product` para que una venta o un movimiento de stock purguen el Dashboard de inmediato. (3) El spinner del Dashboard se sustituyó por un esqueleto que calca su geometría final, de modo que al llegar los datos nada se mueve. (4) El Sidebar centra su enlace activo tras el montaje, resolviendo la pérdida de posición al refrescar — ver sección 54.
+- **Estándar de Fechas en el Cliente (4.ª capa): `toISOString()` está PROHIBIDO para fechas calendario.** Toda cadena `'YYYY-MM-DD'` que viaja a la API (`date_from`, `date_to`) se genera desde los componentes locales del navegador con `frontend/src/lib/dates.js` (`toLocalYmd` / `todayYmd`), nunca convirtiendo a UTC. `toISOString()` se conserva **solo** para instantes (`created_at`, `_queued_at`), que es su uso correcto — ver sección 55.
+- Último trabajo: [🟢 SECCIÓN 55: ESTANDARIZACIÓN DE FECHAS EN EL CLIENTE] — El filtro rápido "Hoy" devolvía la lista vacía después de las 18:00 CST: el frontend construía el día con `new Date().toISOString().split('T')[0]`, que imprime el día **UTC**, y a partir de las 6 PM pedía a la API las ventas de mañana. El backend nunca estuvo mal (sección 53); la pregunta que le llegaba sí. Creada `lib/dates.js` como fuente única, corregidas 7 pantallas (incluidas 3 que ya calculaban bien pero con su propia copia del formateador) y detectado de paso que la vigencia de las promociones se guardaba 6 horas tarde por el mismo motivo — ver sección 55.
+- Trabajo previo: [🟢 SECCIÓN 54: PROYECCIÓN DE COLUMNAS, CACHÉ DINÁMICO EN REDIS Y PERCEPCIÓN DE CARGA] — Cuatro capas del mismo problema. (1) Eliminado el `SELECT *` implícito de las vistas principales: el Historial de Ventas ya no publica `cost_price` de cada partida ni la cuenta completa del cajero, y el catálogo del POS dejó de exponer el margen del negocio. (2) El TTL salió de PHP a la tabla `cache_configurations`, con invalidación crítica colgada de los modelos `Order` y `Product` para que una venta o un movimiento de stock purguen el Dashboard de inmediato. (3) El spinner del Dashboard se sustituyó por un esqueleto que calca su geometría final, de modo que al llegar los datos nada se mueve. (4) El Sidebar centra su enlace activo tras el montaje, resolviendo la pérdida de posición al refrescar — ver sección 54.
 - Corrección previa: [🟢 SECCIÓN 53: HOMOLOGACIÓN HORARIA DE TRES CAPAS] — Las ventas posteriores a las 18:00 CST se filtraban como del día siguiente porque la frontera del día se dibujaba en UTC. Alineados el reloj del SO de los contenedores (`TZ`), la zona de Laravel (`APP_TIMEZONE`, antes literal en `config/app.php`) y el servidor PostgreSQL de desarrollo (`-c timezone`, que `TZ` por sí solo no mueve en un volumen ya creado). Eliminadas ~40 cadenas `'America/Mexico_City'` escritas a mano que se habrían vuelto una segunda fuente de verdad, y corregidos 4 filtros que usaban la cadena cruda del request como límite de día — ver sección 53.
 - Corrección anterior: [🟢 SECCIÓN 52: DESACOPLAMIENTO DEL ENTRYPOINT DE PRODUCCIÓN] — `docker-entrypoint.prod.sh` dejó de cablear `serve` + `queue:work` + `reverb:start` y ahora solo prepara (`storage:link` y las 4 cachés) antes de ceder el control con `exec "$@"`, de modo que el `command:` de `docker-compose.prod.yml` por fin manda: Reverb salió a su propio contenedor y el servicio `scheduler` ejecuta `schedule:work` por primera vez (antes levantaba un servidor HTTP duplicado y las tareas de las 21:00 dependían del cron del host, ahora eliminado) — ver sección 52.
 - Corrección más antigua: [🟢 SECCIÓN 51: FLYSYSTEM V3 EN BACKUPS + BLINDAJE DEL CIERRE AUTOMÁTICO] — Eliminado el `assertDependenciesInstalled()` obsoleto que hacía pasar un error de código por una caída de GCP (503), verificación de disco reducida a `Storage::disk(…)->exists('/')` en try/catch con degradación reportada; zona horaria `America/Mexico_City` fijada explícitamente en el schedule de las 21:00; y `AutoCloseCashRegisters` envuelto en try/catch con bitácora propia en `job_execution_logs` para que nunca vuelva a morir en silencio (ver sección 51).
@@ -24,6 +26,7 @@
 ## 2. Matriz de Modulos y Progreso
 | Modulo | Estado Backend | Estado Frontend | Observaciones |
 | :--- | :--- | :--- | :--- |
+| Fechas en el Cliente (hora local) | N/A | [🟢 SECCIÓN 55: CORREGIDO] | `frontend/src/lib/dates.js` como fuente única: `toLocalYmd` / `todayYmd` construyen `'YYYY-MM-DD'` desde los componentes locales del navegador. `toISOString()` prohibido para fechas calendario (imprimía el día UTC y rompía el filtro "Hoy" a partir de las 18:00 CST) y conservado solo para instantes. Incluye `toLocalDateTime` para pickers con `showTime` y `parseLocalYmd` para el problema inverso — ver sección 55 |
 | Caché Dinámico de Módulos (Redis) | [🟢 SECCIÓN 54: COMPLETADO] | [🟢 SECCIÓN 54: COMPLETADO] | Tabla `cache_configurations` (`module_name` único, `duration_minutes`, `is_active`) + `App\Support\ModuleCache` resolviendo el TTL en cada petición. 5 módulos cacheables y 5 ventanas cerradas (15 / 30 / 60 / 1440 / 2880 min) administradas desde `Configuración → Caché de Módulos` (admin-only). Sin *cache tags*: índice de claves por módulo, así funciona igual en Redis, `database` y `array`. Invalidación crítica en `Order::booted()` y `Product::booted()` — ver sección 54 |
 | Reducción de Payload / Data Masking | [🟢 SECCIÓN 54: COMPLETADO] | N/A | `select()` explícito + *eager loading* acotado en Dashboard, Historial de Ventas, catálogo POS, productos, usuarios, cierres de caja, plano de mesas y export a Excel. `cost_price` fuera del POS y del historial; cuentas de cajero reducidas a `id,name(,email)` — ver sección 54 |
 | Rendimiento Percibido (Skeletons + Sidebar) | N/A | [🟢 SECCIÓN 54: COMPLETADO] | `DashboardSkeleton` calca la geometría final (KPIs, gráfica, dona y leyenda) con `animate-pulse`, solo en la primera carga; el Sidebar centra su enlace activo con `scrollIntoView({behavior:'auto',block:'center'})` sin mover el documento — ver sección 54 |
@@ -5775,3 +5778,155 @@ existe el módulo (11 casos):
 - `frontend/src/pages/DashboardPage.jsx` — esqueleto en lugar del spinner, solo en la primera carga
 - `frontend/src/pages/admin/SystemSettingsPage.jsx` — pestaña `Caché de Módulos` (admin-only)
 - `frontend/src/components/layout/Sidebar.jsx` — auto-scroll silencioso al enlace activo (`useRef` + `useEffect` + `scrollIntoView`)
+
+---
+
+## 55. ESTANDARIZACIÓN DE FECHAS EN EL CLIENTE: `YYYY-MM-DD` SIEMPRE EN HORA LOCAL [🟢 CORREGIDO]
+
+La sección 53 alineó las tres capas del **servidor** (SO → Laravel → PostgreSQL)
+para que la frontera del día se dibujara en `America/Mexico_City`. Esta sección
+cierra el último eslabón, que quedó fuera de aquel trabajo: **el navegador**. El
+backend contestaba correctamente; la pregunta que le llegaba estaba mal.
+
+### 55.1 El síntoma: "Hoy" devolvía la lista vacía después de las 18:00
+
+A partir de las 6:00 PM CST, el filtro rápido **Hoy** del Historial de Ventas
+dejaba de mostrar las ventas del día —incluidos los tickets que el cajero acababa
+de cobrar minutos antes—. La causa es de una línea:
+
+```js
+new Date().toISOString().split('T')[0]
+```
+
+`toISOString()` **convierte el instante a UTC antes de formatearlo**, así que el
+día calendario que imprime es el día UTC, no el del reloj de pared del usuario.
+En México (UTC−6) ambos dejan de coincidir cada tarde a las 18:00:
+
+```
+Reloj local                 2026-08-14 18:30 (CST, UTC−6)
+new Date().toISOString()    "2026-08-15T00:30:00.000Z"
+      .split('T')[0]        "2026-08-14"  →  NO: "2026-08-15"   ← mañana
+```
+
+El frontend pedía `date_from=2026-08-15&date_to=2026-08-15` mientras el backend
+—correctamente anclado en hora local desde la sección 53— respondía que ese día
+todavía no tenía ventas. **Ninguna de las dos capas estaba mal por separado: no
+estaban hablando del mismo día.**
+
+### 55.2 La regla: `toISOString()` queda prohibido para fechas calendario
+
+Se creó **`frontend/src/lib/dates.js`** como fuente única, con la justificación
+del bug escrita en el propio archivo para prevenir la regresión. La regla es:
+
+| Tipo de dato | Qué es | Cómo se serializa |
+| :--- | :--- | :--- |
+| **Fecha calendario** (`date_from`, `date_to`, nombre de un archivo exportado) | Un día en el calendario del usuario | `toLocalYmd()` / `todayYmd()` — componentes locales, sin pasar por UTC |
+| **Fecha + hora elegida** (vigencia de una promoción) | Un reloj de pared que el admin escribió | `toLocalDateTime()` → `'YYYY-MM-DD HH:mm:ss'` |
+| **Instante** (`created_at`, `_queued_at`, sello de un ticket) | Un punto en la línea de tiempo | `toISOString()` **sigue siendo lo correcto**: es inequívoco y el receptor lo renderiza en local |
+
+La distinción importa: `toISOString()` no es el enemigo, lo es usarlo para algo
+que no es un instante. Las cuatro llamadas que quedan en el código
+(`CheckoutModal`, `useOnlineStatus`, dos en `TicketConfigPage`) son instantes y
+se conservan a propósito.
+
+Se eligió **no agregar `date-fns`**: el cálculo es aritmética de componentes que
+el navegador ya resolvió en hora local, y el bundle ya pesa 1.8 MB. La utilidad
+completa son ~40 líneas de código.
+
+### 55.3 API de `lib/dates.js`
+
+| Función | Devuelve | Para qué |
+| :--- | :--- | :--- |
+| `toLocalYmd(date)` | `'2026-08-14'` \| `null` | **La única** autorizada a producir `date_from` / `date_to` |
+| `todayYmd()` | `'2026-08-14'` | El día de hoy en el reloj del usuario |
+| `toLocalDateTime(date)` | `'2026-08-14 18:30:00'` \| `null` | Pickers con `showTime` |
+| `parseLocalYmd(value)` | `Date` a medianoche local \| `null` | El problema inverso (55.5) |
+| `addDays(date, n)` | `Date` nueva | Rangos rápidos, sin mutar el original |
+| `addMonths(date, n)` | `Date` nueva | Íd., recortando al último día del mes destino |
+| `startOfMonth(date)` | `Date` nueva | Filtro "Mes" |
+
+### 55.4 Alcance de la corrección
+
+| Archivo | Qué se corrigió |
+| :--- | :--- |
+| `components/layout/AppHeader.jsx` | Contador de "ventas de hoy": pedía el día UTC |
+| `pages/sales/SalesHistoryPage.jsx` | Filtros rápidos (Hoy / Semana / Mes), rango manual del `Calendar` y nombre del Excel |
+| `pages/admin/CashRegisterClosingsPage.jsx` | Íd. (Hoy / Semana / Mes), rango manual y nombre del Excel |
+| `pages/finance/FinanceDashboardPage.jsx` | Copia local del formateador → utilidad compartida |
+| `pages/admin/CashClosingsAuditPage.jsx` | Copia local de `toYmd` → utilidad compartida |
+| `pages/admin/JobsMonitorPage.jsx` | Íd. |
+| `pages/promotions/PromotionsPage.jsx` | Vigencia de la promoción (55.6) |
+
+> **Sobre las tres copias locales.** `FinanceDashboardPage`, `CashClosingsAuditPage`
+> y `JobsMonitorPage` **ya calculaban bien la fecha**, cada una con su propia
+> versión del mismo formateador. No estaban rotas, pero tres implementaciones
+> paralelas de una regla es exactamente cómo una de ellas se desvía en el
+> siguiente refactor. Ahora las siete pantallas comparten una sola función.
+
+### 55.5 El problema inverso: parsear `'YYYY-MM-DD'` de vuelta
+
+`new Date('2026-08-14')` está especificado para interpretar una fecha desnuda
+como **medianoche UTC**, que en México se renderiza como las 18:00 del **día 13**.
+Es el mismo error en espejo. `parseLocalYmd()` construye la fecha desde sus
+partes y la mantiene en el día que la cadena nombra. Se aplicó en el eje del
+gráfico de `FinanceDashboardPage`, que hasta ahora lo esquivaba con el truco de
+concatenar `'T12:00:00'` —funcionaba, pero por accidente y sin explicar por qué—.
+
+### 55.6 Hallazgo adicional: la vigencia de las promociones nacía 6 horas tarde
+
+Al revisar los *datepickers* (requisito 2) apareció un bug del mismo origen pero
+con otro efecto. Ambos `Calendar` del formulario de promociones corren con
+`showTime`: el administrador elige un **instante exacto**. El formulario enviaba
+`formData.start_date.toISOString()`, es decir el mismo instante expresado en UTC:
+
+```
+El admin elige          14/08/2026 00:00  (inicio de la promoción)
+Viajaba como            "2026-08-14T06:00:00.000Z"
+PHP (ya en CST) escribía 2026-08-14 06:00:00   ← 6 horas tarde
+```
+
+Una promoción configurada para arrancar a medianoche arrancaba a las 6 AM, y una
+configurada para terminar a medianoche seguía viva seis horas de más. La
+comparación que decide si aplica (`start_date <= now()`) usa un `now()` local, así
+que el valor comparado tiene que ser local también. Ahora viaja como
+`'2026-08-14 00:00:00'` vía `toLocalDateTime()`.
+
+> **Nota operativa.** Las promociones **ya guardadas** conservan su desfase de 6
+> horas: esto corrige lo que se escribe de aquí en adelante, no migra el
+> histórico. Si alguna promoción vigente tiene una hora de inicio o fin que no
+> cuadra, basta reabrirla y volver a guardarla para que quede con el reloj
+> correcto.
+
+### 55.7 Verificación
+
+Se ejecutó la utilidad bajo `TZ=America/Mexico_City` reproduciendo el escenario
+del reporte (14/08/2026 18:30) — 17 comprobaciones, todas en verde:
+
+```
+legacy toISOString().split("T")[0] => 2026-08-15      ← el bug, reproducido
+toLocalYmd(18:30)                  => 2026-08-14      ← corregido
+toLocalYmd(23:59:59)               => 2026-08-14
+week  -> date_from                 => 2026-08-07
+month -> date_from                 => 2026-07-14
+31/Mar addMonths(-1)               => 2026-02-28      ← sin desbordar a marzo
+addDays(-7) cruzando el año        => 2025-12-27
+toLocalDateTime(00:00)             => 2026-08-14 00:00:00
+legacy new Date("2026-08-14")      => día 13          ← el problema inverso
+parseLocalYmd("2026-08-14")        => 2026-08-14
+```
+
+> La prueba de humo que más importa: entrar al Historial de Ventas **después de
+> las 18:00** y confirmar que el filtro **Hoy** sigue mostrando las ventas del
+> día.
+
+### Archivos Creados
+- `frontend/src/lib/dates.js` — fuente única de fechas locales, con la explicación del bug documentada en el archivo
+
+### Archivos Modificados
+- `frontend/src/components/layout/AppHeader.jsx` — contador de ventas del día
+- `frontend/src/pages/sales/SalesHistoryPage.jsx` — filtros rápidos, rango manual y nombre del Excel
+- `frontend/src/pages/admin/CashRegisterClosingsPage.jsx` — íd.
+- `frontend/src/pages/admin/CashClosingsAuditPage.jsx` — `toYmd` local eliminado
+- `frontend/src/pages/admin/JobsMonitorPage.jsx` — íd.
+- `frontend/src/pages/finance/FinanceDashboardPage.jsx` — `formatDate` local eliminado; eje del gráfico con `parseLocalYmd`
+- `frontend/src/pages/promotions/PromotionsPage.jsx` — vigencia enviada como reloj de pared local

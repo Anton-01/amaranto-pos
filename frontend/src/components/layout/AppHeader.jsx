@@ -8,6 +8,7 @@ import NotificationBell from '../notifications/NotificationBell';
 import useOnlineStatus from '../../hooks/useOnlineStatus';
 import useRefreshOnVisible from '../../hooks/useRefreshOnVisible';
 import { cachedGet, isStale } from '../../api/readCache';
+import { todayYmd } from '../../lib/dates';
 import api from '../../api/axios';
 
 const QUICK_STATS_KEY = 'header-today-sales';
@@ -69,7 +70,9 @@ export default function AppHeader({ onToggleSidebar }) {
    */
   const fetchQuickStats = useCallback(async ({ force = false } = {}) => {
     try {
-      const today = new Date().toISOString().split('T')[0];
+      // Local calendar day, never the UTC one: after 18:00 CST the two differ
+      // and the counter would report tomorrow's (empty) sales. See lib/dates.
+      const today = todayYmd();
       const total = await cachedGet(
         QUICK_STATS_KEY,
         () => api

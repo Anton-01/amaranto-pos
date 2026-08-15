@@ -16,6 +16,7 @@ import AppLayout from '../../components/layout/AppLayout';
 import TicketPreview from '../../components/pos/TicketPreview';
 import { useAuth } from '../../context/AuthContext';
 import useCronosAgent from '../../hooks/useCronosAgent';
+import { addDays, addMonths, todayYmd, toLocalYmd } from '../../lib/dates';
 
 const quickFilters = [
   { label: 'Hoy', value: 'today' },
@@ -101,21 +102,29 @@ export default function SalesHistoryPage() {
 
     const params = {};
 
+    /*
+     * Date boundaries are built from LOCAL calendar components, never from
+     * toISOString(). The Calendar hands over a Date at local midnight, and
+     * converting it to UTC first moves it onto the previous day; for the quick
+     * filters the same conversion moved "today" onto the NEXT day from 18:00
+     * CST onwards, which is how "Hoy" started returning an empty grid every
+     * evening. The backend already draws the day boundary in local time
+     * (CONTEXT.md section 53), so both ends now agree. See lib/dates.
+     */
     if (f.dateRange && f.dateRange[0]) {
-      const from = f.dateRange[0].toISOString().split('T')[0];
+      const from = toLocalYmd(f.dateRange[0]);
       params.date_from = from;
-      params.date_to = f.dateRange[1] ? f.dateRange[1].toISOString().split('T')[0] : from;
+      params.date_to = toLocalYmd(f.dateRange[1]) ?? from;
     } else if (f.quickFilter) {
       const today = new Date();
-      const todayStr = today.toISOString().split('T')[0];
+      const todayStr = toLocalYmd(today);
+
       if (f.quickFilter === 'today') {
         params.date_from = todayStr;
         params.date_to = todayStr;
       } else {
-        const d = new Date(today);
-        if (f.quickFilter === 'week') d.setDate(d.getDate() - 7);
-        else d.setMonth(d.getMonth() - 1);
-        params.date_from = d.toISOString().split('T')[0];
+        const from = f.quickFilter === 'week' ? addDays(today, -7) : addMonths(today, -1);
+        params.date_from = toLocalYmd(from);
         params.date_to = todayStr;
       }
     }
@@ -292,7 +301,9 @@ export default function SalesHistoryPage() {
       const url = window.URL.createObjectURL(new Blob([res.data]));
       const link = document.createElement('a');
       link.href = url;
-      link.setAttribute('download', `ventas_cronos_${new Date().toISOString().split('T')[0]}.xlsx`);
+      // Same rule for the filename: an export taken at 19:00 must be stamped
+      // with today's date, not with tomorrow's UTC one.
+      link.setAttribute('download', `ventas_cronos_${todayYmd()}.xlsx`);
       document.body.appendChild(link);
       link.click();
       link.remove();
