@@ -167,6 +167,34 @@ class DynamicMailingTest extends TestCase
         $this->assertSame('SG.testing-key-0001', $transport['password']);
     }
 
+    public function test_el_transporte_de_sendgrid_relaya_por_el_puerto_alterno_2525(): void
+    {
+        /*
+         * Regression guard for the production timeout. Cloud providers block
+         * outbound port 587 as an anti-spam policy and drop the packets rather
+         * than rejecting them, so the SMTP handshake hangs until the socket
+         * expires and the job dies with "Operation timed out". SendGrid's
+         * alternate submission port 2525 is not covered by that block, so it
+         * stays the default for any deployment on a VPS or Droplet.
+         */
+        $transport = config("mail.mailers.{$this->registeredSendGridMailer()}");
+
+        $this->assertSame(2525, $transport['port']);
+        $this->assertNotSame(587, $transport['port']);
+        // STARTTLS still applies on 2525: the alternate port changes the route,
+        // never the encryption.
+        $this->assertSame('tls', $transport['encryption']);
+
+        // The skeleton is the single source of truth for the port, so the guard
+        // has to hold there too — not only on the transport it produced.
+        $this->assertSame(2525, (int) config('mailing.providers.sendgrid.port'));
+    }
+
+    private function registeredSendGridMailer(): string
+    {
+        return app(DynamicMailerFactory::class)->register($this->activeJobsConfiguration());
+    }
+
     public function test_el_reporte_es_autocontenido_sin_pdf_ni_diferencias(): void
     {
         $mail = new CashRegisterClosingReportMail(

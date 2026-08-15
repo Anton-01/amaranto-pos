@@ -10,8 +10,10 @@
 - WebSockets: Laravel Reverb (puerto 8080, tiempo real)
 - **Estándar de Zona Horaria: `America/Mexico_City` en las tres capas (Docker `TZ` → Laravel `APP_TIMEZONE` → sesión de PostgreSQL).** Fuente única de verdad: `config('app.timezone')`, expuesta al código por `App\Support\Timezone`. **El código NO vuelve a escribir la zona a mano** — `Carbon::now()` / `Carbon::today()` sin argumento ya nacen en hora local. Única excepción deliberada: el `->timezone()` del arqueo de las 21:00 en `routes/console.php` (ver secciones 53 y 47).
 - **Estándar de Fechas en el Cliente (4.ª capa): `toISOString()` está PROHIBIDO para fechas calendario.** Toda cadena `'YYYY-MM-DD'` que viaja a la API (`date_from`, `date_to`) se genera desde los componentes locales del navegador con `frontend/src/lib/dates.js` (`toLocalYmd` / `todayYmd`), nunca convirtiendo a UTC. `toISOString()` se conserva **solo** para instantes (`created_at`, `_queued_at`), que es su uso correcto — ver sección 55.
-- Último trabajo: [🟢 SECCIÓN 55: ESTANDARIZACIÓN DE FECHAS EN EL CLIENTE] — El filtro rápido "Hoy" devolvía la lista vacía después de las 18:00 CST: el frontend construía el día con `new Date().toISOString().split('T')[0]`, que imprime el día **UTC**, y a partir de las 6 PM pedía a la API las ventas de mañana. El backend nunca estuvo mal (sección 53); la pregunta que le llegaba sí. Creada `lib/dates.js` como fuente única, corregidas 7 pantallas (incluidas 3 que ya calculaban bien pero con su propia copia del formateador) y detectado de paso que la vigencia de las promociones se guardaba 6 horas tarde por el mismo motivo — ver sección 55.
-- Trabajo previo: [🟢 SECCIÓN 54: PROYECCIÓN DE COLUMNAS, CACHÉ DINÁMICO EN REDIS Y PERCEPCIÓN DE CARGA] — Cuatro capas del mismo problema. (1) Eliminado el `SELECT *` implícito de las vistas principales: el Historial de Ventas ya no publica `cost_price` de cada partida ni la cuenta completa del cajero, y el catálogo del POS dejó de exponer el margen del negocio. (2) El TTL salió de PHP a la tabla `cache_configurations`, con invalidación crítica colgada de los modelos `Order` y `Product` para que una venta o un movimiento de stock purguen el Dashboard de inmediato. (3) El spinner del Dashboard se sustituyó por un esqueleto que calca su geometría final, de modo que al llegar los datos nada se mueve. (4) El Sidebar centra su enlace activo tras el montaje, resolviendo la pérdida de posición al refrescar — ver sección 54.
+- **Estándar de Correo Saliente: puerto 2525, nunca 587.** Los proveedores de nube (DigitalOcean, AWS, GCP, Azure) bloquean el puerto 587 de salida por política anti-spam y **descartan los paquetes en silencio**, de modo que el envío no falla rápido: se cuelga hasta expirar (`TransportException: Operation timed out`). Todo despliegue en VPS/Droplet usa el puerto alterno de submission **2525** — tanto el relay de SendGrid del mailing dinámico (`config/mailing.php`) como el `MAIL_PORT` del mailer estático — ver sección 56.
+- Último trabajo: [🟢 SECCIÓN 56: EL RELAY DE SENDGRID SALE POR EL PUERTO 2525] — `SendConfiguredProcessMail` moría cada noche con `TransportException: Operation timed out` contra `smtp.sendgrid.net:587`, agotando sus 3 reintentos sin enviar el reporte del cierre de caja. No era SendGrid ni la API Key: el firewall de salida del Droplet descarta el tráfico al 587 (política anti-spam), así que el socket esperaba un banner SMTP que nunca llegaba. Corregido en la plantilla del proveedor —donde vive la infraestructura, no en las filas de `email_configurations`— para arreglar todas las configuraciones existentes sin tocar un registro; el `?? 587` de respaldo de la fábrica también cayó. Sin dependencias nuevas de Composer — ver sección 56.
+- Trabajo previo: [🟢 SECCIÓN 55: ESTANDARIZACIÓN DE FECHAS EN EL CLIENTE] — El filtro rápido "Hoy" devolvía la lista vacía después de las 18:00 CST: el frontend construía el día con `new Date().toISOString().split('T')[0]`, que imprime el día **UTC**, y a partir de las 6 PM pedía a la API las ventas de mañana. El backend nunca estuvo mal (sección 53); la pregunta que le llegaba sí. Creada `lib/dates.js` como fuente única, corregidas 7 pantallas (incluidas 3 que ya calculaban bien pero con su propia copia del formateador) y detectado de paso que la vigencia de las promociones se guardaba 6 horas tarde por el mismo motivo — ver sección 55.
+- Trabajo anterior: [🟢 SECCIÓN 54: PROYECCIÓN DE COLUMNAS, CACHÉ DINÁMICO EN REDIS Y PERCEPCIÓN DE CARGA] — Cuatro capas del mismo problema. (1) Eliminado el `SELECT *` implícito de las vistas principales: el Historial de Ventas ya no publica `cost_price` de cada partida ni la cuenta completa del cajero, y el catálogo del POS dejó de exponer el margen del negocio. (2) El TTL salió de PHP a la tabla `cache_configurations`, con invalidación crítica colgada de los modelos `Order` y `Product` para que una venta o un movimiento de stock purguen el Dashboard de inmediato. (3) El spinner del Dashboard se sustituyó por un esqueleto que calca su geometría final, de modo que al llegar los datos nada se mueve. (4) El Sidebar centra su enlace activo tras el montaje, resolviendo la pérdida de posición al refrescar — ver sección 54.
 - Corrección previa: [🟢 SECCIÓN 53: HOMOLOGACIÓN HORARIA DE TRES CAPAS] — Las ventas posteriores a las 18:00 CST se filtraban como del día siguiente porque la frontera del día se dibujaba en UTC. Alineados el reloj del SO de los contenedores (`TZ`), la zona de Laravel (`APP_TIMEZONE`, antes literal en `config/app.php`) y el servidor PostgreSQL de desarrollo (`-c timezone`, que `TZ` por sí solo no mueve en un volumen ya creado). Eliminadas ~40 cadenas `'America/Mexico_City'` escritas a mano que se habrían vuelto una segunda fuente de verdad, y corregidos 4 filtros que usaban la cadena cruda del request como límite de día — ver sección 53.
 - Corrección anterior: [🟢 SECCIÓN 52: DESACOPLAMIENTO DEL ENTRYPOINT DE PRODUCCIÓN] — `docker-entrypoint.prod.sh` dejó de cablear `serve` + `queue:work` + `reverb:start` y ahora solo prepara (`storage:link` y las 4 cachés) antes de ceder el control con `exec "$@"`, de modo que el `command:` de `docker-compose.prod.yml` por fin manda: Reverb salió a su propio contenedor y el servicio `scheduler` ejecuta `schedule:work` por primera vez (antes levantaba un servidor HTTP duplicado y las tareas de las 21:00 dependían del cron del host, ahora eliminado) — ver sección 52.
 - Corrección más antigua: [🟢 SECCIÓN 51: FLYSYSTEM V3 EN BACKUPS + BLINDAJE DEL CIERRE AUTOMÁTICO] — Eliminado el `assertDependenciesInstalled()` obsoleto que hacía pasar un error de código por una caída de GCP (503), verificación de disco reducida a `Storage::disk(…)->exists('/')` en try/catch con degradación reportada; zona horaria `America/Mexico_City` fijada explícitamente en el schedule de las 21:00; y `AutoCloseCashRegisters` envuelto en try/catch con bitácora propia en `job_execution_logs` para que nunca vuelva a morir en silencio (ver sección 51).
@@ -26,6 +28,7 @@
 ## 2. Matriz de Modulos y Progreso
 | Modulo | Estado Backend | Estado Frontend | Observaciones |
 | :--- | :--- | :--- | :--- |
+| Puerto SMTP Saliente (Anti-Bloqueo Nube) | [🟢 SECCIÓN 56: CORREGIDO] | N/A | `SendConfiguredProcessMail` fallaba sistemáticamente con `TransportException: Operation timed out` en `smtp.sendgrid.net:587`: el proveedor de nube bloquea el 587 de salida por política anti-spam y **descarta** los paquetes (no los rechaza), así que el `SocketStream` esperaba el banner SMTP hasta expirar y quemaba los 3 reintentos en silencio. Relay movido al puerto alterno **2525** —mismas credenciales (`apikey` + API Key), mismo `STARTTLS`— en `config/mailing.php` (`SENDGRID_SMTP_PORT`), respaldo de `DynamicMailerFactory` alineado, y `MAIL_PORT=2525` como **requerimiento obligatorio** en VPS/Droplets. Sin dependencias nuevas (`symfony/sendgrid-mailer` documentado como evolución). Guardia de regresión sobre transporte y plantilla — ver sección 56 |
 | Fechas en el Cliente (hora local) | N/A | [🟢 SECCIÓN 55: CORREGIDO] | `frontend/src/lib/dates.js` como fuente única: `toLocalYmd` / `todayYmd` construyen `'YYYY-MM-DD'` desde los componentes locales del navegador. `toISOString()` prohibido para fechas calendario (imprimía el día UTC y rompía el filtro "Hoy" a partir de las 18:00 CST) y conservado solo para instantes. Incluye `toLocalDateTime` para pickers con `showTime` y `parseLocalYmd` para el problema inverso — ver sección 55 |
 | Caché Dinámico de Módulos (Redis) | [🟢 SECCIÓN 54: COMPLETADO] | [🟢 SECCIÓN 54: COMPLETADO] | Tabla `cache_configurations` (`module_name` único, `duration_minutes`, `is_active`) + `App\Support\ModuleCache` resolviendo el TTL en cada petición. 5 módulos cacheables y 5 ventanas cerradas (15 / 30 / 60 / 1440 / 2880 min) administradas desde `Configuración → Caché de Módulos` (admin-only). Sin *cache tags*: índice de claves por módulo, así funciona igual en Redis, `database` y `array`. Invalidación crítica en `Order::booted()` y `Product::booted()` — ver sección 54 |
 | Reducción de Payload / Data Masking | [🟢 SECCIÓN 54: COMPLETADO] | N/A | `select()` explícito + *eager loading* acotado en Dashboard, Historial de Ventas, catálogo POS, productos, usuarios, cierres de caja, plano de mesas y export a Excel. `cost_price` fuera del POS y del historial; cuentas de cajero reducidas a `id,name(,email)` — ver sección 54 |
@@ -78,7 +81,7 @@
 | Telemetría de Jobs y Rollback/Backups GCP | [🟢 FASE 10: COMPLETADO] | [🟢 FASE 10: COMPLETADO] | Tabla `job_execution_logs` (una fila por intento) alimentada por JobQueued/JobProcessing/JobProcessed/JobFailed sin instrumentar ningún job; 3 endpoints admin + reintento vía `queue:retry`; vista `/admin/jobs-monitor` con catálogo, histórico forense, modal de traza y panel de puntos de restauración; bóveda `gcs_backups` cifrada AES-256+PBKDF2 aislada en GCP, rollback transaccional (`--single-transaction` + `ON_ERROR_STOP`) con checksum SHA-256 y respaldo de seguridad previo; scheduler 03:30 respaldo / 04:15 poda; 30 pruebas en verde — ver sección 43 |
 | Escudo de Seguridad y Throttling | [🟢 FASE 9: COMPLETADO] | [🟢 FASE 9: COMPLETADO] | Candado de login 5 fallos/min por email+IP → bloqueo 15 min con `Retry-After`; cupo global 100 req/min (guard sanctum explícito + `trustProxies`); middleware global `SecurityHeaders` (XFO DENY, nosniff, HSTS, CSP calibrada para Turnstile / agente local 9100 / Reverb WSS); Cloudflare Turnstile invisible validado server-side antes de las credenciales; interceptor Axios 429 + alerta de bloqueo con cuenta regresiva en LoginPage; 18 pruebas en verde — ver sección 42 |
 | Optimizacion Modal de Cobro (Rendimiento) | [🟢 COMPLETADO Y OPERATIVO] | [🟢 COMPLETADO Y OPERATIVO] | Catálogo de métodos de pago servido desde Redis (`Cache::remember`, TTL 60 min, invalidación automática en alta/edición/baja); input de "Dinero Recibido" con sanitización estricta en `onChange` (sin `onBlur`), cálculo del cambio y habilitación de "Confirmar Cobro" en tiempo real desde la primera tecla |
-| Mailing Dinamico (SendGrid) por Proceso | [🟢 COMPLETADO Y OPERATIVO] | [🟢 COMPLETADO Y OPERATIVO] | Tabla `email_configurations` (una fila por `process_type`, API Key cifrada, destinatarios JSONB); transporte armado al vuelo con `Config::set()` sobre el relay SMTP de SendGrid; `SendConfiguredProcessMail` resuelve credenciales dentro del worker; cierre automatico de caja desacoplado (encola, no envia); reporte sin PDF ni diferencias y con membrete fiscal; pestana "Notificaciones / Emails" admin-only — ver seccion 48 |
+| Mailing Dinamico (SendGrid) por Proceso | [🟢 COMPLETADO Y OPERATIVO] | [🟢 COMPLETADO Y OPERATIVO] | Tabla `email_configurations` (una fila por `process_type`, API Key cifrada, destinatarios JSONB); transporte armado al vuelo con `Config::set()` sobre el relay SMTP de SendGrid (**puerto 2525**, no 587 — ver seccion 56); `SendConfiguredProcessMail` resuelve credenciales dentro del worker; cierre automatico de caja desacoplado (encola, no envia); reporte sin PDF ni diferencias y con membrete fiscal; pestana "Notificaciones / Emails" admin-only — ver seccion 48 |
 | Flysystem V3 en la Bóveda de Respaldos | [🟢 CORREGIDO] | N/A | `/api/admin/backups` devolvía `503 ERR_BACKUP_VAULT_UNREACHABLE` culpando a GCP por un defecto propio: la clausura de `Storage::extend('gcs')` llamaba `$this->assertDependenciesInstalled()`, un método privado del proveedor que acababa resolviéndose contra `League\Flysystem\Filesystem` (donde no existe en V3) y lanzaba un fatal. Método eliminado, clausura `static`, sondeo `exists('/')` en try/catch y degradación reportada al disco local si falta el adaptador — ver sección 51 |
 | Blindaje del Cierre Automático de Caja | [🟢 CORREGIDO] | N/A | `AutoCloseCashRegisters` es un comando de consola y la telemetría de la Fase 10 sólo escucha eventos de la COLA: la operación financiera más crítica del día no dejaba rastro y podía morir en silencio. Instrumentado a mano en `job_execution_logs` (`running` → `success`/`failed` con traza), `try/catch (Throwable)` envolvente, doble destino BD + `Log::error()`, opción `--source` y schedule 21:00 con `timezone('America/Mexico_City')` explícita — ver sección 51 |
 | Control de Partidas y Cancelacion Segura de Mesas | [🟢 COMPLETADO Y OPERATIVO] | [🟢 COMPLETADO Y OPERATIVO] | `PUT`/`DELETE` de partidas en la cuenta viva bajo `role:admin,manager`, con reescalado desde el precio almacenado, reintegro de stock con `StockMovement` y `item_removed_from_table` en auditoria; `POST /tables/{id}/cancel` transaccional (sesion canceled + mesa available + items sellados con `canceled_at`) autorizado por rol admin o por contrasena hasheada en `global_settings.cancellation_authorization`; controles +/-/papelera y modal estricto de cancelacion en el detalle de mesa — ver seccion 49 |
@@ -4541,8 +4544,11 @@ Toma la fila, la fusiona sobre la plantilla del proveedor declarada en
 `config/mailing.php` e inyecta el resultado en `config('mail.mailers.dynamic-{proceso}')`
 con `Config::set()`. Nada se persiste en disco y nada sobrevive al proceso.
 
-- **SendGrid** viaja por su relay SMTP (`smtp.sendgrid.net:587`, usuario literal
+- **SendGrid** viaja por su relay SMTP (`smtp.sendgrid.net:2525`, usuario literal
   `apikey`, la API Key como contraseña). Sin dependencias nuevas en Composer.
+  El puerto **no es 587**: los proveedores de nube lo bloquean de salida por
+  política anti-spam y el envío expiraba con `Operation timed out` — ver
+  sección 56.
 - Tras registrar, llama a `MailManager::forgetMailers()`: el worker es un
   proceso largo que cachea cada mailer resuelto, y sin ese flush el segundo job
   enviaría por el transporte del primero — con la API Key equivocada.
@@ -4631,7 +4637,8 @@ se pueden ejecutar a mano. Nota operativa: mientras la poda esté apagada,
 
 ### 48.9 Pruebas
 
-`tests/Feature/Mailing/DynamicMailingTest.php` — 8 pruebas: el cierre encola sin
+`tests/Feature/Mailing/DynamicMailingTest.php` — 9 pruebas (la novena, del puerto
+2525, se agregó en la sección 56): el cierre encola sin
 enviar de forma síncrona; sin configuración activa no se encola nada pero el
 cierre sí ocurre; el job usa destinatarios y asunto de la BD; una configuración
 desactivada después de encolar no envía; el transporte usa las credenciales de
@@ -5930,3 +5937,119 @@ parseLocalYmd("2026-08-14")        => 2026-08-14
 - `frontend/src/pages/admin/JobsMonitorPage.jsx` — íd.
 - `frontend/src/pages/finance/FinanceDashboardPage.jsx` — `formatDate` local eliminado; eje del gráfico con `parseLocalYmd`
 - `frontend/src/pages/promotions/PromotionsPage.jsx` — vigencia enviada como reloj de pared local
+
+---
+
+## 56. CORRECCIÓN CRÍTICA: EL RELAY DE SENDGRID SALE POR EL PUERTO 2525 [🟢 CORREGIDO]
+
+`SendConfiguredProcessMail` fallaba **de forma sistemática** en producción con
+`TransportException: Operation timed out` contra `smtp.sendgrid.net:587`. El
+reporte del cierre automático de caja se encolaba correctamente cada noche,
+agotaba sus 3 reintentos (`backoff [30, 120, 300]`) y moría: ningún correo salió
+del Droplet. La API Key era válida y SendGrid nunca estuvo caído.
+
+### 56.1 El diagnóstico: no es SendGrid, es el firewall de salida del proveedor
+
+Los proveedores de nube —DigitalOcean, AWS, GCP, Azure— **bloquean el puerto 587
+de salida por política anti-spam** en las cuentas nuevas o sin excepción
+solicitada. El detalle que hace el error tan confuso es *cómo* lo bloquean:
+**descartan los paquetes en silencio** en lugar de rechazar la conexión.
+
+```
+Conexión rechazada (puerto cerrado)   → falla en milisegundos, "Connection refused"
+Paquetes descartados (política DO)    → el socket espera el saludo SMTP hasta expirar
+```
+
+Por eso el síntoma es un **timeout** y no un error de conexión: el
+`SocketStream` de Symfony Mailer abre el socket, se queda esperando el banner
+`220` del servidor que nunca llega y expira a los 15 s (`timeout` de la
+plantilla). El mensaje resultante apunta al host de SendGrid, así que se lee
+como una caída del proveedor cuando en realidad el tráfico jamás salió del
+Droplet.
+
+### 56.2 La corrección: puerto alterno de submission (2525)
+
+SendGrid publica **2525** como puerto alterno de su relay: mismas credenciales
+(usuario literal `apikey`, la API Key como contraseña), mismo `STARTTLS`, misma
+ruta de entrega. Lo único que cambia es el número de puerto — y ese número no
+entra en las reglas anti-spam de los proveedores, así que atraviesa el bloqueo.
+
+```php
+// backend/config/mailing.php
+'sendgrid' => [
+    'transport' => 'smtp',
+    'host' => env('SENDGRID_SMTP_HOST', 'smtp.sendgrid.net'),
+    'port' => (int) env('SENDGRID_SMTP_PORT', 2525), // <- 587 lo bloquea la nube
+    'encryption' => env('SENDGRID_SMTP_ENCRYPTION', 'tls'),
+    'username' => 'apikey',
+    'credentials' => 'api_key',
+    'timeout' => (int) env('SENDGRID_SMTP_TIMEOUT', 15),
+],
+```
+
+**Dónde se aplicó y por qué ahí.** El transporte dinámico se arma en
+`App\Services\Mail\DynamicMailerFactory` fusionando la fila de
+`email_configurations` sobre la plantilla del proveedor (sección 48.2). El puerto
+es infraestructura, no dato del inquilino: no vive en la base de datos, vive en
+la plantilla. Corregirlo en `config/mailing.php` arregla de un golpe todas las
+filas existentes —presentes y futuras— sin tocar un solo registro ni pedirle
+nada al administrador. La fábrica también cambió su `?? 587` de respaldo por
+`?? 2525`, para que una plantilla a la que le falte el puerto no reintroduzca el
+bloqueo por la puerta de atrás.
+
+**Sin dependencias nuevas.** Se evaluó `symfony/sendgrid-mailer` (que saldría
+por HTTPS/443 vía API, inmune por definición a cualquier bloqueo de puertos
+SMTP), pero exige aprobar una dependencia de Composer y reconstruir la imagen.
+El ajuste de puerto resuelve el incidente con un cambio de configuración y cero
+dependencias; la vía API queda documentada como evolución si el proveedor
+llegara a bloquear también el 2525.
+
+### 56.3 Requerimiento obligatorio de despliegue (VPS / Droplets)
+
+> **El puerto 587 de salida está bloqueado en Droplets, EC2, Compute Engine y
+> VMs de Azure. Todo correo saliente de un despliegue en VPS debe usar el
+> puerto alterno de submission (2525).** No es una preferencia ni una
+> optimización: con 587 el envío no falla rápido, se cuelga hasta expirar y
+> quema los reintentos de la cola en silencio.
+
+Aplica a las dos rutas de correo del sistema:
+
+| Ruta | Dónde se configura | Valor obligatorio |
+| :--- | :--- | :--- |
+| Mailing dinámico por proceso (SendGrid, sección 48) | `backend/config/mailing.php` → `providers.sendgrid.port` (override: `SENDGRID_SMTP_PORT`) | `2525` |
+| Mailer estático del `.env` (`MAIL_MAILER=smtp`) | `.env` de producción → `MAIL_PORT` | `2525` |
+
+Diagnóstico en 5 segundos desde el Droplet — si el primero se cuelga y el
+segundo conecta, el bloqueo está confirmado:
+
+```bash
+nc -zv -w 5 smtp.sendgrid.net 587    # se queda colgado y expira  ← bloqueado
+nc -zv -w 5 smtp.sendgrid.net 2525   # "succeeded!"               ← ruta buena
+```
+
+Tras cambiar el puerto hay que **reciclar la configuración cacheada y los
+workers**, porque `config:cache` congela la plantilla y `queue:work` es un
+proceso largo que no la vuelve a leer:
+
+```bash
+docker compose -f docker-compose.prod.yml exec backend php artisan config:cache
+docker compose -f docker-compose.prod.yml restart queue-worker
+```
+
+### 56.4 Pruebas
+
+`tests/Feature/Mailing/DynamicMailingTest.php` suma una novena prueba,
+`test_el_transporte_de_sendgrid_relaya_por_el_puerto_alterno_2525`, que fija el
+puerto en las dos capas donde puede regresar el defecto: el transporte que la
+fábrica inyecta en `config('mail.mailers.dynamic-jobs')` y la plantilla
+`config('mailing.providers.sendgrid')` de la que sale. Verifica además que el
+cifrado sigue siendo `tls`, para dejar asentado que el puerto alterno cambia la
+ruta y **nunca** el `STARTTLS`.
+
+### Archivos Modificados
+- `backend/config/mailing.php` — puerto de SendGrid 587 → 2525, con el bloqueo del proveedor documentado en el propio archivo
+- `backend/app/Services/Mail/DynamicMailerFactory.php` — puerto de respaldo 587 → 2525 y nota de por qué no debe volver
+- `backend/app/Jobs/SendConfiguredProcessMail.php` — nota de diagnóstico: ante un `Operation timed out`, revisar el puerto antes que al proveedor
+- `backend/tests/Feature/Mailing/DynamicMailingTest.php` — guardia de regresión del puerto
+- `.env.production.example` — `MAIL_PORT` 587 → 2525 con la advertencia del bloqueo
+- `DEPLOY_DIGITALOCEAN.md` — íd. en el bloque de `.env` de producción, con nota operativa

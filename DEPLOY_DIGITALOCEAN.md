@@ -282,7 +282,7 @@ VITE_REVERB_SCHEME=https
 
 MAIL_MAILER=smtp
 MAIL_HOST=smtp.tu-proveedor.com
-MAIL_PORT=587
+MAIL_PORT=2525
 MAIL_USERNAME=tu-email@dominio.com
 MAIL_PASSWORD=tu_password_smtp
 MAIL_ENCRYPTION=tls
@@ -291,6 +291,15 @@ MAIL_FROM_NAME="Cronos POS"
 
 BCRYPT_ROUNDS=12
 ```
+
+> **Puerto 2525, no 587.** DigitalOcean bloquea el puerto 587 de salida en los
+> Droplets por politica anti-spam y descarta los paquetes en silencio (no los
+> rechaza), asi que el socket SMTP se queda esperando el saludo hasta expirar y
+> el envio muere con `TransportException: Operation timed out`. El 2525 es el
+> puerto alterno de submission —mismas credenciales, mismo STARTTLS— y no entra
+> en ese bloqueo. Aplica igual al relay de SendGrid del mailing dinamico, que ya
+> viaja por `smtp.sendgrid.net:2525` desde `config/mailing.php` (ver seccion 56
+> de `CONTEXT.md`).
 
 Generar clave, instalar Reverb, y ejecutar migraciones:
 
