@@ -56,4 +56,12 @@ EXPOSE 8000 8080
 
 USER www-data
 
+# El ENTRYPOINT solo PREPARA (storage:link + caches) y termina en `exec "$@"`:
+# el proceso de primer plano lo elige el `command:` de docker-compose.prod.yml,
+# distinto para backend / reverb / scheduler / queue-worker.
+#
+# El CMD es solo el valor por defecto para `docker run` sin argumentos; el
+# compose lo sobreescribe en los cuatro servicios. Su unica funcion aqui es que
+# `exec "$@"` nunca se quede sin comando y el contenedor no salga con codigo 0.
 ENTRYPOINT ["docker-entrypoint.sh"]
+CMD ["php", "artisan", "serve", "--host=0.0.0.0", "--port=8000"]

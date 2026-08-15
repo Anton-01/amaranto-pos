@@ -6,20 +6,22 @@
 - Base de Datos: Managed PostgreSQL (DigitalOcean)
 - Cache / Colas: Redis 7 Alpine (cache global + queue worker)
 - WebSockets: Laravel Reverb (puerto 8080, tiempo real)
-- Última corrección: [🟢 SECCIÓN 51: FLYSYSTEM V3 EN BACKUPS + BLINDAJE DEL CIERRE AUTOMÁTICO] — Eliminado el `assertDependenciesInstalled()` obsoleto que hacía pasar un error de código por una caída de GCP (503), verificación de disco reducida a `Storage::disk(…)->exists('/')` en try/catch con degradación reportada; zona horaria `America/Mexico_City` fijada explícitamente en el schedule de las 21:00; y `AutoCloseCashRegisters` envuelto en try/catch con bitácora propia en `job_execution_logs` para que nunca vuelva a morir en silencio (ver sección 51).
+- Última corrección: [🟢 SECCIÓN 52: DESACOPLAMIENTO DEL ENTRYPOINT DE PRODUCCIÓN] — `docker-entrypoint.prod.sh` dejó de cablear `serve` + `queue:work` + `reverb:start` y ahora solo prepara (`storage:link` y las 4 cachés) antes de ceder el control con `exec "$@"`, de modo que el `command:` de `docker-compose.prod.yml` por fin manda: Reverb salió a su propio contenedor y el servicio `scheduler` ejecuta `schedule:work` por primera vez (antes levantaba un servidor HTTP duplicado y las tareas de las 21:00 dependían del cron del host, ahora eliminado) — ver sección 52.
+- Corrección previa: [🟢 SECCIÓN 51: FLYSYSTEM V3 EN BACKUPS + BLINDAJE DEL CIERRE AUTOMÁTICO] — Eliminado el `assertDependenciesInstalled()` obsoleto que hacía pasar un error de código por una caída de GCP (503), verificación de disco reducida a `Storage::disk(…)->exists('/')` en try/catch con degradación reportada; zona horaria `America/Mexico_City` fijada explícitamente en el schedule de las 21:00; y `AutoCloseCashRegisters` envuelto en try/catch con bitácora propia en `job_execution_logs` para que nunca vuelva a morir en silencio (ver sección 51).
 - Estado del Proyecto: [🟢 FASE 11: TRANSICIONES INSTANTÁNEAS POS ↔ MESAS COMPLETADO] — Caché SWR suscribible con render inmediato desde memoria y revalidación silenciosa, shell persistente que deja de desmontar sidebar y header, cascada serial del POS eliminada (4 lecturas en paralelo) y prefetch por intención en hover/focus. Medido con Playwright sobre el bundle de producción: parpadeo eliminado (7-8 → 0 frames con spinner), Mesas→POS de 241 ms a ~110 ms y 24 → 1 peticiones HTTP en cuatro idas y vueltas (ver sección 44).
 - Fase previa: [🟢 FASE 10: TELEMETRÍA DE JOBS, HISTÓRICO DE EJECUCIÓN Y ECOSISTEMA DE ROLLBACK/BACKUPS AISLADOS EN GCP COMPLETADO] — Bitácora forense `job_execution_logs` alimentada por los eventos nativos de la cola (un renglón por intento, con traza y disparador), panel admin `/admin/jobs-monitor` con catálogo, histórico y reintento manual; y bóveda de respaldos cifrada AES-256 en Google Cloud Storage —aislada de la infraestructura primaria en DigitalOcean— con rollback transaccional validado por checksum SHA-256 (ver sección 43).
 - Fase 9: [🟢 ESCUDO DE SEGURIDAD Y THROTTLING COMPLETADO] — Blindaje perimetral en cuatro capas: candado anti fuerza bruta en el login (5 fallos/min por email+IP → bloqueo de 15 min con `Retry-After`), cupo global de API (100 req/min por usuario/IP), middleware global de cabeceras de seguridad con CSP calibrada, y Cloudflare Turnstile invisible validado server-side antes de las credenciales (ver sección 42).
 - Fase 8: [🟢 SISTEMA ENTERPRISE DE CIERRES AUTOMÁTICOS, NOTIFICACIONES TAGGEADAS, ANALÍTICA FINANCIERA Y AUDITORÍA INMUTABLE COMPLETADO] — Scheduler de cierre de caja 21:00 bajo usuario de sistema, notificaciones estructuradas por tags JSON con modal de plantillas dinámicas, modal de analítica financiera mensual con export CSV, y auditoría forense de cierres admin-only (ver sección 40).
 - Fase 7: [🟢 SISTEMA DE GESTIÓN DE MESAS (DINE-IN) IMPLEMENTADO] — Comedor operativo: plano de mesas, cuentas vivas transaccionales, comandas incrementales y cobro con liberación automática (ver sección 39).
-- Estado de Infraestructura: [🟢 FASE 7: DEPLOY ÁGIL Y DOCKER OPTIMIZADO] — Docker Compose multi-contenedor operativo (4 servicios: backend, frontend, postgres, redis).
+- Estado de Infraestructura: [🟢 SECCIÓN 52: UN CONTENEDOR, UN PROCESO] — Docker Compose multi-contenedor con roles desacoplados. En producción, 6 servicios: `backend` (:8000 API), `reverb` (:8080 WSS), `scheduler` (`schedule:work`), `queue-worker` (`queue:work`), `frontend` (:3000 SPA) y `redis`. Los cuatro servicios PHP comparten la imagen `cronos-backend:latest` y se diferencian solo por su `command:`, que el entrypoint respeta gracias a `exec "$@"`.
 - Despliegue Produccion: [🟢 FASE 7: DEPLOY ÁGIL Y DOCKER OPTIMIZADO] — DigitalOcean Droplet + Managed PostgreSQL, imagenes base pre-compiladas (serversideup/php:8.4-fpm-alpine + nginx:alpine), frontend Vite pre-construido en local (frontend/dist versionado), Nginx proxy inverso HTTPS/WSS, Certbot SSL, deploy.sh automatizado. Tiempo estimado de build en el Droplet: < 2 minutos (antes: ~82 min).
 
 ## 2. Matriz de Modulos y Progreso
 | Modulo | Estado Backend | Estado Frontend | Observaciones |
 | :--- | :--- | :--- | :--- |
 | Infraestructura & Docker | [🟢 Completado y Operativo] | [🟢 Completado y Operativo] | Docker Compose multi-contenedor, Alpine, Hot-Reload, Reverb WS :8080 |
-| Despliegue Produccion (DigitalOcean) | [🟢 FASE 7: DEPLOY ÁGIL Y DOCKER OPTIMIZADO] | [🟢 FASE 7: DEPLOY ÁGIL Y DOCKER OPTIMIZADO] | Imagenes pre-compiladas (serversideup/php + nginx:alpine), frontend pre-construido en local, build en Droplet < 2 min, Nginx HTTPS/WSS proxy, Managed PostgreSQL SSL, Certbot, deploy.sh, cron scheduler |
+| Desacoplamiento del Entrypoint (Docker) | [🟢 SECCIÓN 52: CORREGIDO] | N/A | `docker-entrypoint.prod.sh` era rígido (`queue:work &` + `reverb:start &` + `exec artisan serve`) y, como `ENTRYPOINT` gana sobre `command:`, los tres contenedores levantaban la pila completa: 3 servidores HTTP, 3 Reverb peleando por :8080, 3 consumidores de la misma cola y **cero** `schedule:work`. Ahora el script solo prepara (`storage:link`, `config/route/event/view:cache`) y termina en `exec "$@"`; Reverb pasó a un 4.º contenedor propio, `REVERB_HOST` apunta al servicio interno con `REVERB_SCHEME=http`, y el cron `schedule:run` del host se eliminó para no duplicar el arqueo de las 21:00 — ver sección 52 |
+| Despliegue Produccion (DigitalOcean) | [🟢 FASE 7: DEPLOY ÁGIL Y DOCKER OPTIMIZADO] | [🟢 FASE 7: DEPLOY ÁGIL Y DOCKER OPTIMIZADO] | Imagenes pre-compiladas (serversideup/php + nginx:alpine), frontend pre-construido en local, build en Droplet < 2 min, Nginx HTTPS/WSS proxy, Managed PostgreSQL SSL, Certbot, deploy.sh, scheduler residente en contenedor propio (`schedule:work`, **sin** cron en el host — ver sección 52) |
 | Migraciones & Modelos Base (BD) | [🟢 Completado] | N/A | 23 migraciones, 16 modelos, Trait AdvancedSoftDeletes, Seeder base |
 | Autenticacion & 2FA (Sanctum) | [🟢 Completado] | [🟢 Completado] | Login, Logout, 2FA TOTP, Kill-Switch, Session Log |
 | Catalogo, Categorias y Variaciones| [🟢 Completado] | [🟢 Completado] | CRUD completo, DataTable filtros avanzados, variaciones en serie |
@@ -5103,3 +5105,198 @@ bloquear el cierre de las demás.
 - `backend/app/Http/Controllers/Admin/BackupController.php` — `index()` sondea antes de listar; el 503 llega diagnosticado
 - `backend/app/Console/Commands/AutoCloseCashRegisters.php` — blindaje try/catch, bitácora en `job_execution_logs`, opción `--source`, cuerpo extraído a `closeOpenRegisters()`
 - `backend/routes/console.php` — schedule en forma canónica con `timezone()` explícita y `--source=scheduler`
+
+## 52. DESACOPLAMIENTO DEL ENTRYPOINT DE PRODUCCIÓN: UN CONTENEDOR, UN PROCESO [🟢 CORREGIDO]
+
+La sección 50 corrigió este mismo anti-patrón en **desarrollo**
+(`docker-entrypoint.sh` + `CONTAINER_ROLE`). Producción quedó fuera de aquella
+corrección y seguía arrastrando el defecto original: `docker-entrypoint.prod.sh`
+terminaba en una cadena rígida de procesos y **nunca cedía el control** al
+`command:` del compose.
+
+### 52.1 El síntoma: el `command:` no servía para nada
+
+`docker-compose.prod.yml` declaraba desde siempre lo correcto:
+
+```yaml
+scheduler:
+  command: php artisan schedule:work
+queue-worker:
+  command: php artisan queue:work --tries=3 --timeout=90
+```
+
+…y los tres contenedores levantaban exactamente lo mismo:
+
+```
+cronos-scheduler     | → Starting queue worker...
+cronos-scheduler     | → Starting Laravel Reverb on port 8080...
+cronos-scheduler     | → Starting Laravel server on port 8000...
+cronos-queue-worker  | → Starting queue worker...
+cronos-queue-worker  | → Starting Laravel Reverb on port 8080...
+cronos-queue-worker  | → Starting Laravel server on port 8000...
+```
+
+### 52.2 Causa raíz: `ENTRYPOINT` gana, y este no usaba `"$@"`
+
+`backend/Dockerfile.prod` declara `ENTRYPOINT ["docker-entrypoint.sh"]`, y la
+regla de Docker es inflexible: **el `command:` del compose no reemplaza al
+entrypoint, se le pasa como argumentos**. Un entrypoint que no lee `"$@"` los
+descarta en silencio. El script terminaba así:
+
+```sh
+php artisan queue:work redis --sleep=3 --tries=3 --max-time=3600 --quiet &
+php artisan reverb:start --host=0.0.0.0 --port=8080 &
+exec php artisan serve --host=0.0.0.0 --port=8000
+```
+
+Tres procesos cableados en la imagen. Consecuencias medibles en el Droplet:
+
+| # | Duplicación | Efecto real |
+| :--- | :--- | :--- |
+| 1 | 3 × `artisan serve` en :8000 | Dos servidores HTTP inalcanzables (solo `backend` publica el puerto) consumiendo RAM y una conexión al Managed PostgreSQL cada uno |
+| 2 | 3 × `reverb:start` en :8080 | Dos instancias reintentando el bind en bucle contra un puerto ya tomado |
+| 3 | 3 × `queue:work` sobre la misma cola Redis | Un job podía tocarle a cualquiera de los tres; los logs de la cola quedaban repartidos entre tres contenedores y `job_execution_logs` registraba el intento bajo un contenedor arbitrario |
+| 4 | 0 × `schedule:work` | **El scheduler nunca corrió.** El cierre automático de caja de las 21:00, el respaldo de las 03:30 y la poda de las 04:15 dependían por completo del cron del host documentado en `DEPLOY_PRODUCTION.md` |
+
+El punto 4 es el más grave: el servicio llamado `scheduler` llevaba toda su vida
+sirviendo una API que nadie consultaba.
+
+### 52.3 La corrección: el entrypoint prepara, el compose decide
+
+`backend/docker-entrypoint.prod.sh` quedó reducido a dos responsabilidades:
+
+1. **Preparar** — `storage:link` (con limpieza previa del enlace obsoleto) y las
+   cuatro cachés de producción: `config:cache`, `route:cache`, `event:cache`,
+   `view:cache`.
+2. **Ceder el control** — `exec "$@"` como última instrucción, sin excepción.
+
+Toda ejecución rígida de `serve`, `queue:work` y `reverb:start` desapareció del
+script. `Dockerfile.prod` gana un `CMD` por defecto
+(`php artisan serve --host=0.0.0.0 --port=8000`) que existe solo para que
+`exec "$@"` nunca se quede sin argumentos en un `docker run` suelto; el compose
+lo sobreescribe en los cuatro servicios.
+
+### 52.4 Reverb sale a su propio contenedor (4.º servicio PHP)
+
+Se descartaron el supervisor ligero y el `&` dentro de `backend`. Reverb ahora es
+un servicio propio en `docker-compose.prod.yml`:
+
+| Servicio | `command:` | Puerto publicado |
+| :--- | :--- | :--- |
+| `backend` | `php artisan serve --host=0.0.0.0 --port=8000` | `127.0.0.1:8000` |
+| `reverb` | `php artisan reverb:start --host=0.0.0.0 --port=8080` | `127.0.0.1:8080` |
+| `scheduler` | `php artisan schedule:work` | — |
+| `queue-worker` | `php artisan queue:work --tries=3 --timeout=90` | — |
+
+Por qué separarlo y no usar un supervisor:
+
+- **`restart: always` vuelve a significar algo.** Un proceso lanzado con `&`
+  moría sin que Docker se enterara: el contenedor seguía "sano" porque su PID 1
+  (`artisan serve`) continuaba vivo. Los WebSockets se caían en silencio hasta
+  que alguien reportaba que las notificaciones no llegaban.
+- **`SIGTERM` llega al proceso correcto.** `exec` deja al comando destino como
+  PID 1: el worker termina el job en curso y Reverb cierra sus sockets con
+  orden, en lugar de comerse el `SIGKILL` de los 10 s.
+- **Reinicio y logs aislados.** `docker compose restart reverb` ya no tumba la
+  API, y `logs reverb` solo trae WebSockets.
+
+El contrato hacia afuera **no cambia**: `infrastructure/cronos-pos.conf` sigue
+haciendo proxy de `/app` y `/apps` a `127.0.0.1:8080`, solo que ahora ese puerto
+lo publica `reverb` y no `backend`. No hubo que tocar Nginx ni el frontend.
+
+### 52.5 La trampa que destapó la separación: `REVERB_HOST` es del *cliente*
+
+`config/broadcasting.php` usa `REVERB_HOST` / `REVERB_PORT` / `REVERB_SCHEME`
+para el **cliente HTTP** con el que Laravel *publica* eventos, no para el bind
+del servidor (ese lo fija el `--host` de la línea de comandos). `.env.production`
+traía `REVERB_HOST=0.0.0.0`, que "funcionaba" solo porque emisor y servidor
+vivían en el mismo contenedor. Con Reverb fuera, publicar contra `0.0.0.0` desde
+`backend` habría fallado en cada evento.
+
+Peor todavía: `REVERB_SCHEME` no estaba definido y su default en
+`config/broadcasting.php` es `https` con `useTLS => true` — el broadcaster
+intentaba un handshake TLS contra un Reverb que habla HTTP plano. El compose fija
+los tres valores vía `environment:` (que tiene precedencia sobre `env_file:`), de
+modo que un `.env.production` antiguo en el Droplet **no rompe el despliegue**:
+
+```yaml
+environment:
+  REVERB_HOST: reverb     # nombre de servicio en la red interna de Docker
+  REVERB_PORT: 8080
+  REVERB_SCHEME: http     # el TLS lo termina el Nginx del host
+```
+
+`.env.production.example` documenta además `REVERB_SERVER_HOST` /
+`REVERB_SERVER_PORT` (bind del servidor) para que el par no se vuelva a
+confundir.
+
+### 52.6 Efecto colateral obligatorio: eliminar el cron del host
+
+`DEPLOY_PRODUCTION.md` pedía una línea de crontab en el Droplet:
+
+```
+* * * * * cd /opt/cronos-pos && docker compose ... exec -T backend php artisan schedule:run
+```
+
+Era un parche a la era en que el contenedor `scheduler` no ejecutaba nada. Con el
+entrypoint corregido, **mantener ambos ejecuta cada tarea programada dos veces**:
+el cierre automático de caja de las 21:00 correría dos arqueos. El paso 7 de la
+guía ahora prohíbe explícitamente el cron y ordena borrarlo si existe.
+
+### 52.7 Decisiones de diseño
+
+- **Las cuatro cachés se compilan en TODOS los roles.** En producción no hay
+  bind-mount: cada contenedor tiene su propia capa de escritura, así que no se
+  pisan (a diferencia del `composer install` del entorno de desarrollo, que sí
+  competía por un volumen compartido y motivó `CONTAINER_ROLE` en la sección 50).
+  Y cada rol las necesita de verdad: el queue worker renderiza Blade al enviar
+  los Mailables (`view:cache`) y genera URLs firmadas (`route:cache`).
+- **Cero migraciones en el entrypoint de producción.** Siguen siendo exclusivas
+  de `deploy.sh`, que las corre una sola vez contra `backend`. Cuatro
+  contenedores arrancando en paralelo no pueden ser cuatro migradores — es
+  exactamente el 42P01 de la sección 50.
+- **`image: cronos-backend:latest` compartida** por los cuatro servicios: Compose
+  construye el Dockerfile una vez en lugar de resolver cuatro builds idénticos.
+- **Guardia de arranque.** Si el entrypoint recibe cero argumentos, falla con
+  mensaje explícito en vez de salir con código 0 y dejar un contenedor que
+  "arranca bien" y muere de inmediato.
+- **Healthcheck propio para Reverb** sin dependencias externas
+  (`php -r "exit(@fsockopen('127.0.0.1', 8080) ? 0 : 1);"`): un `nc -z` habría
+  dependido de qué applets trae el busybox de la imagen Alpine.
+
+### 52.8 Verificación
+
+| Comprobación | Resultado |
+| :--- | :--- |
+| `sh -n backend/docker-entrypoint.prod.sh` | Sin errores de sintaxis |
+| `docker compose -f docker-compose.prod.yml config` | Válido; los 4 `command:` se resuelven distintos |
+| `REVERB_HOST` renderizado | `reverb` — el `environment:` gana sobre el `env_file:` con `0.0.0.0` |
+| `image:` de los 4 servicios PHP | `cronos-backend:latest` en los cuatro (build único) |
+| Rastreo de `artisan serve`, `queue:work` y `reverb:start` en el entrypoint | **0 apariciones** |
+| `exec "$@"` como última instrucción del script | Confirmado |
+
+> ⚠️ **Verificación estática.** No se construyeron las imágenes en esta sesión:
+> el proxy de egress bloquea `repo.packagist.org` (misma restricción de las
+> secciones 43.5 y 51.4), así que no hay `vendor/` y el build de
+> `Dockerfile.prod` no puede completarse. En el Droplet, tras el primer
+> `bash deploy.sh`, confirmar:
+> ```
+> docker compose -f docker-compose.prod.yml ps          # 6 servicios arriba
+> docker compose -f docker-compose.prod.yml exec scheduler ps -o args
+> #   -> php artisan schedule:work   (NO 'artisan serve')
+> docker compose -f docker-compose.prod.yml exec queue-worker ps -o args
+> #   -> php artisan queue:work --tries=3 --timeout=90
+> docker compose -f docker-compose.prod.yml logs reverb | tail
+> crontab -l                                            # NO debe haber schedule:run
+> ```
+> La prueba de humo de WebSockets es la que más importa: emitir una
+> notificación y confirmar que llega al navegador — valida de una sola vez el
+> `REVERB_HOST=reverb`, el `REVERB_SCHEME=http` y el proxy `/app` de Nginx.
+
+### Archivos Modificados
+- `backend/docker-entrypoint.prod.sh` — **reescrito**: solo preparación (`storage:link` + 4 cachés) y `exec "$@"`; eliminados `serve`, `queue:work` y `reverb:start` cableados
+- `backend/Dockerfile.prod` — `CMD` por defecto para que `exec "$@"` nunca quede sin comando
+- `docker-compose.prod.yml` — `command:` explícito en `backend`, nuevo servicio `reverb` (4.º contenedor PHP) con healthcheck propio, ancla YAML compartida, override de `REVERB_HOST` / `REVERB_PORT` / `REVERB_SCHEME`, `8080` movido de `backend` a `reverb`
+- `.env.production.example` — `REVERB_HOST=reverb`, `REVERB_SCHEME=http`, `REVERB_SERVER_HOST/PORT` documentados con la distinción cliente/servidor
+- `deploy.sh` — el paso 7 reinicia también `reverb`; nota sobre por qué las cachés del paso 6 no se propagan entre contenedores
+- `DEPLOY_PRODUCTION.md` — paso 7 prohíbe el cron del host (duplicaba el scheduler), diagrama con los 4 contenedores PHP, tabla de puertos y sección de reinicios individuales actualizados
