@@ -2,19 +2,21 @@
 
 namespace App\Http\Controllers\Finance;
 
+use App\Exceptions\Mail\MailConfigurationMissingException;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\CashRegisterClosing\SendCashRegisterClosingEmailRequest;
 use App\Http\Requests\CashRegisterClosing\StoreCashRegisterClosingRequest;
+use App\Jobs\SendConfiguredProcessMail;
 use App\Mail\CashRegisterClosingMail;
 use App\Models\CashRegister;
 use App\Models\CashRegisterClosing;
+use App\Models\EmailConfiguration;
 use App\Models\PaymentMethod;
 use App\Models\PettyCashTransaction;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Mail;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Style\Alignment;
 use PhpOffice\PhpSpreadsheet\Style\Fill;
@@ -342,8 +344,75 @@ class CashRegisterClosingController extends Controller
         return $pdf->download('arqueo-caja-' . strtoupper(substr($closing->cash_register_id, 0, 8)) . '.pdf');
     }
 
+    /**
+     * Mailbox the manual report will use, resolved before the modal opens.
+     *
+     * The screen calls this when the operator clicks "Enviar por Correo": a 422
+     * means there is no active configuration for the `sales` process and the
+     * modal must not open at all, a 200 carries the recipients already stored
+     * so the input opens pre-filled with the official distribution list.
+     *
+     * The credential is not part of the answer — only the routing an operator
+     * is allowed to see and edit for a single send.
+     *
+     * @throws \App\Exceptions\Mail\MailConfigurationMissingException rendered as a 422.
+     */
+    public function emailConfiguration(): JsonResponse
+    {
+        $configuration = EmailConfiguration::requireActiveFor(EmailConfiguration::PROCESS_SALES);
+
+        return response()->json([
+            'status' => 'success',
+            'data' => [
+                'process_type' => $configuration->process_type,
+                'process_label' => EmailConfiguration::PROCESS_TYPES[$configuration->process_type]
+                    ?? $configuration->process_type,
+                'provider' => $configuration->provider,
+                'from_email' => $configuration->from_email,
+                'from_name' => $configuration->from_name,
+                'subject' => $configuration->subject,
+                'recipients' => $configuration->deliverableEmails(),
+            ],
+        ]);
+    }
+
+    /**
+     * Queues the closings report through the centralized mailing module.
+     *
+     * WHAT CHANGED AND WHY. This endpoint used to build its own message with
+     * the Mail facade, which meant it left through whatever MAIL_* block the
+     * .env happened to hold — a different sender, a different provider and a
+     * different failure mode than every other report the system sends. It now
+     * dispatches SendConfiguredProcessMail like the automatic closing does, so
+     * the provider strategy (Resend over HTTPS/443 in production), the
+     * credential and the official sender all come from the `sales` row.
+     *
+     * TWO WAYS TO ADDRESS IT. With no `emails` in the payload the report goes
+     * to the stored distribution list. With `emails` present, that list is
+     * overridden for this message only: the operator can wipe the pre-loaded
+     * addresses and type a single external recipient without editing — or even
+     * being able to edit — the global configuration.
+     *
+     * The configuration is required up front, before any query runs: sending a
+     * financial report to nowhere and answering 200 is worse than refusing.
+     *
+     * @throws \App\Exceptions\Mail\MailConfigurationMissingException rendered as a 422.
+     */
     public function sendEmail(SendCashRegisterClosingEmailRequest $request): JsonResponse
     {
+        $configuration = EmailConfiguration::requireActiveFor(EmailConfiguration::PROCESS_SALES);
+
+        $adHocRecipients = $request->adHocRecipients();
+        $recipients = $adHocRecipients ?? $configuration->deliverableEmails();
+
+        if ($recipients === []) {
+            throw new MailConfigurationMissingException(
+                EmailConfiguration::PROCESS_SALES,
+                'La configuración de correo de este proceso no tiene destinatarios. '
+                    .'Agrega al menos un correo en el panel de Ajustes o escribe uno en este envío.'
+            );
+        }
+
         $query = CashRegisterClosing::with(['cashRegister:id,user_id', 'cashRegister.user:id,name,email', 'closedByUser:id,name,email'])
             ->orderByDesc('created_at');
 
@@ -362,15 +431,30 @@ class CashRegisterClosingController extends Controller
             'date_to'   => $request->date_to,
         ];
 
-        foreach ($request->emails as $email) {
-            Mail::to(trim($email))->queue(new CashRegisterClosingMail($closings, $filters));
-        }
+        /*
+         * One job for the whole recipient list, not one per address: the
+         * strategies take the full list and the report is identical for
+         * everybody, so a single message keeps the thread — and the provider's
+         * rate budget — intact.
+         */
+        SendConfiguredProcessMail::dispatch(
+            EmailConfiguration::PROCESS_SALES,
+            new CashRegisterClosingMail($closings, $filters),
+            // Null on a default send, so the worker reads the freshest stored
+            // list: a recipient added while the message waited in Redis is
+            // still served. An ad-hoc list, being a decision the operator made
+            // about this one report, travels frozen with the job.
+            $adHocRecipients,
+        );
 
         return response()->json([
             'status'   => 'success',
             'metadata' => [
-                'message'    => 'Reporte enviado en cola a ' . count($request->emails) . ' destinatario(s).',
-                'recipients' => count($request->emails),
+                'message'    => 'Reporte enviado en cola a ' . count($recipients) . ' destinatario(s).',
+                'recipients' => count($recipients),
+                // The screen uses this to tell the operator whether the report
+                // went to the configured list or to the addresses they typed.
+                'ad_hoc'     => $adHocRecipients !== null,
             ],
         ]);
     }

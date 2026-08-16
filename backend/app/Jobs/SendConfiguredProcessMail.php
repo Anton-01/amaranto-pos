@@ -37,6 +37,14 @@ use Illuminate\Support\Facades\Log;
  * process from a blocked SMTP port to Resend is a change of one column in the
  * database.
  *
+ * AD-HOC RECIPIENTS. `$recipientsOverride` lets a caller aim one message
+ * somewhere else without touching the saved configuration: the closings
+ * history uses it when an operator edits the pre-loaded list before sending.
+ * Only the destination changes — provider, credential, sender identity and
+ * subject still come from the row, so an ad-hoc report is indistinguishable
+ * from a scheduled one to whoever receives it, and the stored list is never
+ * rewritten as a side effect of a one-off send.
+ *
  * If this job starts failing with "TransportException: Operation timed out" on
  * an SMTP provider, check the port before suspecting the provider: hosts block
  * outbound 587 by default, which is why the SendGrid skeleton in
@@ -59,9 +67,14 @@ class SendConfiguredProcessMail implements ShouldQueue
     /** @var array<int, int> Seconds to wait before each retry. */
     public array $backoff = [30, 120, 300];
 
+    /**
+     * @param  array<int, string>|null  $recipientsOverride  Ad-hoc recipient list. Null means
+     *                                                       "use the ones stored in the configuration".
+     */
     public function __construct(
         public string $processType,
         public Mailable $mailable,
+        public ?array $recipientsOverride = null,
     ) {
     }
 
@@ -81,11 +94,15 @@ class SendConfiguredProcessMail implements ShouldQueue
             return;
         }
 
-        $recipients = $configuration->deliverableEmails();
+        $isAdHoc = $this->recipientsOverride !== null;
+        $recipients = $isAdHoc
+            ? $this->cleanRecipients($this->recipientsOverride)
+            : $configuration->deliverableEmails();
 
         if ($recipients === []) {
-            Log::warning('Envio omitido: la configuracion activa no tiene destinatarios validos.', [
+            Log::warning('Envio omitido: no hay destinatarios validos para el proceso.', [
                 'process_type' => $this->processType,
+                'ad_hoc' => $isAdHoc,
                 'mailable' => $this->mailable::class,
             ]);
 
@@ -105,7 +122,14 @@ class SendConfiguredProcessMail implements ShouldQueue
             ->from($configuration->from_email, $configuration->from_name)
             ->subject($configuration->subject);
 
+        /*
+         * Credentials, sender and subject always come from the row; only the
+         * destination may be replaced. An ad-hoc send is "this same official
+         * mailbox, pointed somewhere else once" — it never becomes a second
+         * transport, and it never writes back to the stored recipient list.
+         */
         $config = $configuration->toStrategyConfig();
+        $config['target_emails'] = $recipients;
 
         $strategy->send($this->mailable, $config);
 
@@ -123,7 +147,28 @@ class SendConfiguredProcessMail implements ShouldQueue
             'strategy' => class_basename($strategy),
             'route' => $strategy->describeTransport($config),
             'recipients' => count($recipients),
+            // Distinguishes a scheduled report from an operator's one-off send
+            // when auditing where a financial report ended up.
+            'ad_hoc' => $isAdHoc,
             'mailable' => $this->mailable::class,
         ]);
+    }
+
+    /**
+     * Cleans an ad-hoc list the same way the model cleans the stored one:
+     * trimmed, de-duplicated and free of syntactically invalid addresses, so a
+     * typo cannot make the whole send fail inside the transport.
+     *
+     * @param  array<int, string>  $emails
+     * @return array<int, string>
+     */
+    private function cleanRecipients(array $emails): array
+    {
+        return collect($emails)
+            ->map(fn ($email) => trim((string) $email))
+            ->filter(fn (string $email) => filter_var($email, FILTER_VALIDATE_EMAIL) !== false)
+            ->unique()
+            ->values()
+            ->all();
     }
 }
