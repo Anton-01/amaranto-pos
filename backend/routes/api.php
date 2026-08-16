@@ -337,6 +337,12 @@ Route::middleware(['auth:sanctum', 'user.active'])->group(function () {
         Route::get('/current', [CashRegisterClosingController::class, 'current']);
         Route::post('/close', [CashRegisterClosingController::class, 'store']);
         Route::get('/closings/export-excel', [CashRegisterClosingController::class, 'exportExcel']);
+        /*
+         * Preflight of the manual report: answers with the recipients stored
+         * for the `sales` process, or 422 when that configuration does not
+         * exist, so the modal never opens on a mailbox that cannot send.
+         */
+        Route::get('/closings/email-configuration', [CashRegisterClosingController::class, 'emailConfiguration']);
         Route::post('/closings/send-email', [CashRegisterClosingController::class, 'sendEmail']);
         Route::get('/closings/{closing}/pdf', [CashRegisterClosingController::class, 'exportPdf']);
         Route::get('/closings', [CashRegisterClosingController::class, 'index']);

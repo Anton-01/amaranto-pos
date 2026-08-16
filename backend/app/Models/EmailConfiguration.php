@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Exceptions\Mail\MailConfigurationMissingException;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -27,6 +28,18 @@ class EmailConfiguration extends Model
     public const PROCESS_USERS = 'users';
 
     /**
+     * Sales reporting and cash closings, automated or sent by hand.
+     *
+     * The manual "Enviar por Correo" button of the closings history resolves
+     * this key, so the operator's ad-hoc report and any future scheduled sales
+     * digest share one mailbox instead of drifting apart.
+     */
+    public const PROCESS_SALES = 'sales';
+
+    /** Stock alerts and inventory reports. */
+    public const PROCESS_INVENTORY = 'inventory';
+
+    /**
      * Catalog of addressable processes.
      *
      * Shared by the validation rules and by the admin UI dropdown so both ends
@@ -35,8 +48,8 @@ class EmailConfiguration extends Model
     public const PROCESS_TYPES = [
         self::PROCESS_JOBS => 'Procesos Automaticos (Jobs)',
         self::PROCESS_USERS => 'Usuarios y Accesos',
-        'sales' => 'Ventas y Cierres',
-        'inventory' => 'Inventario y Stock',
+        self::PROCESS_SALES => 'Ventas y Cierres',
+        self::PROCESS_INVENTORY => 'Inventario y Stock',
     ];
 
     /** Generic relay: the server's own mail server, described by the .env. */
@@ -110,6 +123,24 @@ class EmailConfiguration extends Model
             ->where('process_type', $processType)
             ->where('is_active', true)
             ->first();
+    }
+
+    /**
+     * Same lookup as activeFor(), for the callers that cannot proceed without
+     * a configuration.
+     *
+     * The automated paths treat a missing row as "notifications are off" and
+     * carry on; an operator who pressed a button needs the opposite — a
+     * controlled 422 telling them to create the configuration in Ajustes.
+     * Centralizing the raise here keeps that message identical wherever it is
+     * surfaced, instead of a copy per controller.
+     *
+     * @throws MailConfigurationMissingException when no active row exists.
+     */
+    public static function requireActiveFor(string $processType): self
+    {
+        return static::activeFor($processType)
+            ?? throw new MailConfigurationMissingException($processType);
     }
 
     /**

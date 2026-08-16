@@ -6677,3 +6677,151 @@ asunto y el remitente de la base de datos viajaron en el JSON.
 - `backend/app/Console/Commands/DebugMailConfig.php` — sección de timeouts y tabla con estrategia y ruta, sin efectos secundarios
 - `frontend/src/components/settings/EmailNotificationsPanel.jsx` — ayuda por proveedor y toast de error con clase, ruta, tiempo y avisos
 - `backend/tests/Feature/Mailing/MailConnectionDiagnosticTest.php`, `DynamicMailingTest.php`
+
+---
+
+## 60. UNIFICACIÓN DEL ENVÍO MANUAL DE CIERRES DE CAJA CON EL MÓDULO CENTRALIZADO DE CORREO [🟢 COMPLETADO Y OPERATIVO]
+
+El botón **Enviar por Correo** del histórico de Cierres de Caja era la última
+isla del subsistema de correo: armaba su propio mensaje con la fachada `Mail`,
+salía por el bloque `MAIL_*` del `.env` y no sabía nada de
+`email_configurations`. En la práctica el mismo reporte podía llegar con dos
+remitentes distintos según quién lo enviara — el cierre automático con la
+identidad oficial, el envío manual con lo que el `.env` tuviera puesto — y
+fallaba por un camino que ni el diagnóstico síncrono ni la telemetría del
+worker podían ver. Esta sección lo integra al proceso **`sales` / Ventas y
+Cierres** y le añade dos comportamientos que la operación pedía: precarga de
+destinatarios y sobrescritura puntual.
+
+### 60.1 Validación previa: la modal no abre sobre un buzón que no puede enviar
+
+El clic ya no abre la modal directamente. Primero consulta
+`GET /api/cash-registers/closings/email-configuration`, que resuelve la
+configuración activa del proceso `sales`:
+
+- **Sin fila activa (o con la fila desactivada)** ⇒ **HTTP 422** con
+  `code: ERR_MAIL_CONFIG_MISSING` y el mensaje *"No existe una configuración de
+  correo activa para este proceso. Por favor, da de alta la configuración en el
+  panel de Ajustes."* El frontend lo intercepta y pinta un **toast de
+  advertencia** (no de error) que nombra dónde se resuelve; la modal no llega a
+  abrirse.
+- **Con fila activa** ⇒ 200 con el proceso, el remitente y los destinatarios ya
+  depurados.
+
+**422 y no 500**, igual que el diagnóstico de conexión de la sección 59.5: la
+petición estaba bien formada y la aplicación hizo lo que se le pidió; lo que
+falta es una fila que un administrador tiene que crear. Mantenerlo fuera de la
+banda 5xx significa que una instalación que nunca configuró correo no despierta
+al alerting.
+
+La credencial **no** viaja en esa respuesta: el endpoint expone únicamente el
+enrutamiento que un operador puede ver y editar para un envío. Hay una prueba
+que afirma que la API Key no aparece en el cuerpo.
+
+El mismo requisito se vuelve a exigir en el `POST /closings/send-email`. No es
+redundancia defensiva por gusto: la precarga y el envío son dos peticiones
+distintas y la configuración puede desactivarse entre ambas. Encolar un reporte
+financiero hacia la nada y responder 200 es peor que negarse.
+
+`App\Exceptions\Mail\MailConfigurationMissingException` centraliza esa negativa
+—código, mensaje y `render()` a 422— para que el texto sea idéntico en cualquier
+punto donde se surta, y `EmailConfiguration::requireActiveFor()` es la variante
+de `activeFor()` para los llamadores que no pueden continuar sin fila.
+
+**Por qué el job sigue callado y el controlador no.** `SendConfiguredProcessMail`
+termina en silencio cuando no hay configuración: nadie mira un cierre automático
+de las 21:00 y "las notificaciones están apagadas" es un estado válido ahí. Un
+humano que acaba de pulsar un botón sí está mirando, así que la misma condición
+tiene que volver dentro de la petición en lugar de morir en una bitácora del
+worker que el operador no puede abrir.
+
+### 60.2 Precarga inteligente de destinatarios
+
+Con configuración activa, la modal abre con el `Chips` de destinatarios ya
+poblado con `target_emails` de la fila (depurados por `deliverableEmails()`:
+recortados, sin duplicados y sin direcciones inválidas). El encabezado de la
+modal muestra qué configuración se está usando y con qué remitente sale
+(`no-reply@pos-app.tech` en producción), de modo que el operador ve el buzón
+oficial antes de enviar, no después.
+
+### 60.3 Modo ad-hoc: sobrescribir sin tocar lo guardado
+
+El operador puede borrar los correos precargados y escribir otros — uno o
+varios — para mandar el reporte a un involucrado puntual o a un auditor externo.
+En cuanto la lista deja de coincidir con la configurada, la modal se marca con
+la etiqueta **ENVÍO PUNTUAL** y ofrece *"Restaurar los configurados"*.
+
+La sobrescritura es **por mensaje y nunca escribe en la base**:
+`SendConfiguredProcessMail` acepta un `$recipientsOverride` que reemplaza
+**solo el destino**. Proveedor, credencial, remitente y asunto siguen saliendo
+de la fila, así que un reporte ad-hoc es indistinguible de uno programado para
+quien lo recibe. La bitácora del envío marca `ad_hoc: true|false`, que es lo que
+permite auditar después a dónde terminó yendo un reporte financiero.
+
+Dos decisiones sobre esa lista:
+
+1. **La omisión y la lista vacía no son lo mismo que una lista puntual.** El
+   frontend manda `emails` **solo** cuando el operador los cambió; sin ese
+   campo, el job resuelve los destinatarios guardados dentro del worker y honra
+   un correo agregado en Ajustes mientras el mensaje esperaba en Redis. Una
+   lista ad-hoc, en cambio, viaja congelada con el job: es una decisión que el
+   operador tomó sobre *ese* reporte.
+2. **Una lista puntual sin correos válidos no cae en la lista configurada.**
+   Ensanchar en silencio un envío puntual a toda la distribución de finanzas
+   sería la peor recuperación posible ante un dedazo, así que el job no envía
+   nada y deja un `Log::warning`.
+
+### 60.4 Enrutamiento por el patrón Strategy
+
+El envío manual dejó de usar `Mail::to()->queue()`. Ahora despacha
+`SendConfiguredProcessMail` — el mismo job del cierre automático — que pide su
+estrategia a `MailStrategyFactory` según `email_configurations.provider`. Con
+`resend` el reporte sale por `https://api.resend.com/emails` (HTTPS/443) con la
+credencial y el remitente oficial de la fila, sin abrir un solo socket SMTP.
+Cambiar el proveedor del envío manual vuelve a ser lo que ya era para el resto
+del sistema: una columna en la base de datos.
+
+`CashRegisterClosingMail` se alineó al contrato del job: su `envelope()` ahora
+devuelve `$this->subject ?: self::DEFAULT_SUBJECT`. La hidratación del Envelope
+corre *después* de que el job aplica el asunto configurado, y sin ese cambio el
+asunto quemado en la clase habría pisado al de la base — el mismo detalle
+documentado en la sección 48.4 para el reporte del cierre automático.
+
+### 60.5 Contrato de la API
+
+| Método | Ruta | Descripción |
+| :--- | :--- | :--- |
+| GET | /api/cash-registers/closings/email-configuration | Precarga: destinatarios y remitente del proceso `sales`, o 422 si no hay configuración activa |
+| POST | /api/cash-registers/closings/send-email | Encola el reporte. `emails` es **opcional**: ausente ⇒ destinatarios configurados; presente ⇒ sobrescritura ad-hoc (máx. 20) |
+
+`SendCashRegisterClosingEmailRequest` pasó `emails` de `required` a `nullable`:
+omitirlo dejó de ser un error de validación y significa "manda a quien diga la
+configuración", que es el comportamiento por defecto de la modal.
+
+### 60.6 Pruebas
+
+`tests/Feature/Mailing/ManualCashClosingMailTest.php` — 10 pruebas: la precarga
+responde 422 sin configuración y también con la fila desactivada; devuelve los
+destinatarios configurados sin filtrar la API Key; el envío se rechaza sin
+configuración y no encola nada; un envío por defecto encola **sin** override
+(`recipientsOverride === null`); una lista escrita a mano viaja como override y
+`target_emails` sobrevive intacta en la base; el job entrega al destinatario
+puntual con el remitente oficial y el asunto de la fila; una lista puntual sin
+correos válidos no envía nada ni cae en la lista configurada; una configuración
+activa sin destinatarios se rechaza antes de encolar; y un correo mal formado se
+detiene en validación.
+
+**53 pruebas de mailing en verde** (`--filter Mailing`).
+
+### Archivos Creados
+- `backend/app/Exceptions/Mail/MailConfigurationMissingException.php` — negativa 422 con `ERR_MAIL_CONFIG_MISSING`
+- `backend/tests/Feature/Mailing/ManualCashClosingMailTest.php`
+
+### Archivos Modificados
+- `backend/app/Http/Controllers/Finance/CashRegisterClosingController.php` — endpoint de precarga y envío por el módulo centralizado
+- `backend/app/Http/Requests/CashRegisterClosing/SendCashRegisterClosingEmailRequest.php` — `emails` opcional y `adHocRecipients()`
+- `backend/app/Jobs/SendConfiguredProcessMail.php` — `$recipientsOverride` y bitácora con `ad_hoc`
+- `backend/app/Mail/CashRegisterClosingMail.php` — respeta el asunto configurado
+- `backend/app/Models/EmailConfiguration.php` — constantes `PROCESS_SALES` / `PROCESS_INVENTORY` y `requireActiveFor()`
+- `backend/routes/api.php` — ruta de precarga del envío manual
+- `frontend/src/pages/admin/CashRegisterClosingsPage.jsx` — validación previa, precarga, etiqueta de envío puntual y restauración de configurados

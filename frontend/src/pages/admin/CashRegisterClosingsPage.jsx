@@ -58,6 +58,10 @@ export default function CashRegisterClosingsPage() {
   const [showEmailModal, setShowEmailModal] = useState(false);
   const [emails, setEmails] = useState([]);
   const [sendingEmail, setSendingEmail] = useState(false);
+  // Centralized mail configuration of the "Ventas y Cierres" process. The modal
+  // never opens without it: sending is a routing decision that lives in Ajustes.
+  const [emailConfig, setEmailConfig] = useState(null);
+  const [checkingEmailConfig, setCheckingEmailConfig] = useState(false);
 
   // Excel export
   const [exportingExcel, setExportingExcel] = useState(false);
@@ -241,6 +245,55 @@ export default function CashRegisterClosingsPage() {
     }
   };
 
+  // Recipients stored in the centralized configuration, and whether the operator
+  // has moved away from them — an ad-hoc send, which must be labelled as such so
+  // nobody assumes the global list was edited.
+  const configuredRecipients = emailConfig?.recipients ?? [];
+  const adHocRecipients =
+    emails.length !== configuredRecipients.length ||
+    emails.some((email) => !configuredRecipients.includes(email));
+
+  /**
+   * Surfaces the 422 raised when the process has no active mail configuration.
+   * It is the only failure the operator can fix on their own, so the message
+   * points at the Ajustes panel instead of reporting a generic error.
+   */
+  const warnMissingEmailConfig = (err) => {
+    const data = err.response?.data;
+    if (err.response?.status !== 422 || data?.code !== 'ERR_MAIL_CONFIG_MISSING') {
+      return false;
+    }
+    toast.warning('Configuración de correo requerida', {
+      description:
+        data.message ||
+        'No existe una configuración de correo activa para este proceso. Da de alta la configuración en el panel de Ajustes.',
+      duration: 8000,
+    });
+    return true;
+  };
+
+  /**
+   * Opens the modal only after the backend confirms the "Ventas y Cierres"
+   * process has an active configuration, and pre-loads the recipients already
+   * stored in it.
+   */
+  const openEmailModal = async () => {
+    setCheckingEmailConfig(true);
+    try {
+      const res = await api.get('/cash-registers/closings/email-configuration');
+      const config = res.data?.data ?? null;
+      setEmailConfig(config);
+      setEmails(config?.recipients ?? []);
+      setShowEmailModal(true);
+    } catch (err) {
+      if (!warnMissingEmailConfig(err)) {
+        toast.error(err.response?.data?.message || 'No se pudo validar la configuración de correo.');
+      }
+    } finally {
+      setCheckingEmailConfig(false);
+    }
+  };
+
   const handleSendEmail = async () => {
     if (emails.length === 0) {
       toast.error('Agrega al menos un correo destinatario.');
@@ -248,8 +301,14 @@ export default function CashRegisterClosingsPage() {
     }
     setSendingEmail(true);
     try {
+      /*
+       * The list is sent only when the operator changed it. Untouched, the
+       * backend resolves the stored recipients at delivery time; edited, it
+       * overrides the destination of this single report without rewriting what
+       * is saved in Ajustes.
+       */
       await api.post('/cash-registers/closings/send-email', {
-        emails,
+        ...(adHocRecipients ? { emails } : {}),
         ...buildDateParams(),
       });
       toast.success(`Reporte enviado a ${emails.length} destinatario(s).`);
@@ -257,7 +316,10 @@ export default function CashRegisterClosingsPage() {
       setEmails([]);
     } catch (err) {
       const errors = err.response?.data?.errors;
-      if (errors?.emails) {
+      const hasEmailErrors = Object.keys(errors ?? {}).some((key) => key.startsWith('emails'));
+      if (warnMissingEmailConfig(err)) {
+        setShowEmailModal(false);
+      } else if (hasEmailErrors) {
         toast.error('Uno o más correos no tienen formato válido.');
       } else {
         toast.error(err.response?.data?.message || 'Error al enviar el correo.');
@@ -324,7 +386,8 @@ export default function CashRegisterClosingsPage() {
         tooltip="Enviar por correo"
         tooltipOptions={{ position: 'top' }}
         className="cursor-pointer"
-        onClick={() => setShowEmailModal(true)}
+        loading={checkingEmailConfig}
+        onClick={openEmailModal}
       />
     </div>
   );
@@ -411,7 +474,8 @@ export default function CashRegisterClosingsPage() {
               severity="info"
               outlined
               size="small"
-              onClick={() => setShowEmailModal(true)}
+              loading={checkingEmailConfig}
+              onClick={openEmailModal}
               className="cursor-pointer"
             />
           </div>
@@ -673,6 +737,9 @@ export default function CashRegisterClosingsPage() {
           <div className="flex items-center gap-2">
             <i className="pi pi-envelope text-blue-500" />
             <span className="font-bold text-slate-900">Enviar Reporte por Correo</span>
+            {adHocRecipients && (
+              <Tag value="ENVÍO PUNTUAL" severity="warning" className="text-[10px]" />
+            )}
           </div>
         }
         style={{ width: '460px' }}
@@ -681,10 +748,34 @@ export default function CashRegisterClosingsPage() {
         draggable={false}
       >
         <div className="space-y-4">
+          {emailConfig && (
+            <div className="rounded-lg bg-slate-50 border border-slate-200 px-3 py-2 text-xs text-slate-600">
+              <div className="flex items-center gap-2">
+                <i className="pi pi-cog text-slate-400 text-[11px]" />
+                <span>
+                  Configuración <strong>{emailConfig.process_label}</strong> · Remitente{' '}
+                  <strong>{emailConfig.from_email}</strong>
+                </span>
+              </div>
+            </div>
+          )}
+
           <div>
-            <label className="mb-1.5 block text-sm font-medium text-slate-700">
-              Destinatarios *
-            </label>
+            <div className="mb-1.5 flex items-center justify-between gap-2">
+              <label className="block text-sm font-medium text-slate-700">
+                Destinatarios *
+              </label>
+              {adHocRecipients && (
+                <button
+                  type="button"
+                  onClick={() => setEmails(configuredRecipients)}
+                  disabled={sendingEmail}
+                  className="cursor-pointer text-xs font-medium text-blue-600 hover:underline disabled:cursor-not-allowed disabled:text-slate-400"
+                >
+                  Restaurar los configurados
+                </button>
+              )}
+            </div>
             <Chips
               value={emails}
               onChange={(e) => setEmails(e.value)}
@@ -696,6 +787,11 @@ export default function CashRegisterClosingsPage() {
             />
             <p className="mt-1 text-xs text-slate-400">
               Presiona <kbd className="rounded bg-slate-100 px-1 py-0.5 text-[10px]">Enter</kbd> o <kbd className="rounded bg-slate-100 px-1 py-0.5 text-[10px]">,</kbd> para agregar cada correo. Máx 20 destinatarios.
+            </p>
+            <p className="mt-1 text-xs text-slate-400">
+              {adHocRecipients
+                ? 'Envío puntual: estos correos aplican solo a este reporte y no modifican la configuración guardada.'
+                : 'Precargados desde la configuración centralizada. Puedes borrarlos y escribir otros para un envío puntual.'}
             </p>
           </div>
 
