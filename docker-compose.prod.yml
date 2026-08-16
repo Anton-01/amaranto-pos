@@ -53,12 +53,16 @@ services:
     container_name: cronos-scheduler
     entrypoint: [ "php" ]
     command: [ "artisan", "schedule:work" ]
+    healthcheck:
+      disable: true
 
   queue-worker:
     <<: *backend-service
     container_name: cronos-queue-worker
     entrypoint: [ "php" ]
     command: [ "artisan", "queue:work", "--tries=3", "--timeout=90" ]
+    healthcheck:
+      disable: true
 
   frontend:
     build:
