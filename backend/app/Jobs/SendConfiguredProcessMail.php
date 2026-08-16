@@ -3,7 +3,7 @@
 namespace App\Jobs;
 
 use App\Models\EmailConfiguration;
-use App\Services\Mail\DynamicMailerFactory;
+use App\Services\Mail\MailStrategyFactory;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -11,7 +11,6 @@ use Illuminate\Mail\Mailable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Mail;
 
 /**
  * Queue bridge between a business process and its database-driven mailbox.
@@ -30,10 +29,19 @@ use Illuminate\Support\Facades\Mail;
  * process, and has the side benefit of reading the freshest row: a key rotated
  * while the message sat in Redis is still honoured.
  *
- * If this job starts failing with "TransportException: Operation timed out",
- * check the port of the transport before suspecting the provider: hosts block
+ * HOW THE PROVIDER IS CHOSEN. The job does not know what SMTP or HTTPS are: it
+ * asks MailStrategyFactory for the strategy of the stored provider and hands it
+ * a Mailable. Whether the message then leaves through a Symfony transport
+ * (SmtpMailStrategy, SendGridMailStrategy) or an HTTPS request
+ * (ResendMailStrategy) is decided entirely inside that class, so migrating a
+ * process from a blocked SMTP port to Resend is a change of one column in the
+ * database.
+ *
+ * If this job starts failing with "TransportException: Operation timed out" on
+ * an SMTP provider, check the port before suspecting the provider: hosts block
  * outbound 587 by default, which is why the SendGrid skeleton in
- * config/mailing.php relays through the alternate port 2525. If it fails
+ * config/mailing.php relays through the alternate port 2525, and why Resend
+ * exists as an option that never opens an SMTP socket at all. If it fails
  * against 127.0.0.1 while the .env points somewhere else, the transport was
  * overridden rather than inherited — run `php artisan app:debug-mail-config`
  * to see the route the worker resolves in a live process.
@@ -57,7 +65,7 @@ class SendConfiguredProcessMail implements ShouldQueue
     ) {
     }
 
-    public function handle(DynamicMailerFactory $factory): void
+    public function handle(MailStrategyFactory $strategies): void
     {
         $configuration = EmailConfiguration::activeFor($this->processType);
 
@@ -84,35 +92,36 @@ class SendConfiguredProcessMail implements ShouldQueue
             return;
         }
 
-        $mailerName = $factory->register($configuration);
+        $strategy = $strategies->for($configuration);
 
         /*
          * Sender and subject come from the database. Both are applied on the
          * Mailable instance rather than on the transport so the message keeps
-         * a single source of truth, and so a Mailable whose envelope() honours
-         * $this->subject picks up the configured wording.
+         * a single source of truth: the SMTP strategies hand this object to
+         * Symfony and the HTTP one reads these same properties to build its
+         * JSON payload, so the two produce an identical message.
          */
         $this->mailable
             ->from($configuration->from_email, $configuration->from_name)
             ->subject($configuration->subject);
 
-        // sendNow (instead of send/queue) is deliberate: the Mailable is a
-        // ShouldQueue instance, and queueing it again from here would push it
-        // back to Redis, where the run-time transport no longer exists. We are
-        // already inside the worker — this is the asynchronous leg.
-        Mail::mailer($mailerName)->to($recipients)->sendNow($this->mailable);
+        $config = $configuration->toStrategyConfig();
+
+        $strategy->send($this->mailable, $config);
 
         /*
-         * The mailer name is logged because it is the answer to "which
-         * configuration actually won": a "dynamic-*" name means the database
+         * The resolved route is logged because it is the answer to "which
+         * configuration actually won": a "dynamic-*" mailer means the database
          * row supplied the transport, any other name means the row had nothing
          * to override and the message left through the mailer declared in the
-         * .env. Without it, both cases produce an identical success line.
+         * .env, and a "resend-api" mailer means it never touched SMTP. Without
+         * it, all three cases produce an identical success line.
          */
         Log::info('Correo de proceso enviado.', [
             'process_type' => $this->processType,
             'provider' => $configuration->provider,
-            'mailer' => $mailerName,
+            'strategy' => class_basename($strategy),
+            'route' => $strategy->describeTransport($config),
             'recipients' => count($recipients),
             'mailable' => $this->mailable::class,
         ]);

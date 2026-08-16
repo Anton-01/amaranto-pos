@@ -10,8 +10,9 @@
 - WebSockets: Laravel Reverb (puerto 8080, tiempo real)
 - **Estándar de Zona Horaria: `America/Mexico_City` en las tres capas (Docker `TZ` → Laravel `APP_TIMEZONE` → sesión de PostgreSQL).** Fuente única de verdad: `config('app.timezone')`, expuesta al código por `App\Support\Timezone`. **El código NO vuelve a escribir la zona a mano** — `Carbon::now()` / `Carbon::today()` sin argumento ya nacen en hora local. Única excepción deliberada: el `->timezone()` del arqueo de las 21:00 en `routes/console.php` (ver secciones 53 y 47).
 - **Estándar de Fechas en el Cliente (4.ª capa): `toISOString()` está PROHIBIDO para fechas calendario.** Toda cadena `'YYYY-MM-DD'` que viaja a la API (`date_from`, `date_to`) se genera desde los componentes locales del navegador con `frontend/src/lib/dates.js` (`toLocalYmd` / `todayYmd`), nunca convirtiendo a UTC. `toISOString()` se conserva **solo** para instantes (`created_at`, `_queued_at`), que es su uso correcto — ver sección 55.
-- **Estándar de Correo Saliente: puerto 2525, nunca 587.** Los proveedores de nube (DigitalOcean, AWS, GCP, Azure) bloquean el puerto 587 de salida por política anti-spam y **descartan los paquetes en silencio**, de modo que el envío no falla rápido: se cuelga hasta expirar (`TransportException: Operation timed out`). Todo despliegue en VPS/Droplet usa el puerto alterno de submission **2525** — tanto el relay de SendGrid del mailing dinámico (`config/mailing.php`) como el `MAIL_PORT` del mailer estático — ver sección 56.
-- Último trabajo: [🟢 SECCIÓN 57: DIAGNÓSTICO SÍNCRONO DE CORREO] — Botón **Probar Conexión** en Configuración → Notificaciones / Emails: envía un correo real contra el proveedor **en la misma petición** y devuelve el mensaje textual del transporte. Valida credenciales, identidad del remitente y apertura del puerto 2525 **antes de guardar nada en la base**, montando el transporte desde un `EmailConfiguration` en memoria que recorre la fábrica de siempre. Es la única ruta del sistema que usa `send()` en vez de `queue()`, y la excepción es el punto: una prueba encolada contestaría "encolado", nunca "entregado" — ver sección 57.
+- **Estándar de Correo Saliente: puerto 2525, nunca 587.** Los proveedores de nube (DigitalOcean, AWS, GCP, Azure) bloquean el puerto 587 de salida por política anti-spam y **descartan los paquetes en silencio**, de modo que el envío no falla rápido: se cuelga hasta expirar (`TransportException: Operation timed out`). Todo despliegue en VPS/Droplet usa el puerto alterno de submission **2525** — tanto el relay de SendGrid del mailing dinámico (`config/mailing.php`) como el `MAIL_PORT` del mailer estático — ver sección 56. **Y cuando el host filtra también el 2525, la salida deja de ser SMTP: el proveedor `resend` entrega por su API HTTP en el puerto 443** a través de `ResendMailStrategy`. El envío se resuelve por **Patrón Strategy** (`MailStrategyInterface` + `MailStrategyFactory`, mapa en `config/mailing.php`) y **ninguna estrategia puede bloquear sin límite**: el presupuesto de `config('mailing.timeouts')` acota socket y cURL, que es lo que eliminó el cuelgue de 60 s de la prueba de conexión — ver sección 59.
+- Último trabajo: [🟢 SECCIÓN 59: PATRÓN STRATEGY EN EL CORREO, RESEND POR HTTPS/443 Y TRAZA REAL DE ERRORES] — El subsistema de correo dejó de tener un solo camino de envío: cada proveedor es una clase (`SmtpMailStrategy`, `SendGridMailStrategy`, `ResendMailStrategy`) que la fábrica resuelve desde la configuración activa. **Resend entrega por API HTTP en el puerto 443**, así que un VPS que bloquea los puertos SMTP ya no tiene cómo detener el correo. La prueba de conexión ya no se congela 60 s: cada estrategia acota su tiempo de red (`timeout` del transporte + `default_socket_timeout` restaurado en SMTP; `connect_timeout` + `timeout` de cURL en HTTP) y cualquier fallo vuelve como **HTTP 422 con el mensaje textual del proveedor**, su clase de excepción, el código de estado y la traza resumida — ver sección 59.
+- Trabajo reciente: [🟢 SECCIÓN 57: DIAGNÓSTICO SÍNCRONO DE CORREO] — Botón **Probar Conexión** en Configuración → Notificaciones / Emails: envía un correo real contra el proveedor **en la misma petición** y devuelve el mensaje textual del transporte. Valida credenciales, identidad del remitente y apertura del puerto 2525 **antes de guardar nada en la base**, montando el transporte desde un `EmailConfiguration` en memoria que recorre la fábrica de siempre. Es la única ruta del sistema que usa `send()` en vez de `queue()`, y la excepción es el punto: una prueba encolada contestaría "encolado", nunca "entregado" — ver sección 57.
 - Trabajo previo: [🟢 SECCIÓN 56: EL RELAY DE SENDGRID SALE POR EL PUERTO 2525] — `SendConfiguredProcessMail` moría cada noche con `TransportException: Operation timed out` contra `smtp.sendgrid.net:587`, agotando sus 3 reintentos sin enviar el reporte del cierre de caja. No era SendGrid ni la API Key: el firewall de salida del Droplet descarta el tráfico al 587 (política anti-spam), así que el socket esperaba un banner SMTP que nunca llegaba. Corregido en la plantilla del proveedor —donde vive la infraestructura, no en las filas de `email_configurations`— para arreglar todas las configuraciones existentes sin tocar un registro; el `?? 587` de respaldo de la fábrica también cayó. Sin dependencias nuevas de Composer — ver sección 56.
 - Trabajo anterior: [🟢 SECCIÓN 55: ESTANDARIZACIÓN DE FECHAS EN EL CLIENTE] — El filtro rápido "Hoy" devolvía la lista vacía después de las 18:00 CST: el frontend construía el día con `new Date().toISOString().split('T')[0]`, que imprime el día **UTC**, y a partir de las 6 PM pedía a la API las ventas de mañana. El backend nunca estuvo mal (sección 53); la pregunta que le llegaba sí. Creada `lib/dates.js` como fuente única, corregidas 7 pantallas (incluidas 3 que ya calculaban bien pero con su propia copia del formateador) y detectado de paso que la vigencia de las promociones se guardaba 6 horas tarde por el mismo motivo — ver sección 55.
 - Trabajo más antiguo: [🟢 SECCIÓN 54: PROYECCIÓN DE COLUMNAS, CACHÉ DINÁMICO EN REDIS Y PERCEPCIÓN DE CARGA] — Cuatro capas del mismo problema. (1) Eliminado el `SELECT *` implícito de las vistas principales: el Historial de Ventas ya no publica `cost_price` de cada partida ni la cuenta completa del cajero, y el catálogo del POS dejó de exponer el margen del negocio. (2) El TTL salió de PHP a la tabla `cache_configurations`, con invalidación crítica colgada de los modelos `Order` y `Product` para que una venta o un movimiento de stock purguen el Dashboard de inmediato. (3) El spinner del Dashboard se sustituyó por un esqueleto que calca su geometría final, de modo que al llegar los datos nada se mueve. (4) El Sidebar centra su enlace activo tras el montaje, resolviendo la pérdida de posición al refrescar — ver sección 54.
@@ -6411,3 +6412,268 @@ transporte de SendGrid conserva credenciales, puerto 2525 y cifrado `tls`.
 - `backend/config/mailing.php` — se elimina el literal `127.0.0.1` del proveedor genérico, clave `inherits` y orden de precedencia documentado en el archivo
 - `backend/app/Jobs/SendConfiguredProcessMail.php` — se registra el mailer resuelto en la bitácora de envío y nota de diagnóstico
 - `.env.production.example` — orden de prioridad, comprobación con `app:debug-mail-config` y bloque opcional `DYNAMIC_SMTP_*`
+
+---
+
+## 59. PATRÓN STRATEGY EN EL SUBSISTEMA DE CORREO: RESEND POR HTTPS/443, TIMEOUTS ACOTADOS Y TRAZA REAL DE ERRORES [🟢 COMPLETADO Y OPERATIVO]
+
+El botón **Probar Conexión** se congelaba 60 segundos y volvía sin decir nada.
+No era lentitud del proveedor: era un puerto de salida bloqueado por el VPS más
+un cliente sin límite de tiempo. Esta sección reemplaza el camino único de envío
+por un **Patrón Strategy**, añade **Resend por API HTTP (puerto 443)** como
+proveedor de primera clase y convierte cualquier fallo en un **HTTP 422 con el
+error técnico real** en el cuerpo.
+
+### 59.1 El diagnóstico: por qué se congelaba exactamente 60 segundos
+
+Un puerto de submission bloqueado en un VPS (DigitalOcean, AWS, GCP, Azure)
+**no rechaza: descarta**. Los paquetes se tiran en silencio, así que el
+handshake TCP nunca se completa y el socket se queda esperando hasta agotar su
+propio tiempo. Ese tiempo, cuando nadie lo declara, sale del `php.ini`:
+
+```
+default_socket_timeout = 60
+```
+
+Symfony lo confirma en su propio código: `SocketStream::getTimeout()` devuelve
+`$this->timeout ?? (float) ini_get('default_socket_timeout')`, y ese valor es el
+cuarto argumento de `stream_socket_client()` — el límite del intento de
+conexión. Nadie declaraba `timeout` en el transporte, luego el número efectivo
+era 60, la petición HTTP se quedaba colgada, el navegador se rendía primero y el
+administrador se quedaba sin mensaje de error.
+
+A eso se sumaba el problema de fondo: **los tres proveedores compartían un solo
+camino de envío**. Añadir uno significaba editar el método del que dependían los
+demás, y todos heredaban la misma dependencia de un puerto SMTP abierto.
+
+### 59.2 La arquitectura: una clase por proveedor, elegida por configuración
+
+```
+  EmailConfiguration.provider  (columna en base de datos)
+              │
+              ▼
+      MailStrategyFactory ──lee──► config('mailing.providers.*.strategy')
+              │
+              ├── SmtpMailStrategy      → Symfony ESMTP (587 / 465 / 2525)
+              ├── SendGridMailStrategy  → extiende la anterior: smtp.sendgrid.net:2525, usuario "apikey"
+              └── ResendMailStrategy    → POST https://api.resend.com/emails (HTTPS/443)
+```
+
+El contrato es `App\Services\Mail\Contracts\MailStrategyInterface`:
+
+| Método | Devuelve | Para qué existe |
+| :--- | :--- | :--- |
+| `provider()` | `string` | Clave del proveedor que atiende |
+| `send(Mailable $mail, array $config)` | `bool` | Entrega real desde el worker; **sí lanza** excepción para que la cola reintente |
+| `testConnection(array $config)` | `array` | Diagnóstico síncrono; **nunca lanza**: el fallo es un valor de retorno |
+| `describeTransport(array $config)` | `array` | Ruta resuelta **sin marcar**, de solo lectura (la usa `app:debug-mail-config`) |
+
+Tres decisiones que sostienen el diseño:
+
+1. **Las estrategias reciben un `array`, no el modelo.** La prueba de conexión
+   valida credenciales que todavía no existen en la base, así que ninguna
+   estrategia puede asumir que hay fila. `EmailConfiguration::toStrategyConfig()`
+   produce ese arreglo (proceso, proveedor, credencial, remitente, asunto y
+   destinatarios ya depurados).
+2. **`testConnection()` no lanza, retorna.** Es lo que permite al controlador
+   responder 422 con la causa en el cuerpo en lugar de un 500 sin ella.
+3. **El mapa vive en `config/mailing.php`.** Agregar un proveedor es un bloque de
+   configuración más una clase: ni el job, ni el controlador, ni la fábrica se
+   tocan. El catálogo del panel se cruza contra las estrategias realmente
+   registradas, así que el desplegable **no puede** ofrecer un proveedor que el
+   sistema no sepa enviar.
+
+`SendGridMailStrategy` **extiende** a `SmtpMailStrategy` en lugar de duplicarla:
+el protocolo es el mismo, lo específico es la política (puerto alterno 2525,
+usuario literal `apikey`, avisos cuando la credencial no empieza con `SG.`). El
+día que SendGrid deba migrar a su API HTTP, el cambio queda confinado a esa
+clase.
+
+`DynamicMailerFactory` sigue siendo el constructor de transportes **de la
+familia SMTP** y ahora expone `preview()`, la mitad de solo lectura que resuelve
+el mismo transporte sin ejecutar `Config::set()`. `register()` se implementó
+encima de `preview()`, de modo que la ruta que se reporta y la que se marca no
+pueden divergir. Además rechaza explícitamente a un proveedor `driver => http`:
+Resend no declara host ni puerto, y un merge silencioso lo habría interpretado
+como "nada que sobrescribir", enviando su correo por el relay SMTP del `.env`
+con la credencial equivocada.
+
+### 59.3 Resend: integración nativa por API HTTP, sin abrir un solo puerto SMTP
+
+`ResendMailStrategy` renderiza el Mailable a HTML y lo publica como JSON:
+
+```php
+Http::withToken($apiKey)
+    ->acceptJson()->asJson()
+    ->connectTimeout(config('mailing.timeouts.connect'))  // handshake TCP/TLS
+    ->timeout($timeout)                                   // intercambio completo
+    ->post('https://api.resend.com/emails', [
+        'from' => 'Cronos POS <no-reply@…>',
+        'to' => [...],
+        'subject' => …,
+        'html' => $mail->render(),
+    ]);
+```
+
+- **Puerto 443, el mismo que ya usa toda la aplicación.** Ningún proveedor de
+  nube lo filtra, así que elegir Resend **elimina** la clase entera de fallos por
+  firewall de salida en lugar de esquivarla.
+- **El cuerpo es idéntico al que habría entregado SMTP**: se renderiza el mismo
+  Mailable, así que cambiar de proveedor no cambia lo que ve el destinatario.
+- **El remitente y el asunto se leen del Mailable** (`->from()` / `->subject()`
+  que aplica el job) antes de caer al asunto guardado, de modo que un correo por
+  Resend conserva la redacción configurada en la base de datos.
+- **Un 4xx no es una excepción de PHP**, es un objeto `Response`. Se normaliza a
+  `App\Exceptions\Mail\MailTransportException`, que extrae el mensaje del cuerpo
+  (`message`, `error.message`, o el cuerpo crudo), el `statusCode` y el nombre
+  del error del proveedor. Así "API key inválida" y "socket agotado" viajan por
+  la misma maquinaria de diagnóstico.
+
+### 59.4 Mitigación de timeouts: dos cotas en SMTP, dos en HTTP
+
+`config('mailing.timeouts')` es el presupuesto de red de todo el módulo:
+
+| Fase | Segundos (defecto) | Variable | Aplica a |
+| :--- | :--- | :--- | :--- |
+| `test` | 8 | `MAIL_TEST_TIMEOUT` | Prueba síncrona: hay un humano mirando un spinner |
+| `send` | 30 | `MAIL_SEND_TIMEOUT` | Envío desde el worker: nadie espera y hay reintentos con backoff |
+| `connect` | 5 | `MAIL_CONNECT_TIMEOUT` | Handshake TCP/TLS de las estrategias HTTP |
+
+**En SMTP se aplican dos cotas, porque cada una tapa lo que la otra no alcanza:**
+
+1. `timeout` en la configuración del mailer. Laravel lo reenvía a
+   `SocketStream::setTimeout()`, que es lo que usa el intento de conexión. Se
+   **acota, no se impone**: si el despliegue ya configuró 3 segundos, sabe algo
+   de su red que este valor por omisión no sabe, y se respeta.
+2. `default_socket_timeout` alrededor del envío, restaurado en un bloque
+   `finally`. Cubre lo que la primera no alcanza: un transporte armado desde un
+   DSN `MAIL_URL` (donde `isset($config['timeout'])` nunca se cumple), una
+   negociación TLS que se atasca después de abrir el socket, y cualquier stream
+   que la librería abra por su cuenta. Se restaura siempre porque el valor es
+   global al proceso y PHP-FPM reutiliza el worker en la siguiente petición.
+
+**En HTTP** el par es `connect_timeout` + `timeout` de cURL. El primero es el
+que dispara contra un puerto filtrado, antes de intercambiar un solo byte.
+
+Resultado medible: el peor caso pasó de **60 segundos y silencio** a **≤ 8
+segundos y un mensaje accionable**.
+
+### 59.5 Traza de errores reales: el 422 que reemplazó al cuelgue
+
+`POST /api/admin/email-configurations/test-connection` ya no puede terminar en
+un 500 ni en un timeout del navegador. La estrategia captura, el controlador
+traduce:
+
+```jsonc
+// HTTP 422
+{
+  "status": "error",
+  "message": "Resend respondio HTTP 403: The cronos.pos domain is not verified",
+  "error":   "Resend respondio HTTP 403: The cronos.pos domain is not verified",
+  "error_code": "ERR_MAIL_TEST_FAILED",
+  "error_class": "MailTransportException",
+  "data": {
+    "provider": "resend",
+    "strategy": "ResendMailStrategy",
+    "transport": { "channel": "https", "host": "api.resend.com", "port": 443, "timeout": 8 },
+    "elapsed_ms": 412,
+    "hints": ["Resend responde 403 cuando el dominio del remitente no esta verificado…"],
+    "error": {
+      "message": "…",            // verbatim, sin parafrasear
+      "class": "MailTransportException",
+      "status_code": 403,
+      "provider_code": "validation_error",
+      "trace": ["ResendMailStrategy.php:212 (origen)", "…"],
+      "previous": { "message": "…", "class": "…" }
+    }
+  }
+}
+```
+
+**422 y no 500** es deliberado: la petición estaba bien formada y la aplicación
+hizo exactamente lo que se le pidió; lo que falló es la configuración bajo
+prueba, que es un hecho sobre el payload. Además mantiene una API Key mal
+tecleada fuera del alerting 5xx de la plataforma. *(Cambio de contrato respecto
+a la sección 57, que respondía 400.)*
+
+Qué **nunca** viaja: la credencial. `MailDiagnostic` construye la traza a partir
+de archivo, línea, clase y método — jamás de los argumentos, que es donde vive
+la API Key — y el resumen del transporte se arma con una lista blanca de claves
+(`transport`, `host`, `port`, `encryption`, `timeout`), así que `password` no
+puede colarse ni en la respuesta ni en la bitácora. Hay una prueba que serializa
+el diagnóstico completo y afirma que la clave no aparece.
+
+Los `hints` son la novedad práctica: no son errores, son las tres confusiones
+caras del módulo — el puerto 587 bloqueado en VPS, una contraseña donde SendGrid
+espera una `SG.`, un dominio sin verificar en Resend.
+
+### 59.6 Catálogo, panel y comando de diagnóstico
+
+- **Base de datos**: `email_configurations.provider` es un `string(40)` sin
+  restricción de valores, así que `'resend'` entra sin migración. El catálogo
+  formal vive en `EmailConfiguration::PROVIDERS`, ahora con constantes
+  (`PROVIDER_SMTP`, `PROVIDER_SENDGRID`, `PROVIDER_RESEND`) y etiquetas que
+  nombran el puerto de salida: *SendGrid (SMTP 2525)*, *Resend (API HTTPS 443)*,
+  *SMTP Generico*.
+- **`GET /catalogs`** cruza ese catálogo contra las estrategias registradas y
+  añade `channel` (`smtp` | `https`) a cada opción: elegir proveedor es, en la
+  práctica, elegir qué puerto tiene que dejar pasar el firewall.
+- **Panel**: el desplegable se alimenta del catálogo (Resend aparece solo), el
+  placeholder y la nota de ayuda cambian por proveedor (`SG.…` / `re_…` /
+  contraseña del buzón), y el toast de error muestra clase de excepción, ruta
+  (`HTTPS api.resend.com:443`), milisegundos, el mensaje verbatim y los avisos.
+- **`php artisan app:debug-mail-config`** imprime ahora la estrategia, la ruta
+  (`HTTPS → api.resend.com:443`) y el presupuesto de timeouts, y lo hace sin
+  mutar nada gracias a `describeTransport()` — un comando de diagnóstico que
+  modifica lo que describe es un comando que miente.
+
+### 59.7 Pruebas
+
+`tests/Feature/Mailing/MailStrategyTest.php` — 15 pruebas **sin PostgreSQL**
+(las filas viajan en memoria y la única tabla que toca el Mailable de
+diagnóstico se crea en SQLite):
+
+- La fábrica devuelve una clase distinta por proveedor y rechaza uno sin
+  estrategia (`ERR_MAIL_STRATEGY_UNSUPPORTED`).
+- El catálogo visible nunca excede las estrategias registradas.
+- Resend sale por `https://api.resend.com/emails` con `Bearer`, remitente
+  `Nombre <correo>` y **sin** crear `mail.mailers.dynamic-jobs`.
+- Un 401 de la API vuelve como valor de retorno con mensaje, `status_code`,
+  `provider_code` y traza — sin lanzar.
+- Un `ConnectionException` de cURL ("Operation timed out after 5001 ms") viaja
+  verbatim y el diagnóstico tarda mucho menos de 60 segundos.
+- Sin credencial o sin destinatarios, la petición **no** sale a la red.
+- El diagnóstico serializado no contiene la API Key.
+- La estrategia SMTP baja el `timeout` del transporte al presupuesto de prueba y
+  **no** sube uno ya configurado más bajo.
+- `describeTransport()` no muta `config('mail.mailers')`.
+- `DynamicMailerFactory` rechaza un proveedor HTTP (`ERR_MAIL_PROVIDER_NOT_SMTP`).
+
+`MailConnectionDiagnosticTest.php` — el fallo de transporte ahora se afirma
+contra **422** con `error`, `data.error.trace` y la ruta dialogada; se añaden la
+prueba de Resend por HTTPS/443, la del 403 con su hint y la del catálogo con los
+tres proveedores. `DynamicMailingTest.php` incorpora la entrega del job por
+Resend: `Mail::assertNothingOutgoing()` más la aserción de que el HTML, el
+asunto y el remitente de la base de datos viajaron en el JSON.
+
+**43 pruebas de mailing en verde** (`--filter Mailing`).
+
+### Archivos Creados
+- `backend/app/Services/Mail/Contracts/MailStrategyInterface.php` — contrato del patrón
+- `backend/app/Services/Mail/Strategies/SmtpMailStrategy.php` — SMTP genérico y base de la familia
+- `backend/app/Services/Mail/Strategies/SendGridMailStrategy.php` — relay 2525, usuario `apikey`
+- `backend/app/Services/Mail/Strategies/ResendMailStrategy.php` — API HTTP nativa, HTTPS/443
+- `backend/app/Services/Mail/MailStrategyFactory.php` — resolución dinámica por configuración
+- `backend/app/Services/Mail/Support/MailDiagnostic.php` — resultado normalizado, traza sin credenciales
+- `backend/app/Exceptions/Mail/MailTransportException.php` — normaliza un 4xx HTTP a excepción
+- `backend/tests/Feature/Mailing/MailStrategyTest.php`
+
+### Archivos Modificados
+- `backend/config/mailing.php` — presupuesto `timeouts`, claves `strategy` / `driver` y proveedor `resend`
+- `backend/app/Models/EmailConfiguration.php` — constantes de proveedor, `resend` en el catálogo y `toStrategyConfig()`
+- `backend/app/Services/Mail/DynamicMailerFactory.php` — `preview()` de solo lectura, `register()` construido encima y rechazo de proveedores HTTP
+- `backend/app/Http/Controllers/Admin/EmailConfigurationController.php` — despacho por estrategia, respuesta 422 con traza y catálogo con `channel`
+- `backend/app/Jobs/SendConfiguredProcessMail.php` — entrega por estrategia y bitácora con la ruta resuelta
+- `backend/app/Console/Commands/DebugMailConfig.php` — sección de timeouts y tabla con estrategia y ruta, sin efectos secundarios
+- `frontend/src/components/settings/EmailNotificationsPanel.jsx` — ayuda por proveedor y toast de error con clase, ruta, tiempo y avisos
+- `backend/tests/Feature/Mailing/MailConnectionDiagnosticTest.php`, `DynamicMailingTest.php`

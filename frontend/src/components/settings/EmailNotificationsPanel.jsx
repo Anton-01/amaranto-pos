@@ -24,6 +24,31 @@ const emptyForm = {
 };
 
 /**
+ * Per-provider guidance shown next to the credential field.
+ *
+ * The backend picks a strategy from this same key, so the copy describes what
+ * that strategy actually does on the wire: the choice between these providers
+ * is, in practice, a choice of outbound port, and that is the decision an
+ * administrator on a VPS needs help with.
+ */
+const PROVIDER_HINTS = {
+  sendgrid: {
+    placeholder: 'SG.xxxxxxxxxxxxxxxx',
+    note: 'Relay SMTP de SendGrid por el puerto alterno 2525 (el 587 suele estar bloqueado en VPS).',
+  },
+  resend: {
+    placeholder: 're_xxxxxxxxxxxxxxxx',
+    note: 'API HTTP de Resend sobre HTTPS/443: no abre puertos SMTP, así que los bloqueos de salida del VPS no lo afectan.',
+  },
+  smtp: {
+    placeholder: 'Contraseña del buzón o del relay',
+    note: 'Usa el servidor SMTP declarado en el .env del servidor (MAIL_HOST / MAIL_PORT).',
+  },
+};
+
+const hintFor = (provider) => PROVIDER_HINTS[provider] || PROVIDER_HINTS.smtp;
+
+/**
  * Per-process outbound email configuration.
  *
  * Each row binds a business process ("jobs", "users", ...) to a provider
@@ -163,20 +188,40 @@ export default function EmailNotificationsPanel() {
         target_emails: formData.target_emails,
       });
 
-      const { host, port } = data.data?.transport || {};
+      const { host, port, channel } = data.data?.transport || {};
+      const route = host ? `${channel === 'https' ? 'HTTPS' : 'SMTP'} ${host}:${port}` : null;
+
       toast.success(data.metadata?.message || 'Conexión exitosa.', {
-        description: host ? `Ruta ${host}:${port} — ${data.data.elapsed_ms} ms` : undefined,
+        description: route ? `Ruta ${route} — ${data.data.elapsed_ms} ms` : undefined,
         duration: 8000,
       });
     } catch (err) {
       const response = err.response?.data;
-      const detail = response?.message || 'No se pudo completar la prueba de conexión.';
+
+      /*
+       * The backend answers 422 with the provider's own error text, its
+       * exception class, the route it dialled and how long it took. All four
+       * are shown: "Operation timed out" against smtp.sendgrid.net:587 is the
+       * host firewall, the same string against 2525 is not, and a 401 from
+       * api.resend.com is neither. Paraphrasing any of it would put the
+       * administrator back to guessing.
+       */
+      const detail = response?.error || response?.message || 'No se pudo completar la prueba de conexión.';
+      const { host, port, channel } = response?.data?.transport || {};
+      const elapsed = response?.data?.elapsed_ms;
+      const hints = response?.data?.hints || [];
+
+      const context = [
+        response?.error_class,
+        host ? `${channel === 'https' ? 'HTTPS' : 'SMTP'} ${host}:${port}` : null,
+        typeof elapsed === 'number' ? `${elapsed} ms` : null,
+      ].filter(Boolean).join(' · ');
 
       // Long-lived toast: the transport error is the payload of this feature,
       // and a stack-trace-sized string needs time on screen to be read or copied.
       toast.error('Falló la prueba de conexión', {
-        description: detail,
-        duration: 15000,
+        description: [context, detail, ...hints].filter(Boolean).join('\n'),
+        duration: 20000,
       });
     } finally {
       setTesting(false);
@@ -299,15 +344,21 @@ export default function EmailNotificationsPanel() {
         <div>
           <h2 className="text-base font-semibold text-slate-900">Notificaciones por Correo</h2>
           <p className="mt-1 max-w-2xl text-sm text-slate-500">
-            Da de alta las credenciales del proveedor (SendGrid) y define el asunto y los correos
-            destino de cada tipo de proceso. El sistema construye el envío con la configuración
-            activa al momento de enviar; si un proceso no tiene configuración activa, simplemente
-            no notifica.
+            Da de alta las credenciales del proveedor (SendGrid, Resend o un SMTP genérico) y define
+            el asunto y los correos destino de cada tipo de proceso. El sistema elige la estrategia
+            de envío según el proveedor de cada fila al momento de enviar; si un proceso no tiene
+            configuración activa, simplemente no notifica.
           </p>
           <p className="mt-2 max-w-2xl text-sm text-slate-500">
             Usa <strong className="font-semibold text-slate-600">Probar Conexión</strong> dentro del
-            formulario para validar credenciales y puerto de salida en el momento: envía un correo
-            real de diagnóstico sin necesidad de guardar ni de esperar a los procesos programados.
+            formulario para validar credenciales y ruta de salida en el momento: envía un correo
+            real de diagnóstico, con límite de tiempo, y devuelve el error exacto del proveedor sin
+            necesidad de guardar ni de esperar a los procesos programados.
+          </p>
+          <p className="mt-2 max-w-2xl text-sm text-slate-500">
+            Si el servidor bloquea los puertos SMTP de salida (587 y a veces 2525), elige{' '}
+            <strong className="font-semibold text-slate-600">Resend</strong>: entrega por su API
+            HTTPS en el puerto 443, el mismo que ya usa toda la aplicación.
           </p>
         </div>
         <Button
@@ -383,7 +434,9 @@ export default function EmailNotificationsPanel() {
               onChange={(e) => setFormData({ ...formData, api_key: e.target.value })}
               feedback={false}
               toggleMask
-              placeholder={editing ? `Sin cambios (${editing.api_key_preview || 'sin credencial'})` : 'SG.xxxxxxxxxxxxxxxx'}
+              placeholder={editing
+                ? `Sin cambios (${editing.api_key_preview || 'sin credencial'})`
+                : hintFor(formData.provider).placeholder}
               className="w-full"
               inputClassName="w-full rounded-lg border-slate-200 px-3 py-2.5 text-sm font-mono"
               pt={{ root: { className: 'w-full' } }}
@@ -393,6 +446,7 @@ export default function EmailNotificationsPanel() {
                 ? 'Déjalo vacío para conservar la credencial guardada. Escribe una nueva solo si vas a rotarla.'
                 : 'Se guarda cifrada y nunca vuelve a mostrarse completa.'}
             </p>
+            <p className="mt-1 text-xs text-slate-500">{hintFor(formData.provider).note}</p>
             {fieldError('api_key')}
           </div>
 

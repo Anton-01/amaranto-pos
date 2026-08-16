@@ -1,6 +1,39 @@
 <?php
 
+use App\Services\Mail\Strategies\ResendMailStrategy;
+use App\Services\Mail\Strategies\SendGridMailStrategy;
+use App\Services\Mail\Strategies\SmtpMailStrategy;
+
 return [
+
+    /*
+    |--------------------------------------------------------------------------
+    | Network Timeout Budget
+    |--------------------------------------------------------------------------
+    |
+    | Seconds a strategy may spend inside the network, per phase. These values
+    | are the whole mitigation of the VPS port-block freeze: when a host DROPS
+    | the packets of a blocked submission port, nothing answers and the socket
+    | waits for its timeout. PHP defaults `default_socket_timeout` to 60, so
+    | without an explicit bound the "Probar Conexion" button hangs the browser
+    | for a full minute and then reports nothing useful.
+    |
+    | test    -> synchronous health check. Short on purpose: an administrator is
+    |            watching a spinner, and a blocked port must come back as an
+    |            error they can read, not as a frozen tab.
+    | send    -> queue worker. Longer, because nobody is waiting and the job
+    |            retries with backoff; a slow relay is not a failure there.
+    | connect -> TCP/TLS handshake bound for the HTTP strategies (cURL
+    |            connect_timeout). This is the one that fires against a
+    |            filtered port, before a single byte is exchanged.
+    |
+    */
+
+    'timeouts' => [
+        'test' => (int) env('MAIL_TEST_TIMEOUT', 8),
+        'send' => (int) env('MAIL_SEND_TIMEOUT', 30),
+        'connect' => (int) env('MAIL_CONNECT_TIMEOUT', 5),
+    ],
 
     /*
     |--------------------------------------------------------------------------
@@ -49,7 +82,21 @@ return [
     |
     | inherits:
     |   Name of the mailer in config/mail.php this provider completes itself
-    |   with. Every provider here speaks SMTP, so they all inherit "smtp".
+    |   with. Only meaningful for the SMTP family; an HTTP provider builds no
+    |   Symfony transport and therefore inherits nothing.
+    |
+    | strategy:
+    |   Class that actually talks to the provider, resolved by
+    |   App\Services\Mail\MailStrategyFactory. This key is what makes the
+    |   Strategy pattern configurable: adding a provider is a block here plus
+    |   one class implementing MailStrategyInterface, with no edit to the queue
+    |   job, the controller or the factory.
+    |
+    | driver:
+    |   "smtp" -> the block below is an override layer for a Symfony transport
+    |             and is read by DynamicMailerFactory.
+    |   "http" -> the provider is reached over HTTPS and has no transport to
+    |             merge; DynamicMailerFactory refuses to build one from it.
     |
     */
 
@@ -77,6 +124,8 @@ return [
          * for smtp.sendgrid.net, not for whatever MAIL_HOST happens to be.
          */
         'sendgrid' => [
+            'driver' => 'smtp',
+            'strategy' => SendGridMailStrategy::class,
             'transport' => 'smtp',
             'inherits' => 'smtp',
             'host' => env('SENDGRID_SMTP_HOST', 'smtp.sendgrid.net'),
@@ -109,6 +158,8 @@ return [
          * alternate submission port over 587.
          */
         'smtp' => [
+            'driver' => 'smtp',
+            'strategy' => SmtpMailStrategy::class,
             'transport' => 'smtp',
             'inherits' => 'smtp',
             'host' => env('DYNAMIC_SMTP_HOST'),
@@ -117,6 +168,31 @@ return [
             'username' => env('DYNAMIC_SMTP_USERNAME'),
             'credentials' => 'password',
             'timeout' => env('DYNAMIC_SMTP_TIMEOUT'),
+        ],
+
+        /*
+         * Resend over its native HTTP API — the provider that never opens an
+         * SMTP socket.
+         *
+         * Everything above shares one failure mode that has nothing to do with
+         * mail: the host blocks outbound submission ports. 587 is filtered by
+         * default on DigitalOcean, AWS, GCP and Azure, and hosts that also
+         * filter 2525 leave the SMTP family with no route at all. Resend's REST
+         * endpoint answers on HTTPS/443, the port the application already uses
+         * for every other request, so picking this provider removes the egress
+         * problem instead of routing around it.
+         *
+         * There is deliberately no host / port / encryption / inherits block:
+         * this provider builds no Symfony transport, so it has nothing to merge
+         * over config/mail.php. `driver => http` is what stops
+         * DynamicMailerFactory from trying.
+         */
+        'resend' => [
+            'driver' => 'http',
+            'strategy' => ResendMailStrategy::class,
+            'transport' => 'resend',
+            'endpoint' => env('RESEND_API_ENDPOINT', 'https://api.resend.com/emails'),
+            'credentials' => 'api_key',
         ],
 
     ],
