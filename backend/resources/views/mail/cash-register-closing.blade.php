@@ -51,6 +51,7 @@
 
   .positive { color: #16a34a; font-weight: 700; }
   .negative { color: #dc2626; font-weight: 700; }
+  .zero { color: #64748b; }
   .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 10px; font-weight: 700; }
   .badge-deficit { background: #fee2e2; color: #dc2626; }
   .badge-surplus { background: #dcfce7; color: #16a34a; }
@@ -134,6 +135,18 @@
 </style>
 </head>
 <body>
+@php
+    $money = fn ($value) => '$'.number_format((float) $value, 2);
+
+    /**
+     * Signed amount with the sign carried by the glyph, so the reader never
+     * has to work out whether a difference is a shortfall or a surplus.
+     */
+    $signed = fn ($value) => ((float) $value < 0 ? '−' : ((float) $value > 0 ? '+' : ''))
+        .'$'.number_format(abs((float) $value), 2);
+
+    $toneClass = fn ($value) => (float) $value < 0 ? 'negative' : ((float) $value > 0 ? 'positive' : 'zero');
+@endphp
 <div class="wrapper">
   <div class="card">
     <div class="card-header">
@@ -175,7 +188,7 @@
         </tr>
       </table>
 
-      <!-- Closings table -->
+      <!-- Closings table, each one followed by its payment breakdown -->
       <div class="section-title">Detalle de Cierres</div>
       @if ($closings->isEmpty())
         <p style="color:#64748b;font-size:13px;">No hay cierres registrados para el periodo seleccionado.</p>
