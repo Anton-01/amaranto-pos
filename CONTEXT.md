@@ -6411,3 +6411,135 @@ transporte de SendGrid conserva credenciales, puerto 2525 y cifrado `tls`.
 - `backend/config/mailing.php` — se elimina el literal `127.0.0.1` del proveedor genérico, clave `inherits` y orden de precedencia documentado en el archivo
 - `backend/app/Jobs/SendConfiguredProcessMail.php` — se registra el mailer resuelto en la bitácora de envío y nota de diagnóstico
 - `.env.production.example` — orden de prioridad, comprobación con `app:debug-mail-config` y bloque opcional `DYNAMIC_SMTP_*`
+
+---
+
+## 59. TRAZABILIDAD DEL REPORTE DE CIERRES: DESGLOSE POR MÉTODO DE PAGO EN EL CORREO [🟢 COMPLETADO Y OPERATIVO]
+
+El reporte que sale por correo (`CashRegisterClosingMail`) listaba cada cierre
+en **una sola línea**: esperado, declarado y diferencia. Ante un faltante de
+$253.00, el lector sabía que faltaba dinero pero no **de dónde**: si del
+efectivo del cajón, de una transferencia mal capturada o de una terminal que no
+conciliaba. Para responder eso había que abrir el panel, buscar el cierre y
+entrar a su detalle — justo lo que un reporte enviado a contabilidad y dirección
+debería evitar.
+
+Esta sección lleva al correo la misma tabla que el diálogo **Detalle del
+Arqueo** ya mostraba, para que el mensaje sea auditable por sí solo.
+
+### 59.1 El dato ya existía: `payment_breakdown`
+
+`CashClosingService::close()` guarda, en cada fila del ledger, el desglose
+completo del arqueo:
+
+```php
+$breakdown[] = [
+    'payment_method_id' => $pm->id,
+    'name' => $pm->name,
+    'slug' => $pm->slug,
+    'expected' => $expected,
+    'declared' => $declared,
+    'difference' => round($declared - $expected, 2),
+];
+```
+
+Es una columna `jsonb` con cast `array`, inmutable como el resto del registro, y
+es **la misma fuente** que consumen el diálogo de detalle
+(`CashRegisterClosingsPage.jsx`) y el PDF del arqueo
+(`pdf/cash-register-closing.blade.php`). No hubo que tocar el controlador ni la
+consulta: `sendEmail()` ya carga los modelos completos, así que el desglose
+viajaba en el correo sin que nadie lo imprimiera.
+
+La plantilla reproduce las cuatro columnas de la vista de detalles — Método de
+Pago, Esperado, Declarado, Diferencia — en un panel anidado bajo el cierre al
+que pertenecen.
+
+### 59.2 El subtotal no es decoración: el desglose **no** suma el total del cierre
+
+Esta es la parte que obligó a diseñar de más. Las dos cifras miden cosas
+distintas:
+
+| Cifra | Qué contiene |
+| :--- | :--- |
+| `expected_amount` del cierre | Fondo de apertura **+** Ventas **−** Caja Chica |
+| Suma de `expected` del desglose | **Solo** las ventas, agrupadas por método |
+
+En la vista de detalles la discrepancia no se nota porque las tarjetas de
+totales están separadas de la tabla. Apiladas una debajo de otra en un correo,
+tres importes que no cuadran con el total de arriba se leen como un **error de
+aritmética** — y este documento se archiva como evidencia contable.
+
+Por eso el desglose cierra con una fila **Subtotal ventas** y, cuando ese
+subtotal difiere del esperado del cierre, una nota declara el importe y su
+origen:
+
+> Diferencia de +$500.00 entre el subtotal de ventas y el esperado del cierre:
+> corresponde al fondo de apertura y a la caja chica del turno, que no se
+> desglosan por método de pago.
+
+La nota solo aparece cuando `abs($unallocated) >= 0.01`, así que un cierre sin
+fondo ni caja chica no arrastra una explicación que no necesita.
+
+**Cierres sin desglose.** Las filas anteriores a la columna, o cualquier cierre
+con `payment_breakdown` nulo, imprimen «Este cierre no registró desglose por
+método de pago» en lugar de una tabla vacía con encabezados.
+
+### 59.3 Móvil: por debajo de 520px las tablas dejan de ser tablas
+
+Cuatro columnas de dinero no caben en un teléfono de 320px, y el scroll
+horizontal dentro de un cliente de correo es peor que el apilado. El media
+query convierte cada celda en una línea propia, precedida por la etiqueta que
+llevaba su encabezado de columna.
+
+Tres decisiones sostienen que eso funcione en clientes reales:
+
+- **Las etiquetas viajan ocultas en línea.** `<span class="lbl"
+  style="display:none">Esperado: </span>` en el marcado, reveladas desde el
+  media query con `!important`. Un cliente que descarte el bloque `<style>`
+  —cosa que varios hacen— nunca las muestra duplicando el encabezado; el estilo
+  en línea no se puede quitar.
+- **Las tablas también pasan a `display:block`, no solo sus filas.** Una
+  `<table>` cuyas celdas son todas bloque **sigue** ejecutando el algoritmo de
+  tablas y se dimensiona a su contenido más ancho: apilar `tr` y `td` sin
+  apilar la tabla no sujeta el viewport angosto.
+- **`width: auto`, nunca `100%`.** Estos elementos llevan padding horizontal y
+  el modelo de caja por omisión lo suma **fuera** del ancho declarado, así que
+  cada nivel anidado con `100%` empujaría 24px más allá de su contenedor; como
+  `.card` recorta con `overflow:hidden`, el excedente se corta en vez de
+  desplazarse. Se declara además `box-sizing: border-box` para los clientes que
+  ignoren `width:auto`.
+
+El zebra pasó de `:nth-child` a una clase emitida por fila desde Blade
+(`$loop->iteration % 2`), por dos razones: cada cierre ocupa ahora **dos** filas
+—su resumen y su desglose— y el motor de Word que usa Outlook de escritorio no
+implementa `:nth-child`.
+
+Los clientes que ignoran media queries (Outlook de escritorio, parte del
+webmail) conservan la tabla, que es el render correcto para su viewport. Se
+agregó también el `<meta name="viewport">`, que la plantilla no tenía.
+
+### 59.4 Vista previa local y verificación
+
+Nueva ruta, solo en `local`, dentro del grupo `mail-preview` existente:
+
+| Ruta | Qué muestra |
+| :--- | :--- |
+| `/mail-preview/cash-register-closings-report` | El reporte multi-cierre con el desglose |
+
+Usa cierres reales de la base si los hay; si no, cae a modelos **sin guardar**
+que cubren los tres renders que la plantilla debe sostener: un cierre exacto,
+uno con faltante y nota de conciliación, y uno sin desglose. El operador se
+inyecta con `setRelation()` porque el modelo nunca se persiste y la llave
+foránea no tiene contra qué resolverse.
+
+> **Nota de verificación.** La plantilla se revisó renderizándola y
+> fotografiándola con Chromium a 760px, 360px y 320px antes de subirla.
+> Advertencia para quien repita el ejercicio: Chromium en modo headless impone
+> un viewport **mínimo de 500px**, así que un `--window-size=390` produce una
+> captura de 390px de una página maquetada a 500px y el contenido aparece
+> cortado a la derecha sin que el CSS tenga nada malo. Las tomas angostas se
+> hacen dentro de un `<iframe>` de ancho fijo, que sí crea su propio viewport.
+
+### Archivos Modificados
+- `backend/resources/views/mail/cash-register-closing.blade.php` — panel de desglose por cierre, fila de subtotal, nota de conciliación, apilado móvil y `meta viewport`
+- `backend/routes/web.php` — vista previa local del reporte multi-cierre con fixtures de los tres casos
