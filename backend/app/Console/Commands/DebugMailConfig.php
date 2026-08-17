@@ -3,7 +3,7 @@
 namespace App\Console\Commands;
 
 use App\Models\EmailConfiguration;
-use App\Services\Mail\DynamicMailerFactory;
+use App\Services\Mail\MailStrategyFactory;
 use Illuminate\Console\Command;
 use Illuminate\Support\Arr;
 use Throwable;
@@ -62,16 +62,21 @@ class DebugMailConfig extends Command
         'DYNAMIC_SMTP_TIMEOUT',
         'SENDGRID_SMTP_HOST',
         'SENDGRID_SMTP_PORT',
+        'RESEND_API_ENDPOINT',
+        'MAIL_TEST_TIMEOUT',
+        'MAIL_SEND_TIMEOUT',
+        'MAIL_CONNECT_TIMEOUT',
     ];
 
-    public function handle(DynamicMailerFactory $factory): int
+    public function handle(MailStrategyFactory $strategies): int
     {
         $this->runtimeSection();
         $this->nativeMailerSection();
         $this->environmentSection();
+        $this->timeoutSection();
 
         if (! $this->option('no-database')) {
-            $this->storedConfigurationsSection($factory);
+            $this->storedConfigurationsSection($strategies);
         }
 
         $this->newLine();
@@ -173,8 +178,32 @@ class DebugMailConfig extends Command
         }
     }
 
+    /**
+     * The network budget every strategy is bound by.
+     *
+     * Printed next to the transport because it answers the other half of a
+     * hang: not "where does the mail go" but "how long can it block before the
+     * request comes back with an error". A test timeout larger than the HTTP
+     * server's own limit means the browser gives up first and the
+     * administrator sees a dead tab instead of a message.
+     */
+    private function timeoutSection(): void
+    {
+        $this->heading('Limites de red por estrategia (config/mailing.php)');
+
+        $this->table(['Fase', 'Segundos', 'Aplica a'], [
+            ['test', (string) config('mailing.timeouts.test'), 'Prueba de conexion sincrona (boton "Probar Conexion")'],
+            ['send', (string) config('mailing.timeouts.send'), 'Envio real desde el worker de la cola'],
+            ['connect', (string) config('mailing.timeouts.connect'), 'Handshake TCP/TLS de las estrategias HTTP (Resend)'],
+        ]);
+
+        $this->line('  default_socket_timeout (php.ini) = '.$this->render(ini_get('default_socket_timeout')));
+        $this->line('  Las estrategias SMTP lo acotan durante el envio y lo restauran al terminar,');
+        $this->line('  por eso un puerto bloqueado ya no congela la peticion 60 segundos.');
+    }
+
     /** Layer 3: what the stored rows would do to the transport. */
-    private function storedConfigurationsSection(DynamicMailerFactory $factory): void
+    private function storedConfigurationsSection(MailStrategyFactory $strategies): void
     {
         $this->heading('Configuraciones almacenadas (email_configurations)');
 
@@ -205,12 +234,20 @@ class DebugMailConfig extends Command
 
         foreach ($configurations as $configuration) {
             try {
-                $mailerName = $factory->resolvedMailerName($configuration);
+                /*
+                 * describeTransport() is read-only by contract, so the whole
+                 * table can be printed without injecting a single mailer into
+                 * config('mail.mailers') — a debugging command that mutates the
+                 * configuration it describes is a command that lies.
+                 */
+                $strategy = $strategies->for($configuration);
+                $route = $strategy->describeTransport($configuration->toStrategyConfig());
             } catch (Throwable $e) {
                 $rows[] = [
                     $configuration->process_type,
                     $configuration->provider,
                     $configuration->is_active ? 'activa' : 'inactiva',
+                    'ERROR',
                     'ERROR',
                     $e->getMessage(),
                 ];
@@ -218,24 +255,35 @@ class DebugMailConfig extends Command
                 continue;
             }
 
+            $mailerName = (string) ($route['mailer'] ?? '?');
             $isDynamic = str_starts_with($mailerName, (string) config('mailing.runtime_mailer_prefix', 'dynamic').'-');
 
             $rows[] = [
                 $configuration->process_type,
                 $configuration->provider,
                 $configuration->is_active ? 'activa' : 'inactiva',
-                $mailerName,
-                $isDynamic
-                    ? 'transporte inyectado desde la BD'
-                    : 'sin datos que sobrescribir: usa el .env',
+                class_basename($strategy),
+                sprintf(
+                    '%s → %s:%s',
+                    strtoupper((string) ($route['channel'] ?? '?')),
+                    $route['host'] ?? '(sin host)',
+                    $route['port'] ?? '?'
+                ),
+                match (true) {
+                    ($route['channel'] ?? null) === 'https' => 'API HTTP: no abre puertos SMTP',
+                    $isDynamic => 'transporte inyectado desde la BD',
+                    default => 'sin datos que sobrescribir: usa el .env',
+                },
             ];
         }
 
-        $this->table(['Proceso', 'Proveedor', 'Estado', 'Mailer resuelto', 'Origen del transporte'], $rows);
+        $this->table(
+            ['Proceso', 'Proveedor', 'Estado', 'Estrategia', 'Ruta de salida', 'Origen del transporte'],
+            $rows
+        );
 
-        $this->line('  El detalle del transporte inyectado se obtiene resolviendolo, lo que muta la');
-        $this->line('  configuracion del proceso; para verlo sin efectos usa el boton "Probar Conexion",');
-        $this->line('  que devuelve host, puerto y cifrado efectivos junto al error del proveedor.');
+        $this->line('  Para validar credenciales de verdad usa el boton "Probar Conexion": envia un');
+        $this->line('  correo real con limite de tiempo y devuelve el error exacto del proveedor.');
     }
 
     /** Section title, so a long output stays readable in a terminal. */

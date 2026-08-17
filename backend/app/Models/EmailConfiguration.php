@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Exceptions\Mail\MailConfigurationMissingException;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -27,6 +28,18 @@ class EmailConfiguration extends Model
     public const PROCESS_USERS = 'users';
 
     /**
+     * Sales reporting and cash closings, automated or sent by hand.
+     *
+     * The manual "Enviar por Correo" button of the closings history resolves
+     * this key, so the operator's ad-hoc report and any future scheduled sales
+     * digest share one mailbox instead of drifting apart.
+     */
+    public const PROCESS_SALES = 'sales';
+
+    /** Stock alerts and inventory reports. */
+    public const PROCESS_INVENTORY = 'inventory';
+
+    /**
      * Catalog of addressable processes.
      *
      * Shared by the validation rules and by the admin UI dropdown so both ends
@@ -35,14 +48,32 @@ class EmailConfiguration extends Model
     public const PROCESS_TYPES = [
         self::PROCESS_JOBS => 'Procesos Automaticos (Jobs)',
         self::PROCESS_USERS => 'Usuarios y Accesos',
-        'sales' => 'Ventas y Cierres',
-        'inventory' => 'Inventario y Stock',
+        self::PROCESS_SALES => 'Ventas y Cierres',
+        self::PROCESS_INVENTORY => 'Inventario y Stock',
     ];
 
-    /** Transport families understood by config/mailing.php. */
+    /** Generic relay: the server's own mail server, described by the .env. */
+    public const PROVIDER_SMTP = 'smtp';
+
+    /** SendGrid's secured SMTP relay, over the alternate port 2525. */
+    public const PROVIDER_SENDGRID = 'sendgrid';
+
+    /** Resend's native HTTP API: HTTPS/443, no SMTP socket involved. */
+    public const PROVIDER_RESEND = 'resend';
+
+    /**
+     * Catalog of providers offered by the admin UI and accepted by validation.
+     *
+     * Every key here must have a `strategy` declared in config/mailing.php, or
+     * the row will validate and then fail at send time with
+     * ERR_MAIL_STRATEGY_UNSUPPORTED. The label is what the dropdown shows, and
+     * it names the outbound port on purpose: choosing between these providers
+     * is, in practice, choosing which port the VPS firewall has to let through.
+     */
     public const PROVIDERS = [
-        'sendgrid' => 'SendGrid',
-        'smtp' => 'SMTP Generico',
+        self::PROVIDER_SENDGRID => 'SendGrid (SMTP 2525)',
+        self::PROVIDER_RESEND => 'Resend (API HTTPS 443)',
+        self::PROVIDER_SMTP => 'SMTP Generico',
     ];
 
     protected $fillable = [
@@ -95,6 +126,24 @@ class EmailConfiguration extends Model
     }
 
     /**
+     * Same lookup as activeFor(), for the callers that cannot proceed without
+     * a configuration.
+     *
+     * The automated paths treat a missing row as "notifications are off" and
+     * carry on; an operator who pressed a button needs the opposite — a
+     * controlled 422 telling them to create the configuration in Ajustes.
+     * Centralizing the raise here keeps that message identical wherever it is
+     * surfaced, instead of a copy per controller.
+     *
+     * @throws MailConfigurationMissingException when no active row exists.
+     */
+    public static function requireActiveFor(string $processType): self
+    {
+        return static::activeFor($processType)
+            ?? throw new MailConfigurationMissingException($processType);
+    }
+
+    /**
      * Recipient list cleaned for delivery: trimmed, de-duplicated and stripped
      * of syntactically invalid addresses, so one malformed entry saved by hand
      * cannot make the whole send fail inside the transport.
@@ -107,6 +156,29 @@ class EmailConfiguration extends Model
             ->unique()
             ->values()
             ->all();
+    }
+
+    /**
+     * Provider-agnostic payload handed to a mail strategy.
+     *
+     * The strategies take an array and not the model on purpose: the health
+     * check validates credentials that were never persisted, so nothing in
+     * that layer may assume a row exists. Recipients are already cleaned here,
+     * which keeps every strategy from having to filter them again.
+     *
+     * @return array<string, mixed>
+     */
+    public function toStrategyConfig(): array
+    {
+        return [
+            'process_type' => $this->process_type,
+            'provider' => $this->provider,
+            'api_key' => $this->api_key,
+            'from_email' => $this->from_email,
+            'from_name' => $this->from_name,
+            'subject' => $this->subject,
+            'target_emails' => $this->deliverableEmails(),
+        ];
     }
 
     /** True when a credential is stored, without revealing it. */

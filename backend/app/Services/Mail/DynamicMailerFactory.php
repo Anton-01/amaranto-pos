@@ -11,6 +11,12 @@ use InvalidArgumentException;
 /**
  * Builds a Symfony Mailer transport out of a database row, at run time.
  *
+ * SCOPE. This is the transport builder of the SMTP family only, used by
+ * App\Services\Mail\Strategies\SmtpMailStrategy and its SendGrid subclass. A
+ * provider reached over HTTP (Resend) has no Symfony transport to assemble and
+ * is rejected here rather than silently merged into config('mail.mailers') —
+ * see the `driver` key of config/mailing.php.
+ *
  * The application ships without hardcoded provider credentials: this factory
  * takes an EmailConfiguration, merges it over the provider skeleton declared in
  * config/mailing.php, and injects the result into config('mail.mailers.*') so
@@ -93,16 +99,7 @@ class DynamicMailerFactory
      */
     public function register(EmailConfiguration $configuration): string
     {
-        $provider = config("mailing.providers.{$configuration->provider}");
-
-        if (! is_array($provider)) {
-            throw new InvalidArgumentException(
-                "ERR_MAIL_PROVIDER_UNSUPPORTED: proveedor '{$configuration->provider}' sin plantilla de transporte."
-            );
-        }
-
-        $native = $this->nativeTransport($provider);
-        $overrides = $this->overridesFor($provider, $configuration, $native);
+        $preview = $this->preview($configuration);
 
         /*
          * Neither the row nor the skeleton describes an endpoint or carries a
@@ -112,13 +109,11 @@ class DynamicMailerFactory
          * message leaves through the mailer MAIL_MAILER names, with the
          * MAIL_HOST / MAIL_PORT / MAIL_USERNAME the server already has.
          */
-        if ($overrides === []) {
-            return $this->nativeMailerName($provider);
+        if (! $preview['injected']) {
+            return $preview['mailer'];
         }
 
-        $mailerName = $this->mailerName($configuration);
-
-        Config::set("mail.mailers.{$mailerName}", $this->transportFor($provider, $native, $overrides));
+        Config::set("mail.mailers.{$preview['mailer']}", $preview['transport']);
 
         /*
          * MailManager caches every mailer it resolves. Queue workers are
@@ -130,7 +125,64 @@ class DynamicMailerFactory
             $this->manager->forgetMailers();
         }
 
-        return $mailerName;
+        return $preview['mailer'];
+    }
+
+    /**
+     * Resolves the transport this configuration would use, WITHOUT applying it.
+     *
+     * Same arithmetic as register(), zero side effects: no Config::set(), no
+     * flushed mailer cache. It is the read-only half of the factory, shared by
+     * register() so the two can never disagree, and used by the diagnostic
+     * command and by the strategies to report a route they are not about to
+     * dial.
+     *
+     * @return array{mailer: string, transport: array<string, mixed>, injected: bool}
+     *
+     * @throws InvalidArgumentException when the row points at a provider that
+     *                                  config/mailing.php does not describe, or
+     *                                  at one that does not speak SMTP.
+     */
+    public function preview(EmailConfiguration $configuration): array
+    {
+        $provider = config("mailing.providers.{$configuration->provider}");
+
+        if (! is_array($provider)) {
+            throw new InvalidArgumentException(
+                "ERR_MAIL_PROVIDER_UNSUPPORTED: proveedor '{$configuration->provider}' sin plantilla de transporte."
+            );
+        }
+
+        /*
+         * An HTTP provider declares no endpoint keys, so merging it would look
+         * like "nothing to override" and quietly route its mail through the
+         * .env's SMTP relay — with the wrong credential and the wrong sender.
+         * Failing loudly is the only honest answer.
+         */
+        if (($provider['driver'] ?? 'smtp') !== 'smtp') {
+            throw new InvalidArgumentException(
+                "ERR_MAIL_PROVIDER_NOT_SMTP: el proveedor '{$configuration->provider}' se entrega por HTTP y no construye un transporte SMTP."
+            );
+        }
+
+        $native = $this->nativeTransport($provider);
+        $overrides = $this->overridesFor($provider, $configuration, $native);
+
+        if ($overrides === []) {
+            $mailerName = $this->nativeMailerName($provider);
+
+            return [
+                'mailer' => $mailerName,
+                'transport' => (array) config("mail.mailers.{$mailerName}"),
+                'injected' => false,
+            ];
+        }
+
+        return [
+            'mailer' => $this->mailerName($configuration),
+            'transport' => $this->transportFor($provider, $native, $overrides),
+            'injected' => true,
+        ];
     }
 
     /** Namespaced mailer key, e.g. "dynamic-jobs". */
@@ -150,19 +202,7 @@ class DynamicMailerFactory
      */
     public function resolvedMailerName(EmailConfiguration $configuration): string
     {
-        $provider = config("mailing.providers.{$configuration->provider}");
-
-        if (! is_array($provider)) {
-            throw new InvalidArgumentException(
-                "ERR_MAIL_PROVIDER_UNSUPPORTED: proveedor '{$configuration->provider}' sin plantilla de transporte."
-            );
-        }
-
-        $native = $this->nativeTransport($provider);
-
-        return $this->overridesFor($provider, $configuration, $native) === []
-            ? $this->nativeMailerName($provider)
-            : $this->mailerName($configuration);
+        return $this->preview($configuration)['mailer'];
     }
 
     /**

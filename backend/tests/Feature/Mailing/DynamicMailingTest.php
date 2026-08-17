@@ -8,8 +8,11 @@ use App\Models\CashRegister;
 use App\Models\EmailConfiguration;
 use App\Models\User;
 use App\Services\Mail\DynamicMailerFactory;
+use App\Services\Mail\MailStrategyFactory;
 use Illuminate\Foundation\Testing\DatabaseMigrations;
+use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Queue;
 use Tests\Concerns\RequiresPostgres;
@@ -117,7 +120,7 @@ class DynamicMailingTest extends TestCase
             )
         );
 
-        $job->handle(app(DynamicMailerFactory::class));
+        $job->handle(app(MailStrategyFactory::class));
 
         /*
          * The assertion looks at the "sent" bucket, not the queued one:
@@ -147,6 +150,47 @@ class DynamicMailingTest extends TestCase
         });
     }
 
+    public function test_el_job_entrega_por_la_api_http_cuando_el_proveedor_es_resend(): void
+    {
+        $configuration = $this->activeJobsConfiguration([
+            'provider' => EmailConfiguration::PROVIDER_RESEND,
+            'api_key' => 're_testing_key_0001',
+        ]);
+
+        Http::fake(['https://api.resend.com/emails' => Http::response(['id' => 'e1b2c3d4'], 200)]);
+        Mail::fake();
+
+        (new SendConfiguredProcessMail(
+            EmailConfiguration::PROCESS_JOBS,
+            new CashRegisterClosingReportMail(
+                closingId: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890',
+                operatorName: 'Carlos Martinez',
+                closingDate: now()->format('d/m/Y H:i:s'),
+                totalAmount: 15420.50,
+                isAutomated: true,
+            )
+        ))->handle(app(MailStrategyFactory::class));
+
+        /*
+         * Switching a process to Resend is a change of one column, and this is
+         * what it buys: the report leaves over HTTPS/443 without a single SMTP
+         * socket, so a VPS that filters submission ports cannot stop it.
+         */
+        Mail::assertNothingOutgoing();
+
+        Http::assertSent(function (Request $request) use ($configuration) {
+            $body = $request->data();
+
+            // Sender and subject still come from the database row: the message
+            // must be identical to the one the SMTP strategies would deliver.
+            return $request->url() === 'https://api.resend.com/emails'
+                && $body['subject'] === $configuration->subject
+                && $body['from'] === $configuration->from_name.' <'.$configuration->from_email.'>'
+                && $body['to'] === $configuration->target_emails
+                && str_contains($body['html'], 'Carlos Martinez');
+        });
+    }
+
     public function test_el_job_no_envia_nada_cuando_la_configuracion_se_desactiva_despues_de_encolarse(): void
     {
         $this->activeJobsConfiguration(['is_active' => false]);
@@ -161,7 +205,7 @@ class DynamicMailingTest extends TestCase
                 closingDate: now()->format('d/m/Y H:i:s'),
                 totalAmount: 100.00,
             )
-        ))->handle(app(DynamicMailerFactory::class));
+        ))->handle(app(MailStrategyFactory::class));
 
         Mail::assertNothingOutgoing();
     }

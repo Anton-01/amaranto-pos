@@ -8,7 +8,9 @@ use App\Models\Role;
 use App\Models\User;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Testing\DatabaseMigrations;
+use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Str;
 use Symfony\Component\Mailer\Exception\TransportException;
@@ -109,15 +111,21 @@ class MailConnectionDiagnosticTest extends TestCase
         $timeout = 'Connection could not be established with host "smtp.sendgrid.net:2525": '
             .'stream_socket_client(): Operation timed out';
 
-        // forgetMailers() is tolerated because DynamicMailerFactory flushes the
-        // manager's cache right after injecting the transport.
+        // forgetMailers() is tolerated because the transport is injected and
+        // its timeout capped right before the send, and both flush the cache.
         Mail::shouldReceive('forgetMailers')->zeroOrMoreTimes();
         Mail::shouldReceive('mailer')->once()->andThrow(new TransportException($timeout));
 
         $response = $this->actingAs($this->admin())
             ->postJson(self::ENDPOINT, $this->payload());
 
-        $response->assertStatus(400);
+        /*
+         * 422 and not 500: the request was well formed and the application did
+         * exactly what it was asked. What failed is the configuration under
+         * test, which is a fact about the payload — and it keeps a mistyped API
+         * key out of the platform's 5xx alerting.
+         */
+        $response->assertStatus(422);
         $response->assertJsonPath('status', 'error');
         $response->assertJsonPath('error_code', 'ERR_MAIL_TEST_FAILED');
         $response->assertJsonPath('error_class', 'TransportException');
@@ -129,6 +137,84 @@ class MailConnectionDiagnosticTest extends TestCase
          * friendly "no se pudo conectar" would erase that distinction.
          */
         $response->assertJsonPath('message', $timeout);
+        $response->assertJsonPath('error', $timeout);
+        $response->assertJsonPath('data.error.message', $timeout);
+
+        // The trace is what turns "it failed" into something an administrator
+        // can paste into a support thread.
+        $this->assertNotEmpty($response->json('data.error.trace'));
+        $this->assertSame('smtp.sendgrid.net', $response->json('data.transport.host'));
+    }
+
+    public function test_la_prueba_de_resend_viaja_por_https_443_y_no_por_smtp(): void
+    {
+        Http::fake(['https://api.resend.com/emails' => Http::response(['id' => 'e1b2c3d4'], 200)]);
+
+        $response = $this->actingAs($this->admin())->postJson(self::ENDPOINT, $this->payload([
+            'provider' => EmailConfiguration::PROVIDER_RESEND,
+            'api_key' => 're_testing_key_0001',
+        ]));
+
+        $response->assertOk();
+        $response->assertJsonPath('data.transport.channel', 'https');
+        $response->assertJsonPath('data.transport.port', 443);
+        $response->assertJsonPath('data.strategy', 'ResendMailStrategy');
+
+        /*
+         * The point of the provider: a host that filters outbound submission
+         * ports cannot break this route, because no SMTP transport is built at
+         * all.
+         */
+        $this->assertNull(config('mail.mailers.dynamic-jobs'));
+
+        Http::assertSent(fn (Request $request) => $request->url() === 'https://api.resend.com/emails'
+            && $request->hasHeader('Authorization', 'Bearer re_testing_key_0001'));
+    }
+
+    public function test_la_prueba_de_resend_devuelve_el_error_de_la_api_con_422(): void
+    {
+        Http::fake([
+            'https://api.resend.com/emails' => Http::response(
+                ['statusCode' => 403, 'name' => 'validation_error', 'message' => 'The cronos.pos domain is not verified'],
+                403
+            ),
+        ]);
+
+        $response = $this->actingAs($this->admin())->postJson(self::ENDPOINT, $this->payload([
+            'provider' => EmailConfiguration::PROVIDER_RESEND,
+            'api_key' => 're_testing_key_0001',
+        ]));
+
+        $response->assertStatus(422);
+        $response->assertJsonPath('error_code', 'ERR_MAIL_TEST_FAILED');
+        $response->assertJsonPath('data.error.status_code', 403);
+        $this->assertStringContainsString(
+            'The cronos.pos domain is not verified',
+            $response->json('message')
+        );
+
+        // The hint is the fastest path from a 403 to the panel that fixes it.
+        $this->assertStringContainsString('dominio', implode(' ', $response->json('data.hints')));
+    }
+
+    public function test_el_catalogo_publica_resend_junto_a_smtp_y_sendgrid(): void
+    {
+        $response = $this->actingAs($this->admin())
+            ->getJson('/api/admin/email-configurations/catalogs');
+
+        $response->assertOk();
+
+        $providers = collect($response->json('data.providers'));
+
+        $this->assertEqualsCanonicalizing(
+            ['smtp', 'sendgrid', 'resend'],
+            $providers->pluck('value')->all()
+        );
+
+        // The dropdown states the outbound channel because that — not the
+        // feature set — is what the choice is actually about on a VPS.
+        $this->assertSame('https', $providers->firstWhere('value', 'resend')['channel']);
+        $this->assertSame('smtp', $providers->firstWhere('value', 'sendgrid')['channel']);
     }
 
     public function test_la_prueba_reutiliza_la_credencial_guardada_cuando_el_formulario_la_deja_vacia(): void

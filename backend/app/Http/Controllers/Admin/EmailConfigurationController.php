@@ -6,14 +6,12 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\EmailConfiguration\StoreEmailConfigurationRequest;
 use App\Http\Requests\EmailConfiguration\TestEmailConnectionRequest;
 use App\Http\Requests\EmailConfiguration\UpdateEmailConfigurationRequest;
-use App\Mail\TestConnectionMail;
 use App\Models\EmailConfiguration;
-use App\Services\Mail\DynamicMailerFactory;
+use App\Services\Mail\MailStrategyFactory;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Mail;
 use Throwable;
 
 /**
@@ -37,9 +35,22 @@ class EmailConfigurationController extends Controller
         ]);
     }
 
-    /** Catalogs consumed by the admin form (process types and providers). */
-    public function catalogs(): JsonResponse
+    /**
+     * Catalogs consumed by the admin form (process types and providers).
+     *
+     * The provider list is intersected with the strategies actually registered
+     * in config/mailing.php, so the dropdown can never offer a provider whose
+     * class does not exist: an option the administrator can pick is an option
+     * the system can send through.
+     *
+     * Each entry carries its outbound channel and port because that is the real
+     * decision behind the selector — SMTP/2525 versus HTTPS/443 is a question
+     * about the server's firewall, not about email features.
+     */
+    public function catalogs(MailStrategyFactory $strategies): JsonResponse
     {
+        $supported = $strategies->supportedProviders();
+
         return response()->json([
             'status' => 'success',
             'data' => [
@@ -47,7 +58,12 @@ class EmailConfigurationController extends Controller
                     ->map(fn (string $label, string $value) => ['value' => $value, 'label' => $label])
                     ->values(),
                 'providers' => collect(EmailConfiguration::PROVIDERS)
-                    ->map(fn (string $label, string $value) => ['value' => $value, 'label' => $label])
+                    ->only($supported)
+                    ->map(fn (string $label, string $value) => [
+                        'value' => $value,
+                        'label' => $label,
+                        'channel' => config("mailing.providers.{$value}.driver") === 'http' ? 'https' : 'smtp',
+                    ])
                     ->values(),
             ],
         ]);
@@ -130,10 +146,11 @@ class EmailConfigurationController extends Controller
      * Mailing health check: dials the provider now and reports what happened.
      *
      * WHAT it does. It takes the credentials currently typed in the admin form
-     * — not what the database holds — assembles the very same transport the
-     * queue would assemble, and pushes one message through it. A 200 means the
-     * socket opened, the provider accepted the API key and the sender identity
-     * passed; anything else comes back with the raw transport error.
+     * — not what the database holds — hands them to the strategy of the chosen
+     * provider (SMTP, SendGrid or Resend) and pushes one real message through
+     * it. A 200 means the route opened, the provider accepted the credential
+     * and the sender identity passed; a 422 comes back with the provider's own
+     * error text.
      *
      * WHY it is synchronous, when production mail is not. Every business
      * Mailable implements ShouldQueue and leaves through
@@ -144,18 +161,28 @@ class EmailConfigurationController extends Controller
      * the payload — reporting that the message was *enqueued*, never that it
      * was *delivered* — and the real failure would land minutes later in a
      * worker log the administrator cannot open. Answering the question the
-     * button asks ("do these credentials work?") requires the exception to
-     * travel back inside the request, so this is the one place in the system
-     * that calls send() instead of queue().
+     * button asks ("do these credentials work?") requires the failure to travel
+     * back inside the request.
      *
-     * HOW the failure is surfaced. The whole attempt is wrapped in try/catch
-     * over Throwable and the provider's own message is returned verbatim.
-     * Symfony's TransportException carries the diagnosis in its text — an
-     * "Operation timed out" against port 2525 means the host firewall, a 401
-     * means a revoked key — so paraphrasing it into a friendly sentence would
-     * destroy the only piece of information the administrator came for.
+     * WHY IT CANNOT HANG FOR 60 SECONDS ANY MORE. The freeze was never a slow
+     * provider: a VPS with a blocked submission port DROPS the packets, nothing
+     * answers, and the socket waits for PHP's default 60-second timeout while
+     * the browser spins and then gives up with no message at all. Each strategy
+     * now bounds its own network time from config('mailing.timeouts') — an SMTP
+     * transport timeout plus a scoped `default_socket_timeout`, a cURL
+     * connect/read timeout for the HTTP one — so the worst case is a handful of
+     * seconds ending in a readable error instead of a minute ending in silence.
+     *
+     * HOW the failure is surfaced. testConnection() never throws: it returns a
+     * diagnostic array, and this method turns it into HTTP 422 carrying the
+     * provider message verbatim, its exception class, its status code and a
+     * summarized trace. Symfony's TransportException and Resend's JSON body
+     * both put the diagnosis in their text — an "Operation timed out" against
+     * port 587 means the host firewall, a 401 means a revoked key, a 403 means
+     * an unverified sender domain — so paraphrasing them into a friendly
+     * sentence would destroy the only information the administrator came for.
      */
-    public function testConnection(TestEmailConnectionRequest $request, DynamicMailerFactory $factory): JsonResponse
+    public function testConnection(TestEmailConnectionRequest $request, MailStrategyFactory $strategies): JsonResponse
     {
         $payload = $request->validated();
 
@@ -172,14 +199,13 @@ class EmailConfigurationController extends Controller
         }
 
         /*
-         * An unsaved model is the payload's carrier. The factory already knows
-         * how to merge a configuration over the provider skeleton — including
-         * the anti-block port 2525 — and it never asks whether the row exists,
-         * so an in-memory instance lets an administrator validate credentials
-         * BEFORE persisting them, through the exact same code path production
-         * uses. Reimplementing the Config::set() calls here would create a
-         * second transport builder that could drift from the real one, which is
-         * precisely the bug this tool is meant to catch.
+         * An unsaved model is the payload's carrier: the strategies read a
+         * plain array and never ask whether the row exists, so an in-memory
+         * instance lets an administrator validate credentials BEFORE persisting
+         * them, through the exact same code path production uses. Building a
+         * second, test-only transport here would create a resolver able to
+         * drift from the real one — precisely the bug this tool exists to
+         * catch.
          */
         $configuration = new EmailConfiguration([
             'process_type' => $payload['process_type'],
@@ -190,84 +216,112 @@ class EmailConfigurationController extends Controller
             'target_emails' => $this->normalizeEmails($payload['target_emails']),
         ]);
 
-        $recipients = $configuration->deliverableEmails();
-
         try {
-            $mailerName = $factory->register($configuration);
+            $strategy = $strategies->for($configuration);
         } catch (Throwable $e) {
             return response()->json([
                 'status' => 'error',
                 'message' => $e->getMessage(),
-                'error_code' => 'ERR_MAIL_TRANSPORT_UNSUPPORTED',
+                'error_code' => 'ERR_MAIL_STRATEGY_UNSUPPORTED',
             ], 400);
         }
 
-        // Read back what was injected so the answer describes the route that
-        // was actually dialled. The credential is dropped here and never
-        // reaches the response.
-        $transport = Arr::only(
-            (array) config("mail.mailers.{$mailerName}"),
-            ['transport', 'host', 'port', 'encryption']
-        );
-
-        $startedAt = microtime(true);
-
+        /*
+         * The strategy owns the try/catch, so this call is total: it answers
+         * with a result for every outcome, including the ones that used to
+         * become an unhandled 500 (a DNS failure, a TLS handshake rejected
+         * mid-negotiation). The outer catch below only covers a strategy that
+         * breaks its own contract.
+         */
         try {
-            Mail::mailer($mailerName)
-                ->to($recipients)
-                ->send(
-                    (new TestConnectionMail($payload['process_type'], $transport))
-                        ->from($payload['from_email'], $payload['from_name'])
-                );
+            $result = $strategy->testConnection($configuration->toStrategyConfig());
         } catch (Throwable $e) {
-            /*
-             * Logged without the credential: the payload is echoed back to the
-             * browser and written to the log, and neither is a place for an API
-             * key. The exception class is kept because it separates a transport
-             * problem from an authentication one at a glance.
-             */
-            Log::warning('Prueba de conexion de correo fallida.', [
-                'process_type' => $payload['process_type'],
+            $result = [
+                'success' => false,
                 'provider' => $payload['provider'],
-                'transport' => $transport,
-                'exception' => $e::class,
-                'error' => $e->getMessage(),
-            ]);
-
-            return response()->json([
-                'status' => 'error',
-                'message' => $e->getMessage(),
-                'error_code' => 'ERR_MAIL_TEST_FAILED',
-                'error_class' => class_basename($e),
-                'data' => [
-                    'transport' => $transport,
-                    'elapsed_ms' => (int) round((microtime(true) - $startedAt) * 1000),
-                ],
-            ], 400);
+                'strategy' => class_basename($strategy),
+                'transport' => [],
+                'recipients' => $configuration->deliverableEmails(),
+                'elapsed_ms' => 0,
+                'error' => ['message' => $e->getMessage(), 'class' => class_basename($e), 'code' => $e->getCode()],
+            ];
         }
 
-        $elapsedMs = (int) round((microtime(true) - $startedAt) * 1000);
+        return $result['success'] === true
+            ? $this->connectionSucceeded($payload, $result)
+            : $this->connectionFailed($payload, $result);
+    }
 
+    /**
+     * @param  array<string, mixed>  $payload
+     * @param  array<string, mixed>  $result
+     */
+    private function connectionSucceeded(array $payload, array $result): JsonResponse
+    {
         Log::info('Prueba de conexion de correo exitosa.', [
             'process_type' => $payload['process_type'],
             'provider' => $payload['provider'],
-            'transport' => $transport,
-            'recipients' => count($recipients),
-            'elapsed_ms' => $elapsedMs,
+            'strategy' => $result['strategy'] ?? null,
+            'transport' => $result['transport'] ?? [],
+            'recipients' => count($result['recipients'] ?? []),
+            'elapsed_ms' => $result['elapsed_ms'] ?? null,
         ]);
 
         return response()->json([
             'status' => 'success',
-            'data' => [
-                'transport' => $transport,
-                'recipients' => $recipients,
-                'elapsed_ms' => $elapsedMs,
-            ],
+            'data' => Arr::except($result, ['success', 'error']),
             'metadata' => [
                 'message' => 'Conexion exitosa. Se envio un correo de prueba a '
-                    .count($recipients).' destinatario(s).',
+                    .count($result['recipients'] ?? []).' destinatario(s).',
             ],
         ]);
+    }
+
+    /**
+     * Failure answer: HTTP 422 with the real technical error in the body.
+     *
+     * 422 and not 500 is deliberate. The request was well formed and the
+     * application did exactly what it was asked; what failed is the
+     * configuration being tested, which is a fact about the payload. It also
+     * keeps the error out of the 5xx alerting of the platform: a wrong API key
+     * typed by an administrator is not an application incident.
+     *
+     * @param  array<string, mixed>  $payload
+     * @param  array<string, mixed>  $result
+     */
+    private function connectionFailed(array $payload, array $result): JsonResponse
+    {
+        $error = $result['error'] ?? [];
+        $message = $error['message'] ?? 'La prueba de conexion fallo sin un mensaje del proveedor.';
+
+        /*
+         * Logged without the credential: the payload is echoed back to the
+         * browser and written to the log, and neither is a place for an API
+         * key. The exception class is kept because it separates a transport
+         * problem from an authentication one at a glance.
+         */
+        Log::warning('Prueba de conexion de correo fallida.', [
+            'process_type' => $payload['process_type'],
+            'provider' => $payload['provider'],
+            'strategy' => $result['strategy'] ?? null,
+            'transport' => $result['transport'] ?? [],
+            'exception' => $error['class'] ?? null,
+            'status_code' => $error['status_code'] ?? null,
+            'elapsed_ms' => $result['elapsed_ms'] ?? null,
+            'error' => $message,
+        ]);
+
+        return response()->json([
+            'status' => 'error',
+            // `message` is what the UI shows; `error` is the key the API
+            // contract names for the raw provider text. Both hold the same
+            // verbatim string on purpose — no paraphrase, no truncation.
+            'message' => $message,
+            'error' => $message,
+            'error_code' => 'ERR_MAIL_TEST_FAILED',
+            'error_class' => $error['class'] ?? null,
+            'data' => Arr::except($result, ['success']),
+        ], 422);
     }
 
     /**

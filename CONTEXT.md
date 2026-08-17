@@ -10,8 +10,9 @@
 - WebSockets: Laravel Reverb (puerto 8080, tiempo real)
 - **Estándar de Zona Horaria: `America/Mexico_City` en las tres capas (Docker `TZ` → Laravel `APP_TIMEZONE` → sesión de PostgreSQL).** Fuente única de verdad: `config('app.timezone')`, expuesta al código por `App\Support\Timezone`. **El código NO vuelve a escribir la zona a mano** — `Carbon::now()` / `Carbon::today()` sin argumento ya nacen en hora local. Única excepción deliberada: el `->timezone()` del arqueo de las 21:00 en `routes/console.php` (ver secciones 53 y 47).
 - **Estándar de Fechas en el Cliente (4.ª capa): `toISOString()` está PROHIBIDO para fechas calendario.** Toda cadena `'YYYY-MM-DD'` que viaja a la API (`date_from`, `date_to`) se genera desde los componentes locales del navegador con `frontend/src/lib/dates.js` (`toLocalYmd` / `todayYmd`), nunca convirtiendo a UTC. `toISOString()` se conserva **solo** para instantes (`created_at`, `_queued_at`), que es su uso correcto — ver sección 55.
-- **Estándar de Correo Saliente: puerto 2525, nunca 587.** Los proveedores de nube (DigitalOcean, AWS, GCP, Azure) bloquean el puerto 587 de salida por política anti-spam y **descartan los paquetes en silencio**, de modo que el envío no falla rápido: se cuelga hasta expirar (`TransportException: Operation timed out`). Todo despliegue en VPS/Droplet usa el puerto alterno de submission **2525** — tanto el relay de SendGrid del mailing dinámico (`config/mailing.php`) como el `MAIL_PORT` del mailer estático — ver sección 56.
-- Último trabajo: [🟢 SECCIÓN 57: DIAGNÓSTICO SÍNCRONO DE CORREO] — Botón **Probar Conexión** en Configuración → Notificaciones / Emails: envía un correo real contra el proveedor **en la misma petición** y devuelve el mensaje textual del transporte. Valida credenciales, identidad del remitente y apertura del puerto 2525 **antes de guardar nada en la base**, montando el transporte desde un `EmailConfiguration` en memoria que recorre la fábrica de siempre. Es la única ruta del sistema que usa `send()` en vez de `queue()`, y la excepción es el punto: una prueba encolada contestaría "encolado", nunca "entregado" — ver sección 57.
+- **Estándar de Correo Saliente: puerto 2525, nunca 587.** Los proveedores de nube (DigitalOcean, AWS, GCP, Azure) bloquean el puerto 587 de salida por política anti-spam y **descartan los paquetes en silencio**, de modo que el envío no falla rápido: se cuelga hasta expirar (`TransportException: Operation timed out`). Todo despliegue en VPS/Droplet usa el puerto alterno de submission **2525** — tanto el relay de SendGrid del mailing dinámico (`config/mailing.php`) como el `MAIL_PORT` del mailer estático — ver sección 56. **Y cuando el host filtra también el 2525, la salida deja de ser SMTP: el proveedor `resend` entrega por su API HTTP en el puerto 443** a través de `ResendMailStrategy`. El envío se resuelve por **Patrón Strategy** (`MailStrategyInterface` + `MailStrategyFactory`, mapa en `config/mailing.php`) y **ninguna estrategia puede bloquear sin límite**: el presupuesto de `config('mailing.timeouts')` acota socket y cURL, que es lo que eliminó el cuelgue de 60 s de la prueba de conexión — ver sección 59.
+- Último trabajo: [🟢 SECCIÓN 59: PATRÓN STRATEGY EN EL CORREO, RESEND POR HTTPS/443 Y TRAZA REAL DE ERRORES] — El subsistema de correo dejó de tener un solo camino de envío: cada proveedor es una clase (`SmtpMailStrategy`, `SendGridMailStrategy`, `ResendMailStrategy`) que la fábrica resuelve desde la configuración activa. **Resend entrega por API HTTP en el puerto 443**, así que un VPS que bloquea los puertos SMTP ya no tiene cómo detener el correo. La prueba de conexión ya no se congela 60 s: cada estrategia acota su tiempo de red (`timeout` del transporte + `default_socket_timeout` restaurado en SMTP; `connect_timeout` + `timeout` de cURL en HTTP) y cualquier fallo vuelve como **HTTP 422 con el mensaje textual del proveedor**, su clase de excepción, el código de estado y la traza resumida — ver sección 59.
+- Trabajo reciente: [🟢 SECCIÓN 57: DIAGNÓSTICO SÍNCRONO DE CORREO] — Botón **Probar Conexión** en Configuración → Notificaciones / Emails: envía un correo real contra el proveedor **en la misma petición** y devuelve el mensaje textual del transporte. Valida credenciales, identidad del remitente y apertura del puerto 2525 **antes de guardar nada en la base**, montando el transporte desde un `EmailConfiguration` en memoria que recorre la fábrica de siempre. Es la única ruta del sistema que usa `send()` en vez de `queue()`, y la excepción es el punto: una prueba encolada contestaría "encolado", nunca "entregado" — ver sección 57.
 - Trabajo previo: [🟢 SECCIÓN 56: EL RELAY DE SENDGRID SALE POR EL PUERTO 2525] — `SendConfiguredProcessMail` moría cada noche con `TransportException: Operation timed out` contra `smtp.sendgrid.net:587`, agotando sus 3 reintentos sin enviar el reporte del cierre de caja. No era SendGrid ni la API Key: el firewall de salida del Droplet descarta el tráfico al 587 (política anti-spam), así que el socket esperaba un banner SMTP que nunca llegaba. Corregido en la plantilla del proveedor —donde vive la infraestructura, no en las filas de `email_configurations`— para arreglar todas las configuraciones existentes sin tocar un registro; el `?? 587` de respaldo de la fábrica también cayó. Sin dependencias nuevas de Composer — ver sección 56.
 - Trabajo anterior: [🟢 SECCIÓN 55: ESTANDARIZACIÓN DE FECHAS EN EL CLIENTE] — El filtro rápido "Hoy" devolvía la lista vacía después de las 18:00 CST: el frontend construía el día con `new Date().toISOString().split('T')[0]`, que imprime el día **UTC**, y a partir de las 6 PM pedía a la API las ventas de mañana. El backend nunca estuvo mal (sección 53); la pregunta que le llegaba sí. Creada `lib/dates.js` como fuente única, corregidas 7 pantallas (incluidas 3 que ya calculaban bien pero con su propia copia del formateador) y detectado de paso que la vigencia de las promociones se guardaba 6 horas tarde por el mismo motivo — ver sección 55.
 - Trabajo más antiguo: [🟢 SECCIÓN 54: PROYECCIÓN DE COLUMNAS, CACHÉ DINÁMICO EN REDIS Y PERCEPCIÓN DE CARGA] — Cuatro capas del mismo problema. (1) Eliminado el `SELECT *` implícito de las vistas principales: el Historial de Ventas ya no publica `cost_price` de cada partida ni la cuenta completa del cajero, y el catálogo del POS dejó de exponer el margen del negocio. (2) El TTL salió de PHP a la tabla `cache_configurations`, con invalidación crítica colgada de los modelos `Order` y `Product` para que una venta o un movimiento de stock purguen el Dashboard de inmediato. (3) El spinner del Dashboard se sustituyó por un esqueleto que calca su geometría final, de modo que al llegar los datos nada se mueve. (4) El Sidebar centra su enlace activo tras el montaje, resolviendo la pérdida de posición al refrescar — ver sección 54.
@@ -6414,132 +6415,510 @@ transporte de SendGrid conserva credenciales, puerto 2525 y cifrado `tls`.
 
 ---
 
-## 59. TRAZABILIDAD DEL REPORTE DE CIERRES: DESGLOSE POR MÉTODO DE PAGO EN EL CORREO [🟢 COMPLETADO Y OPERATIVO]
+## 59. PATRÓN STRATEGY EN EL SUBSISTEMA DE CORREO: RESEND POR HTTPS/443, TIMEOUTS ACOTADOS Y TRAZA REAL DE ERRORES [🟢 COMPLETADO Y OPERATIVO]
 
-El reporte que sale por correo (`CashRegisterClosingMail`) listaba cada cierre
-en **una sola línea**: esperado, declarado y diferencia. Ante un faltante de
-$253.00, el lector sabía que faltaba dinero pero no **de dónde**: si del
-efectivo del cajón, de una transferencia mal capturada o de una terminal que no
-conciliaba. Para responder eso había que abrir el panel, buscar el cierre y
-entrar a su detalle — justo lo que un reporte enviado a contabilidad y dirección
-debería evitar.
+El botón **Probar Conexión** se congelaba 60 segundos y volvía sin decir nada.
+No era lentitud del proveedor: era un puerto de salida bloqueado por el VPS más
+un cliente sin límite de tiempo. Esta sección reemplaza el camino único de envío
+por un **Patrón Strategy**, añade **Resend por API HTTP (puerto 443)** como
+proveedor de primera clase y convierte cualquier fallo en un **HTTP 422 con el
+error técnico real** en el cuerpo.
 
-Esta sección lleva al correo la misma tabla que el diálogo **Detalle del
-Arqueo** ya mostraba, para que el mensaje sea auditable por sí solo.
+### 59.1 El diagnóstico: por qué se congelaba exactamente 60 segundos
 
-### 59.1 El dato ya existía: `payment_breakdown`
+Un puerto de submission bloqueado en un VPS (DigitalOcean, AWS, GCP, Azure)
+**no rechaza: descarta**. Los paquetes se tiran en silencio, así que el
+handshake TCP nunca se completa y el socket se queda esperando hasta agotar su
+propio tiempo. Ese tiempo, cuando nadie lo declara, sale del `php.ini`:
 
-`CashClosingService::close()` guarda, en cada fila del ledger, el desglose
-completo del arqueo:
-
-```php
-$breakdown[] = [
-    'payment_method_id' => $pm->id,
-    'name' => $pm->name,
-    'slug' => $pm->slug,
-    'expected' => $expected,
-    'declared' => $declared,
-    'difference' => round($declared - $expected, 2),
-];
+```
+default_socket_timeout = 60
 ```
 
-Es una columna `jsonb` con cast `array`, inmutable como el resto del registro, y
-es **la misma fuente** que consumen el diálogo de detalle
-(`CashRegisterClosingsPage.jsx`) y el PDF del arqueo
-(`pdf/cash-register-closing.blade.php`). No hubo que tocar el controlador ni la
-consulta: `sendEmail()` ya carga los modelos completos, así que el desglose
-viajaba en el correo sin que nadie lo imprimiera.
+Symfony lo confirma en su propio código: `SocketStream::getTimeout()` devuelve
+`$this->timeout ?? (float) ini_get('default_socket_timeout')`, y ese valor es el
+cuarto argumento de `stream_socket_client()` — el límite del intento de
+conexión. Nadie declaraba `timeout` en el transporte, luego el número efectivo
+era 60, la petición HTTP se quedaba colgada, el navegador se rendía primero y el
+administrador se quedaba sin mensaje de error.
 
-La plantilla reproduce las cuatro columnas de la vista de detalles — Método de
-Pago, Esperado, Declarado, Diferencia — en un panel anidado bajo el cierre al
-que pertenecen.
+A eso se sumaba el problema de fondo: **los tres proveedores compartían un solo
+camino de envío**. Añadir uno significaba editar el método del que dependían los
+demás, y todos heredaban la misma dependencia de un puerto SMTP abierto.
 
-### 59.2 El subtotal no es decoración: el desglose **no** suma el total del cierre
+### 59.2 La arquitectura: una clase por proveedor, elegida por configuración
 
-Esta es la parte que obligó a diseñar de más. Las dos cifras miden cosas
-distintas:
+```
+  EmailConfiguration.provider  (columna en base de datos)
+              │
+              ▼
+      MailStrategyFactory ──lee──► config('mailing.providers.*.strategy')
+              │
+              ├── SmtpMailStrategy      → Symfony ESMTP (587 / 465 / 2525)
+              ├── SendGridMailStrategy  → extiende la anterior: smtp.sendgrid.net:2525, usuario "apikey"
+              └── ResendMailStrategy    → POST https://api.resend.com/emails (HTTPS/443)
+```
 
-| Cifra | Qué contiene |
-| :--- | :--- |
-| `expected_amount` del cierre | Fondo de apertura **+** Ventas **−** Caja Chica |
-| Suma de `expected` del desglose | **Solo** las ventas, agrupadas por método |
+El contrato es `App\Services\Mail\Contracts\MailStrategyInterface`:
 
-En la vista de detalles la discrepancia no se nota porque las tarjetas de
-totales están separadas de la tabla. Apiladas una debajo de otra en un correo,
-tres importes que no cuadran con el total de arriba se leen como un **error de
-aritmética** — y este documento se archiva como evidencia contable.
+| Método | Devuelve | Para qué existe |
+| :--- | :--- | :--- |
+| `provider()` | `string` | Clave del proveedor que atiende |
+| `send(Mailable $mail, array $config)` | `bool` | Entrega real desde el worker; **sí lanza** excepción para que la cola reintente |
+| `testConnection(array $config)` | `array` | Diagnóstico síncrono; **nunca lanza**: el fallo es un valor de retorno |
+| `describeTransport(array $config)` | `array` | Ruta resuelta **sin marcar**, de solo lectura (la usa `app:debug-mail-config`) |
 
-Por eso el desglose cierra con una fila **Subtotal ventas** y, cuando ese
-subtotal difiere del esperado del cierre, una nota declara el importe y su
-origen:
+Tres decisiones que sostienen el diseño:
 
-> Diferencia de +$500.00 entre el subtotal de ventas y el esperado del cierre:
-> corresponde al fondo de apertura y a la caja chica del turno, que no se
-> desglosan por método de pago.
+1. **Las estrategias reciben un `array`, no el modelo.** La prueba de conexión
+   valida credenciales que todavía no existen en la base, así que ninguna
+   estrategia puede asumir que hay fila. `EmailConfiguration::toStrategyConfig()`
+   produce ese arreglo (proceso, proveedor, credencial, remitente, asunto y
+   destinatarios ya depurados).
+2. **`testConnection()` no lanza, retorna.** Es lo que permite al controlador
+   responder 422 con la causa en el cuerpo en lugar de un 500 sin ella.
+3. **El mapa vive en `config/mailing.php`.** Agregar un proveedor es un bloque de
+   configuración más una clase: ni el job, ni el controlador, ni la fábrica se
+   tocan. El catálogo del panel se cruza contra las estrategias realmente
+   registradas, así que el desplegable **no puede** ofrecer un proveedor que el
+   sistema no sepa enviar.
 
-La nota solo aparece cuando `abs($unallocated) >= 0.01`, así que un cierre sin
-fondo ni caja chica no arrastra una explicación que no necesita.
+`SendGridMailStrategy` **extiende** a `SmtpMailStrategy` en lugar de duplicarla:
+el protocolo es el mismo, lo específico es la política (puerto alterno 2525,
+usuario literal `apikey`, avisos cuando la credencial no empieza con `SG.`). El
+día que SendGrid deba migrar a su API HTTP, el cambio queda confinado a esa
+clase.
 
-**Cierres sin desglose.** Las filas anteriores a la columna, o cualquier cierre
-con `payment_breakdown` nulo, imprimen «Este cierre no registró desglose por
-método de pago» en lugar de una tabla vacía con encabezados.
+`DynamicMailerFactory` sigue siendo el constructor de transportes **de la
+familia SMTP** y ahora expone `preview()`, la mitad de solo lectura que resuelve
+el mismo transporte sin ejecutar `Config::set()`. `register()` se implementó
+encima de `preview()`, de modo que la ruta que se reporta y la que se marca no
+pueden divergir. Además rechaza explícitamente a un proveedor `driver => http`:
+Resend no declara host ni puerto, y un merge silencioso lo habría interpretado
+como "nada que sobrescribir", enviando su correo por el relay SMTP del `.env`
+con la credencial equivocada.
 
-### 59.3 Móvil: por debajo de 520px las tablas dejan de ser tablas
+### 59.3 Resend: integración nativa por API HTTP, sin abrir un solo puerto SMTP
 
-Cuatro columnas de dinero no caben en un teléfono de 320px, y el scroll
-horizontal dentro de un cliente de correo es peor que el apilado. El media
-query convierte cada celda en una línea propia, precedida por la etiqueta que
-llevaba su encabezado de columna.
+`ResendMailStrategy` renderiza el Mailable a HTML y lo publica como JSON:
 
-Tres decisiones sostienen que eso funcione en clientes reales:
+```php
+Http::withToken($apiKey)
+    ->acceptJson()->asJson()
+    ->connectTimeout(config('mailing.timeouts.connect'))  // handshake TCP/TLS
+    ->timeout($timeout)                                   // intercambio completo
+    ->post('https://api.resend.com/emails', [
+        'from' => 'Cronos POS <no-reply@…>',
+        'to' => [...],
+        'subject' => …,
+        'html' => $mail->render(),
+    ]);
+```
 
-- **Las etiquetas viajan ocultas en línea.** `<span class="lbl"
-  style="display:none">Esperado: </span>` en el marcado, reveladas desde el
-  media query con `!important`. Un cliente que descarte el bloque `<style>`
-  —cosa que varios hacen— nunca las muestra duplicando el encabezado; el estilo
-  en línea no se puede quitar.
-- **Las tablas también pasan a `display:block`, no solo sus filas.** Una
-  `<table>` cuyas celdas son todas bloque **sigue** ejecutando el algoritmo de
-  tablas y se dimensiona a su contenido más ancho: apilar `tr` y `td` sin
-  apilar la tabla no sujeta el viewport angosto.
-- **`width: auto`, nunca `100%`.** Estos elementos llevan padding horizontal y
-  el modelo de caja por omisión lo suma **fuera** del ancho declarado, así que
-  cada nivel anidado con `100%` empujaría 24px más allá de su contenedor; como
-  `.card` recorta con `overflow:hidden`, el excedente se corta en vez de
-  desplazarse. Se declara además `box-sizing: border-box` para los clientes que
-  ignoren `width:auto`.
+- **Puerto 443, el mismo que ya usa toda la aplicación.** Ningún proveedor de
+  nube lo filtra, así que elegir Resend **elimina** la clase entera de fallos por
+  firewall de salida en lugar de esquivarla.
+- **El cuerpo es idéntico al que habría entregado SMTP**: se renderiza el mismo
+  Mailable, así que cambiar de proveedor no cambia lo que ve el destinatario.
+- **El remitente y el asunto se leen del Mailable** (`->from()` / `->subject()`
+  que aplica el job) antes de caer al asunto guardado, de modo que un correo por
+  Resend conserva la redacción configurada en la base de datos.
+- **Un 4xx no es una excepción de PHP**, es un objeto `Response`. Se normaliza a
+  `App\Exceptions\Mail\MailTransportException`, que extrae el mensaje del cuerpo
+  (`message`, `error.message`, o el cuerpo crudo), el `statusCode` y el nombre
+  del error del proveedor. Así "API key inválida" y "socket agotado" viajan por
+  la misma maquinaria de diagnóstico.
 
-El zebra pasó de `:nth-child` a una clase emitida por fila desde Blade
-(`$loop->iteration % 2`), por dos razones: cada cierre ocupa ahora **dos** filas
-—su resumen y su desglose— y el motor de Word que usa Outlook de escritorio no
-implementa `:nth-child`.
+### 59.4 Mitigación de timeouts: dos cotas en SMTP, dos en HTTP
 
-Los clientes que ignoran media queries (Outlook de escritorio, parte del
-webmail) conservan la tabla, que es el render correcto para su viewport. Se
-agregó también el `<meta name="viewport">`, que la plantilla no tenía.
+`config('mailing.timeouts')` es el presupuesto de red de todo el módulo:
 
-### 59.4 Vista previa local y verificación
+| Fase | Segundos (defecto) | Variable | Aplica a |
+| :--- | :--- | :--- | :--- |
+| `test` | 8 | `MAIL_TEST_TIMEOUT` | Prueba síncrona: hay un humano mirando un spinner |
+| `send` | 30 | `MAIL_SEND_TIMEOUT` | Envío desde el worker: nadie espera y hay reintentos con backoff |
+| `connect` | 5 | `MAIL_CONNECT_TIMEOUT` | Handshake TCP/TLS de las estrategias HTTP |
 
-Nueva ruta, solo en `local`, dentro del grupo `mail-preview` existente:
+**En SMTP se aplican dos cotas, porque cada una tapa lo que la otra no alcanza:**
 
-| Ruta | Qué muestra |
-| :--- | :--- |
-| `/mail-preview/cash-register-closings-report` | El reporte multi-cierre con el desglose |
+1. `timeout` en la configuración del mailer. Laravel lo reenvía a
+   `SocketStream::setTimeout()`, que es lo que usa el intento de conexión. Se
+   **acota, no se impone**: si el despliegue ya configuró 3 segundos, sabe algo
+   de su red que este valor por omisión no sabe, y se respeta.
+2. `default_socket_timeout` alrededor del envío, restaurado en un bloque
+   `finally`. Cubre lo que la primera no alcanza: un transporte armado desde un
+   DSN `MAIL_URL` (donde `isset($config['timeout'])` nunca se cumple), una
+   negociación TLS que se atasca después de abrir el socket, y cualquier stream
+   que la librería abra por su cuenta. Se restaura siempre porque el valor es
+   global al proceso y PHP-FPM reutiliza el worker en la siguiente petición.
 
-Usa cierres reales de la base si los hay; si no, cae a modelos **sin guardar**
-que cubren los tres renders que la plantilla debe sostener: un cierre exacto,
-uno con faltante y nota de conciliación, y uno sin desglose. El operador se
-inyecta con `setRelation()` porque el modelo nunca se persiste y la llave
-foránea no tiene contra qué resolverse.
+**En HTTP** el par es `connect_timeout` + `timeout` de cURL. El primero es el
+que dispara contra un puerto filtrado, antes de intercambiar un solo byte.
 
-> **Nota de verificación.** La plantilla se revisó renderizándola y
-> fotografiándola con Chromium a 760px, 360px y 320px antes de subirla.
-> Advertencia para quien repita el ejercicio: Chromium en modo headless impone
-> un viewport **mínimo de 500px**, así que un `--window-size=390` produce una
-> captura de 390px de una página maquetada a 500px y el contenido aparece
-> cortado a la derecha sin que el CSS tenga nada malo. Las tomas angostas se
-> hacen dentro de un `<iframe>` de ancho fijo, que sí crea su propio viewport.
+Resultado medible: el peor caso pasó de **60 segundos y silencio** a **≤ 8
+segundos y un mensaje accionable**.
+
+### 59.5 Traza de errores reales: el 422 que reemplazó al cuelgue
+
+`POST /api/admin/email-configurations/test-connection` ya no puede terminar en
+un 500 ni en un timeout del navegador. La estrategia captura, el controlador
+traduce:
+
+```jsonc
+// HTTP 422
+{
+  "status": "error",
+  "message": "Resend respondio HTTP 403: The cronos.pos domain is not verified",
+  "error":   "Resend respondio HTTP 403: The cronos.pos domain is not verified",
+  "error_code": "ERR_MAIL_TEST_FAILED",
+  "error_class": "MailTransportException",
+  "data": {
+    "provider": "resend",
+    "strategy": "ResendMailStrategy",
+    "transport": { "channel": "https", "host": "api.resend.com", "port": 443, "timeout": 8 },
+    "elapsed_ms": 412,
+    "hints": ["Resend responde 403 cuando el dominio del remitente no esta verificado…"],
+    "error": {
+      "message": "…",            // verbatim, sin parafrasear
+      "class": "MailTransportException",
+      "status_code": 403,
+      "provider_code": "validation_error",
+      "trace": ["ResendMailStrategy.php:212 (origen)", "…"],
+      "previous": { "message": "…", "class": "…" }
+    }
+  }
+}
+```
+
+**422 y no 500** es deliberado: la petición estaba bien formada y la aplicación
+hizo exactamente lo que se le pidió; lo que falló es la configuración bajo
+prueba, que es un hecho sobre el payload. Además mantiene una API Key mal
+tecleada fuera del alerting 5xx de la plataforma. *(Cambio de contrato respecto
+a la sección 57, que respondía 400.)*
+
+Qué **nunca** viaja: la credencial. `MailDiagnostic` construye la traza a partir
+de archivo, línea, clase y método — jamás de los argumentos, que es donde vive
+la API Key — y el resumen del transporte se arma con una lista blanca de claves
+(`transport`, `host`, `port`, `encryption`, `timeout`), así que `password` no
+puede colarse ni en la respuesta ni en la bitácora. Hay una prueba que serializa
+el diagnóstico completo y afirma que la clave no aparece.
+
+Los `hints` son la novedad práctica: no son errores, son las tres confusiones
+caras del módulo — el puerto 587 bloqueado en VPS, una contraseña donde SendGrid
+espera una `SG.`, un dominio sin verificar en Resend.
+
+### 59.6 Catálogo, panel y comando de diagnóstico
+
+- **Base de datos**: `email_configurations.provider` es un `string(40)` sin
+  restricción de valores, así que `'resend'` entra sin migración. El catálogo
+  formal vive en `EmailConfiguration::PROVIDERS`, ahora con constantes
+  (`PROVIDER_SMTP`, `PROVIDER_SENDGRID`, `PROVIDER_RESEND`) y etiquetas que
+  nombran el puerto de salida: *SendGrid (SMTP 2525)*, *Resend (API HTTPS 443)*,
+  *SMTP Generico*.
+- **`GET /catalogs`** cruza ese catálogo contra las estrategias registradas y
+  añade `channel` (`smtp` | `https`) a cada opción: elegir proveedor es, en la
+  práctica, elegir qué puerto tiene que dejar pasar el firewall.
+- **Panel**: el desplegable se alimenta del catálogo (Resend aparece solo), el
+  placeholder y la nota de ayuda cambian por proveedor (`SG.…` / `re_…` /
+  contraseña del buzón), y el toast de error muestra clase de excepción, ruta
+  (`HTTPS api.resend.com:443`), milisegundos, el mensaje verbatim y los avisos.
+- **`php artisan app:debug-mail-config`** imprime ahora la estrategia, la ruta
+  (`HTTPS → api.resend.com:443`) y el presupuesto de timeouts, y lo hace sin
+  mutar nada gracias a `describeTransport()` — un comando de diagnóstico que
+  modifica lo que describe es un comando que miente.
+
+### 59.7 Pruebas
+
+`tests/Feature/Mailing/MailStrategyTest.php` — 15 pruebas **sin PostgreSQL**
+(las filas viajan en memoria y la única tabla que toca el Mailable de
+diagnóstico se crea en SQLite):
+
+- La fábrica devuelve una clase distinta por proveedor y rechaza uno sin
+  estrategia (`ERR_MAIL_STRATEGY_UNSUPPORTED`).
+- El catálogo visible nunca excede las estrategias registradas.
+- Resend sale por `https://api.resend.com/emails` con `Bearer`, remitente
+  `Nombre <correo>` y **sin** crear `mail.mailers.dynamic-jobs`.
+- Un 401 de la API vuelve como valor de retorno con mensaje, `status_code`,
+  `provider_code` y traza — sin lanzar.
+- Un `ConnectionException` de cURL ("Operation timed out after 5001 ms") viaja
+  verbatim y el diagnóstico tarda mucho menos de 60 segundos.
+- Sin credencial o sin destinatarios, la petición **no** sale a la red.
+- El diagnóstico serializado no contiene la API Key.
+- La estrategia SMTP baja el `timeout` del transporte al presupuesto de prueba y
+  **no** sube uno ya configurado más bajo.
+- `describeTransport()` no muta `config('mail.mailers')`.
+- `DynamicMailerFactory` rechaza un proveedor HTTP (`ERR_MAIL_PROVIDER_NOT_SMTP`).
+
+`MailConnectionDiagnosticTest.php` — el fallo de transporte ahora se afirma
+contra **422** con `error`, `data.error.trace` y la ruta dialogada; se añaden la
+prueba de Resend por HTTPS/443, la del 403 con su hint y la del catálogo con los
+tres proveedores. `DynamicMailingTest.php` incorpora la entrega del job por
+Resend: `Mail::assertNothingOutgoing()` más la aserción de que el HTML, el
+asunto y el remitente de la base de datos viajaron en el JSON.
+
+**43 pruebas de mailing en verde** (`--filter Mailing`).
+
+### Archivos Creados
+- `backend/app/Services/Mail/Contracts/MailStrategyInterface.php` — contrato del patrón
+- `backend/app/Services/Mail/Strategies/SmtpMailStrategy.php` — SMTP genérico y base de la familia
+- `backend/app/Services/Mail/Strategies/SendGridMailStrategy.php` — relay 2525, usuario `apikey`
+- `backend/app/Services/Mail/Strategies/ResendMailStrategy.php` — API HTTP nativa, HTTPS/443
+- `backend/app/Services/Mail/MailStrategyFactory.php` — resolución dinámica por configuración
+- `backend/app/Services/Mail/Support/MailDiagnostic.php` — resultado normalizado, traza sin credenciales
+- `backend/app/Exceptions/Mail/MailTransportException.php` — normaliza un 4xx HTTP a excepción
+- `backend/tests/Feature/Mailing/MailStrategyTest.php`
 
 ### Archivos Modificados
-- `backend/resources/views/mail/cash-register-closing.blade.php` — panel de desglose por cierre, fila de subtotal, nota de conciliación, apilado móvil y `meta viewport`
-- `backend/routes/web.php` — vista previa local del reporte multi-cierre con fixtures de los tres casos
+- `backend/config/mailing.php` — presupuesto `timeouts`, claves `strategy` / `driver` y proveedor `resend`
+- `backend/app/Models/EmailConfiguration.php` — constantes de proveedor, `resend` en el catálogo y `toStrategyConfig()`
+- `backend/app/Services/Mail/DynamicMailerFactory.php` — `preview()` de solo lectura, `register()` construido encima y rechazo de proveedores HTTP
+- `backend/app/Http/Controllers/Admin/EmailConfigurationController.php` — despacho por estrategia, respuesta 422 con traza y catálogo con `channel`
+- `backend/app/Jobs/SendConfiguredProcessMail.php` — entrega por estrategia y bitácora con la ruta resuelta
+- `backend/app/Console/Commands/DebugMailConfig.php` — sección de timeouts y tabla con estrategia y ruta, sin efectos secundarios
+- `frontend/src/components/settings/EmailNotificationsPanel.jsx` — ayuda por proveedor y toast de error con clase, ruta, tiempo y avisos
+- `backend/tests/Feature/Mailing/MailConnectionDiagnosticTest.php`, `DynamicMailingTest.php`
+
+---
+
+## 60. UNIFICACIÓN DEL ENVÍO MANUAL DE CIERRES DE CAJA CON EL MÓDULO CENTRALIZADO DE CORREO [🟢 COMPLETADO Y OPERATIVO]
+
+El botón **Enviar por Correo** del histórico de Cierres de Caja era la última
+isla del subsistema de correo: armaba su propio mensaje con la fachada `Mail`,
+salía por el bloque `MAIL_*` del `.env` y no sabía nada de
+`email_configurations`. En la práctica el mismo reporte podía llegar con dos
+remitentes distintos según quién lo enviara — el cierre automático con la
+identidad oficial, el envío manual con lo que el `.env` tuviera puesto — y
+fallaba por un camino que ni el diagnóstico síncrono ni la telemetría del
+worker podían ver. Esta sección lo integra al proceso **`sales` / Ventas y
+Cierres** y le añade dos comportamientos que la operación pedía: precarga de
+destinatarios y sobrescritura puntual.
+
+### 60.1 Validación previa: la modal no abre sobre un buzón que no puede enviar
+
+El clic ya no abre la modal directamente. Primero consulta
+`GET /api/cash-registers/closings/email-configuration`, que resuelve la
+configuración activa del proceso `sales`:
+
+- **Sin fila activa (o con la fila desactivada)** ⇒ **HTTP 422** con
+  `code: ERR_MAIL_CONFIG_MISSING` y el mensaje *"No existe una configuración de
+  correo activa para este proceso. Por favor, da de alta la configuración en el
+  panel de Ajustes."* El frontend lo intercepta y pinta un **toast de
+  advertencia** (no de error) que nombra dónde se resuelve; la modal no llega a
+  abrirse.
+- **Con fila activa** ⇒ 200 con el proceso, el remitente y los destinatarios ya
+  depurados.
+
+**422 y no 500**, igual que el diagnóstico de conexión de la sección 59.5: la
+petición estaba bien formada y la aplicación hizo lo que se le pidió; lo que
+falta es una fila que un administrador tiene que crear. Mantenerlo fuera de la
+banda 5xx significa que una instalación que nunca configuró correo no despierta
+al alerting.
+
+La credencial **no** viaja en esa respuesta: el endpoint expone únicamente el
+enrutamiento que un operador puede ver y editar para un envío. Hay una prueba
+que afirma que la API Key no aparece en el cuerpo.
+
+El mismo requisito se vuelve a exigir en el `POST /closings/send-email`. No es
+redundancia defensiva por gusto: la precarga y el envío son dos peticiones
+distintas y la configuración puede desactivarse entre ambas. Encolar un reporte
+financiero hacia la nada y responder 200 es peor que negarse.
+
+`App\Exceptions\Mail\MailConfigurationMissingException` centraliza esa negativa
+—código, mensaje y `render()` a 422— para que el texto sea idéntico en cualquier
+punto donde se surta, y `EmailConfiguration::requireActiveFor()` es la variante
+de `activeFor()` para los llamadores que no pueden continuar sin fila.
+
+**Por qué el job sigue callado y el controlador no.** `SendConfiguredProcessMail`
+termina en silencio cuando no hay configuración: nadie mira un cierre automático
+de las 21:00 y "las notificaciones están apagadas" es un estado válido ahí. Un
+humano que acaba de pulsar un botón sí está mirando, así que la misma condición
+tiene que volver dentro de la petición en lugar de morir en una bitácora del
+worker que el operador no puede abrir.
+
+### 60.2 Precarga inteligente de destinatarios
+
+Con configuración activa, la modal abre con el `Chips` de destinatarios ya
+poblado con `target_emails` de la fila (depurados por `deliverableEmails()`:
+recortados, sin duplicados y sin direcciones inválidas). El encabezado de la
+modal muestra qué configuración se está usando y con qué remitente sale
+(`no-reply@pos-app.tech` en producción), de modo que el operador ve el buzón
+oficial antes de enviar, no después.
+
+### 60.3 Modo ad-hoc: sobrescribir sin tocar lo guardado
+
+El operador puede borrar los correos precargados y escribir otros — uno o
+varios — para mandar el reporte a un involucrado puntual o a un auditor externo.
+En cuanto la lista deja de coincidir con la configurada, la modal se marca con
+la etiqueta **ENVÍO PUNTUAL** y ofrece *"Restaurar los configurados"*.
+
+La sobrescritura es **por mensaje y nunca escribe en la base**:
+`SendConfiguredProcessMail` acepta un `$recipientsOverride` que reemplaza
+**solo el destino**. Proveedor, credencial, remitente y asunto siguen saliendo
+de la fila, así que un reporte ad-hoc es indistinguible de uno programado para
+quien lo recibe. La bitácora del envío marca `ad_hoc: true|false`, que es lo que
+permite auditar después a dónde terminó yendo un reporte financiero.
+
+Dos decisiones sobre esa lista:
+
+1. **La omisión y la lista vacía no son lo mismo que una lista puntual.** El
+   frontend manda `emails` **solo** cuando el operador los cambió; sin ese
+   campo, el job resuelve los destinatarios guardados dentro del worker y honra
+   un correo agregado en Ajustes mientras el mensaje esperaba en Redis. Una
+   lista ad-hoc, en cambio, viaja congelada con el job: es una decisión que el
+   operador tomó sobre *ese* reporte.
+2. **Una lista puntual sin correos válidos no cae en la lista configurada.**
+   Ensanchar en silencio un envío puntual a toda la distribución de finanzas
+   sería la peor recuperación posible ante un dedazo, así que el job no envía
+   nada y deja un `Log::warning`.
+
+### 60.4 Enrutamiento por el patrón Strategy
+
+El envío manual dejó de usar `Mail::to()->queue()`. Ahora despacha
+`SendConfiguredProcessMail` — el mismo job del cierre automático — que pide su
+estrategia a `MailStrategyFactory` según `email_configurations.provider`. Con
+`resend` el reporte sale por `https://api.resend.com/emails` (HTTPS/443) con la
+credencial y el remitente oficial de la fila, sin abrir un solo socket SMTP.
+Cambiar el proveedor del envío manual vuelve a ser lo que ya era para el resto
+del sistema: una columna en la base de datos.
+
+`CashRegisterClosingMail` se alineó al contrato del job: su `envelope()` ahora
+devuelve `$this->subject ?: self::DEFAULT_SUBJECT`. La hidratación del Envelope
+corre *después* de que el job aplica el asunto configurado, y sin ese cambio el
+asunto quemado en la clase habría pisado al de la base — el mismo detalle
+documentado en la sección 48.4 para el reporte del cierre automático.
+
+### 60.5 Contrato de la API
+
+| Método | Ruta | Descripción |
+| :--- | :--- | :--- |
+| GET | /api/cash-registers/closings/email-configuration | Precarga: destinatarios y remitente del proceso `sales`, o 422 si no hay configuración activa |
+| POST | /api/cash-registers/closings/send-email | Encola el reporte. `emails` es **opcional**: ausente ⇒ destinatarios configurados; presente ⇒ sobrescritura ad-hoc (máx. 20) |
+
+`SendCashRegisterClosingEmailRequest` pasó `emails` de `required` a `nullable`:
+omitirlo dejó de ser un error de validación y significa "manda a quien diga la
+configuración", que es el comportamiento por defecto de la modal.
+
+### 60.6 Pruebas
+
+`tests/Feature/Mailing/ManualCashClosingMailTest.php` — 10 pruebas: la precarga
+responde 422 sin configuración y también con la fila desactivada; devuelve los
+destinatarios configurados sin filtrar la API Key; el envío se rechaza sin
+configuración y no encola nada; un envío por defecto encola **sin** override
+(`recipientsOverride === null`); una lista escrita a mano viaja como override y
+`target_emails` sobrevive intacta en la base; el job entrega al destinatario
+puntual con el remitente oficial y el asunto de la fila; una lista puntual sin
+correos válidos no envía nada ni cae en la lista configurada; una configuración
+activa sin destinatarios se rechaza antes de encolar; y un correo mal formado se
+detiene en validación.
+
+**53 pruebas de mailing en verde** (`--filter Mailing`).
+
+### Archivos Creados
+- `backend/app/Exceptions/Mail/MailConfigurationMissingException.php` — negativa 422 con `ERR_MAIL_CONFIG_MISSING`
+- `backend/tests/Feature/Mailing/ManualCashClosingMailTest.php`
+
+### Archivos Modificados
+- `backend/app/Http/Controllers/Finance/CashRegisterClosingController.php` — endpoint de precarga y envío por el módulo centralizado
+- `backend/app/Http/Requests/CashRegisterClosing/SendCashRegisterClosingEmailRequest.php` — `emails` opcional y `adHocRecipients()`
+- `backend/app/Jobs/SendConfiguredProcessMail.php` — `$recipientsOverride` y bitácora con `ad_hoc`
+- `backend/app/Mail/CashRegisterClosingMail.php` — respeta el asunto configurado
+- `backend/app/Models/EmailConfiguration.php` — constantes `PROCESS_SALES` / `PROCESS_INVENTORY` y `requireActiveFor()`
+- `backend/routes/api.php` — ruta de precarga del envío manual
+- `frontend/src/pages/admin/CashRegisterClosingsPage.jsx` — validación previa, precarga, etiqueta de envío puntual y restauración de configurados
+
+## 61. REFACTORIZACIÓN RESPONSIVA DEL CORREO DE CIERRES DE CAJA [🟢 COMPLETADO Y OPERATIVO]
+
+El reporte que sale por el botón **Enviar por Correo** (sección 60) llegaba
+correcto en escritorio pero se rompía en la app de Gmail de Android/iOS, que es
+donde el encargado lo abre en la práctica. Dos defectos concretos:
+
+1. Las tres tarjetas de métricas —**Total Cierres**, **Con Faltante**, **Con
+   Sobrante**— seguían peleándose por una sola fila de 320 px y quedaban
+   ilegibles.
+2. La tabla **Detalle de Cierres** se desbordaba horizontalmente y recortaba
+   justo las columnas que dan sentido al reporte: **Declarado** y
+   **Diferencia**.
+
+La corrección vive completa en `backend/resources/views/mail/cash-register-closing.blade.php`.
+
+### 61.1 Por qué el maquetado anterior no podía funcionar
+
+La rejilla de métricas usaba `div`s con `display: table` / `display: table-cell`
+y un `.summary-cell + .summary-cell { margin-left: 8px }` que **nunca se
+aplicó**: los márgenes no existen en una celda de tabla. El ancho fijo de
+`33.3%` no tenía ningún punto de ruptura, así que en 320 px cada tarjeta
+recibía ~100 px para un número de 22 px más una etiqueta en mayúsculas.
+
+La tabla de detalle no tenía contenedor ni `word-break`, y con seis columnas de
+contenido monetario el motor de renderizado la ensanchaba más allá del viewport.
+
+### 61.2 Media query y estilos base
+
+Se añadió un bloque `<style>` completo en el `<head>` con un único punto de
+ruptura, `@media only screen and (max-width: 600px)`, más tres piezas de
+higiene que faltaban:
+
+- `<meta name="viewport" content="width=device-width, initial-scale=1">` — sin
+  esto ningún media query se evalúa en móvil.
+- `-webkit-text-size-adjust: 100%` en el `body`, para que iOS Mail y Gmail iOS
+  no reescalen la tipografía por su cuenta.
+- `background-color: #4f46e5` **antes** del `linear-gradient` del encabezado: en
+  los clientes que descartan gradientes el texto blanco seguía cayendo sobre
+  blanco.
+
+### 61.3 Tarjetas de métricas: apiladas al 100 %
+
+Los `div`s se sustituyeron por una `<table role="presentation">` real con tres
+celdas al 32 % y dos celdas separadoras (`.summary-gutter`) al 2 % — el
+espaciado que el `margin-left` prometía y no entregaba. En móvil, la tabla, el
+`tbody`, el `tr` y las celdas pasan a `display: block !important; width: 100%
+!important; box-sizing: border-box !important;`, las separadoras desaparecen y
+cada tarjeta gana `margin-bottom: 10px`. El número sube a 26 px y la etiqueta a
+11 px, porque una vez que hay ancho de sobra no hay razón para conservar la
+tipografía comprimida.
+
+### 61.4 Tabla de detalle: tarjetas apiladas con respaldo de scroll
+
+Se implementó la **Opción B (tarjetas apiladas)** como comportamiento principal
+y la **Opción A (scroll horizontal)** como red de seguridad. No es redundancia:
+la app de Gmail elimina el `<style>` del `<head>` cuando la cuenta configurada
+**no** es de Google, y en ese escenario el media query nunca llega. El envoltorio
+`.table-scroll` (`overflow-x: auto; -webkit-overflow-scrolling: touch;
+max-width: 100%`) garantiza que en ese cliente la tabla se pueda desplazar en
+lugar de recortarse; cuando el media query sí se aplica, ese mismo contenedor
+vuelve a `overflow-x: visible` porque ya no hay nada que desbordar.
+
+El apilado funciona así: `<thead class="detail-head">` se oculta, cada
+`<tr class="detail-row">` se vuelve una tarjeta con borde y radio, y cada
+`<td class="detail-cell">` pasa a bloque con el valor alineado a la derecha. La
+celda de Fecha/Hora lleva `.detail-cell-primary` y actúa como cabecera de la
+tarjeta (fondo gris, alineada a la izquierda); la de Estado lleva
+`.detail-cell-last` para quitarle el borde inferior.
+
+**Sobre el etiquetado de columnas.** El patrón habitual en la web es
+`td::before { content: attr(data-label) }`, y aquí **no se usó**: Gmail no
+soporta pseudo-elementos, así que la etiqueta habría desaparecido justo en el
+cliente que motivó el trabajo. En su lugar cada celda imprime un
+`<span class="stack-label">` que está en `display: none` por defecto y solo se
+muestra —flotado a la izquierda— dentro del media query. Es marcado real, lo
+entiende cualquier cliente que soporte media queries, y en los que no lo hacen
+permanece oculto sin ensuciar la tabla de escritorio.
+
+Complementos: `word-break: break-word` y `overflow-wrap: break-word` en todas
+las celdas, y el padding subió de `8px 10px` a `10px` en escritorio y
+`10px 14px` en móvil. El zebra striping (`tr:nth-child(even)`) se neutraliza al
+apilar, porque con tarjetas delimitadas por borde deja de aportar y solo
+introduce fondos grises inconsistentes dentro de una misma tarjeta.
+
+### 61.5 Compatibilidad de clientes
+
+Ni Flexbox ni CSS Grid entran en la estructura: todo el layout se sostiene sobre
+tablas HTML con anchos en porcentaje y atributos `width` en las celdas, que es
+lo único que el motor Word de Outlook interpreta. Outlook de escritorio ignora
+los media queries, así que recibe la versión de escritorio íntegra —tres
+columnas y tabla completa—, que es exactamente el resultado correcto en ese
+cliente. Se añadieron `mso-table-lspace` / `mso-table-rspace` a `0` para
+eliminar el espaciado fantasma que Word inyecta alrededor de cada tabla.
+
+### Archivos Modificados
+- `backend/resources/views/mail/cash-register-closing.blade.php` — media query de 600 px, métricas en tabla apilable, detalle en tarjetas apiladas con respaldo de scroll horizontal y `word-break` en celdas
