@@ -1,12 +1,15 @@
 <?php
 
+use App\Mail\CashRegisterClosingMail;
 use App\Mail\CashRegisterClosingReportMail;
 use App\Mail\LowStockAlertMail;
 use App\Mail\PettyCashWithdrawalMail;
 use App\Mail\UserPasswordResetMail;
 use App\Mail\UserWelcomeMail;
+use App\Models\CashRegisterClosing;
 use App\Models\PettyCashTransaction;
 use App\Models\User;
+use Illuminate\Database\Eloquent\Collection as EloquentCollection;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/', function () {
@@ -77,6 +80,64 @@ if (app()->environment('local')) {
                 ],
                 isAutomated: true,
             );
+        });
+
+        /*
+         * Multi-closing report (the one with the per-method breakdown).
+         *
+         * It prefers real rows so the preview shows the shape production
+         * actually produces, and falls back to unsaved models when the local
+         * database has no closings yet. The fixture is deliberately uneven —
+         * one exact closing, one with a shortfall, one without a breakdown —
+         * because those are the three renderings the template has to hold,
+         * and the narrow viewport is where they break first.
+         */
+        Route::get('/cash-register-closings-report', function () {
+            $closings = CashRegisterClosing::with('closedByUser:id,name')
+                ->orderByDesc('created_at')
+                ->limit(5)
+                ->get();
+
+            if ($closings->isEmpty()) {
+                $operator = new User(['name' => 'Carlos Martinez', 'email' => 'carlos@cronos.pos']);
+
+                $make = function (float $expected, float $declared, ?array $breakdown) use ($operator) {
+                    $closing = new CashRegisterClosing([
+                        'expected_amount' => $expected,
+                        'declared_amount' => $declared,
+                        'difference_amount' => round($declared - $expected, 2),
+                        'payment_breakdown' => $breakdown,
+                    ]);
+
+                    $closing->created_at = now();
+                    // Set as a relation: the model is never saved, so the
+                    // foreign key has nothing to resolve against.
+                    $closing->setRelation('closedByUser', $operator);
+
+                    return $closing;
+                };
+
+                $breakdown = [
+                    ['payment_method_id' => '1', 'name' => 'Efectivo', 'expected' => 26203.00, 'declared' => 26203.00, 'difference' => 0.0],
+                    ['payment_method_id' => '2', 'name' => 'Tarjeta de Crédito/Débito', 'expected' => 2905.00, 'declared' => 2905.00, 'difference' => 0.0],
+                    ['payment_method_id' => '3', 'name' => 'Transferencia', 'expected' => 4547.00, 'declared' => 4547.00, 'difference' => 0.0],
+                ];
+
+                $withShortfall = $breakdown;
+                $withShortfall[0]['declared'] = 25_950.00;
+                $withShortfall[0]['difference'] = -253.00;
+
+                $closings = new EloquentCollection([
+                    $make(33655.00, 33655.00, $breakdown),
+                    $make(34155.00, 33902.00, $withShortfall),
+                    $make(12000.00, 12000.00, null),
+                ]);
+            }
+
+            return new CashRegisterClosingMail($closings, [
+                'date_from' => now()->subDays(7)->toDateString(),
+                'date_to' => now()->toDateString(),
+            ]);
         });
     });
 }
