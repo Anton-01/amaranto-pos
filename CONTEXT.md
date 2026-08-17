@@ -6825,3 +6825,100 @@ detiene en validación.
 - `backend/app/Models/EmailConfiguration.php` — constantes `PROCESS_SALES` / `PROCESS_INVENTORY` y `requireActiveFor()`
 - `backend/routes/api.php` — ruta de precarga del envío manual
 - `frontend/src/pages/admin/CashRegisterClosingsPage.jsx` — validación previa, precarga, etiqueta de envío puntual y restauración de configurados
+
+## 61. REFACTORIZACIÓN RESPONSIVA DEL CORREO DE CIERRES DE CAJA [🟢 COMPLETADO Y OPERATIVO]
+
+El reporte que sale por el botón **Enviar por Correo** (sección 60) llegaba
+correcto en escritorio pero se rompía en la app de Gmail de Android/iOS, que es
+donde el encargado lo abre en la práctica. Dos defectos concretos:
+
+1. Las tres tarjetas de métricas —**Total Cierres**, **Con Faltante**, **Con
+   Sobrante**— seguían peleándose por una sola fila de 320 px y quedaban
+   ilegibles.
+2. La tabla **Detalle de Cierres** se desbordaba horizontalmente y recortaba
+   justo las columnas que dan sentido al reporte: **Declarado** y
+   **Diferencia**.
+
+La corrección vive completa en `backend/resources/views/mail/cash-register-closing.blade.php`.
+
+### 61.1 Por qué el maquetado anterior no podía funcionar
+
+La rejilla de métricas usaba `div`s con `display: table` / `display: table-cell`
+y un `.summary-cell + .summary-cell { margin-left: 8px }` que **nunca se
+aplicó**: los márgenes no existen en una celda de tabla. El ancho fijo de
+`33.3%` no tenía ningún punto de ruptura, así que en 320 px cada tarjeta
+recibía ~100 px para un número de 22 px más una etiqueta en mayúsculas.
+
+La tabla de detalle no tenía contenedor ni `word-break`, y con seis columnas de
+contenido monetario el motor de renderizado la ensanchaba más allá del viewport.
+
+### 61.2 Media query y estilos base
+
+Se añadió un bloque `<style>` completo en el `<head>` con un único punto de
+ruptura, `@media only screen and (max-width: 600px)`, más tres piezas de
+higiene que faltaban:
+
+- `<meta name="viewport" content="width=device-width, initial-scale=1">` — sin
+  esto ningún media query se evalúa en móvil.
+- `-webkit-text-size-adjust: 100%` en el `body`, para que iOS Mail y Gmail iOS
+  no reescalen la tipografía por su cuenta.
+- `background-color: #4f46e5` **antes** del `linear-gradient` del encabezado: en
+  los clientes que descartan gradientes el texto blanco seguía cayendo sobre
+  blanco.
+
+### 61.3 Tarjetas de métricas: apiladas al 100 %
+
+Los `div`s se sustituyeron por una `<table role="presentation">` real con tres
+celdas al 32 % y dos celdas separadoras (`.summary-gutter`) al 2 % — el
+espaciado que el `margin-left` prometía y no entregaba. En móvil, la tabla, el
+`tbody`, el `tr` y las celdas pasan a `display: block !important; width: 100%
+!important; box-sizing: border-box !important;`, las separadoras desaparecen y
+cada tarjeta gana `margin-bottom: 10px`. El número sube a 26 px y la etiqueta a
+11 px, porque una vez que hay ancho de sobra no hay razón para conservar la
+tipografía comprimida.
+
+### 61.4 Tabla de detalle: tarjetas apiladas con respaldo de scroll
+
+Se implementó la **Opción B (tarjetas apiladas)** como comportamiento principal
+y la **Opción A (scroll horizontal)** como red de seguridad. No es redundancia:
+la app de Gmail elimina el `<style>` del `<head>` cuando la cuenta configurada
+**no** es de Google, y en ese escenario el media query nunca llega. El envoltorio
+`.table-scroll` (`overflow-x: auto; -webkit-overflow-scrolling: touch;
+max-width: 100%`) garantiza que en ese cliente la tabla se pueda desplazar en
+lugar de recortarse; cuando el media query sí se aplica, ese mismo contenedor
+vuelve a `overflow-x: visible` porque ya no hay nada que desbordar.
+
+El apilado funciona así: `<thead class="detail-head">` se oculta, cada
+`<tr class="detail-row">` se vuelve una tarjeta con borde y radio, y cada
+`<td class="detail-cell">` pasa a bloque con el valor alineado a la derecha. La
+celda de Fecha/Hora lleva `.detail-cell-primary` y actúa como cabecera de la
+tarjeta (fondo gris, alineada a la izquierda); la de Estado lleva
+`.detail-cell-last` para quitarle el borde inferior.
+
+**Sobre el etiquetado de columnas.** El patrón habitual en la web es
+`td::before { content: attr(data-label) }`, y aquí **no se usó**: Gmail no
+soporta pseudo-elementos, así que la etiqueta habría desaparecido justo en el
+cliente que motivó el trabajo. En su lugar cada celda imprime un
+`<span class="stack-label">` que está en `display: none` por defecto y solo se
+muestra —flotado a la izquierda— dentro del media query. Es marcado real, lo
+entiende cualquier cliente que soporte media queries, y en los que no lo hacen
+permanece oculto sin ensuciar la tabla de escritorio.
+
+Complementos: `word-break: break-word` y `overflow-wrap: break-word` en todas
+las celdas, y el padding subió de `8px 10px` a `10px` en escritorio y
+`10px 14px` en móvil. El zebra striping (`tr:nth-child(even)`) se neutraliza al
+apilar, porque con tarjetas delimitadas por borde deja de aportar y solo
+introduce fondos grises inconsistentes dentro de una misma tarjeta.
+
+### 61.5 Compatibilidad de clientes
+
+Ni Flexbox ni CSS Grid entran en la estructura: todo el layout se sostiene sobre
+tablas HTML con anchos en porcentaje y atributos `width` en las celdas, que es
+lo único que el motor Word de Outlook interpreta. Outlook de escritorio ignora
+los media queries, así que recibe la versión de escritorio íntegra —tres
+columnas y tabla completa—, que es exactamente el resultado correcto en ese
+cliente. Se añadieron `mso-table-lspace` / `mso-table-rspace` a `0` para
+eliminar el espaciado fantasma que Word inyecta alrededor de cada tabla.
+
+### Archivos Modificados
+- `backend/resources/views/mail/cash-register-closing.blade.php` — media query de 600 px, métricas en tabla apilable, detalle en tarjetas apiladas con respaldo de scroll horizontal y `word-break` en celdas
