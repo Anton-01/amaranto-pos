@@ -82,7 +82,7 @@ export default function WithdrawModal({ visible, onHide, onSuccess }) {
         content: { className: 'p-0' },
       }}
     >
-      <form onSubmit={handleSubmit} className="p-6">
+      <form onSubmit={handleSubmit} className="p-4 sm:p-6">
         <div className="mb-5 flex items-center gap-3">
           <div className="flex h-10 w-10 items-center justify-center rounded-full bg-amber-50">
             <svg className="h-5 w-5 text-amber-600" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
@@ -143,7 +143,7 @@ export default function WithdrawModal({ visible, onHide, onSuccess }) {
           Al confirmar, se generara un sello SHA256 inmutable y se notificara a los administradores.
         </div>
 
-        <div className="mt-5 flex gap-3">
+        <div className="mt-5 flex flex-col-reverse gap-3 sm:flex-row">
           <Button
             type="button"
             label="Cancelar"

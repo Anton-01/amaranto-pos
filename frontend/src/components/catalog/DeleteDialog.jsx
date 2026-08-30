@@ -61,7 +61,7 @@ export default function DeleteDialog({ visible, onHide, onConfirm, loading, item
           />
         </div>
 
-        <div className="flex gap-3">
+        <div className="flex flex-col-reverse gap-3 sm:flex-row">
           <Button
             label="Cancelar"
             onClick={handleHide}

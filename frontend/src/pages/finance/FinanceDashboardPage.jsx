@@ -103,12 +103,12 @@ export default function FinanceDashboardPage() {
 
   return (
     <AppLayout>
-      <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
+      <div className="mb-5 flex flex-col gap-3 sm:mb-6 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Panel Financiero</h1>
+          <h1 className="text-xl font-bold sm:text-2xl text-slate-900">Panel Financiero</h1>
           <p className="text-sm text-slate-500">Analisis de ingresos netos con segmentacion 70/30.</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex w-full items-center gap-2 sm:w-auto">
           <Calendar
             value={dateRange}
             onChange={(e) => setDateRange(e.value)}
@@ -116,8 +116,11 @@ export default function FinanceDashboardPage() {
             readOnlyInput
             dateFormat="dd/mm/yy"
             placeholder="Seleccionar periodo"
-            className="text-sm"
-            pt={{ input: { root: { className: 'rounded-lg border-slate-200 px-3 py-2 text-sm w-56' } } }}
+            className="w-full text-sm sm:w-auto"
+            pt={{
+              root: { className: 'w-full sm:w-auto' },
+              input: { root: { className: 'w-full rounded-lg border-slate-200 px-3 py-2 text-sm sm:w-56' } },
+            }}
           />
         </div>
       </div>
@@ -131,22 +134,22 @@ export default function FinanceDashboardPage() {
           {/* KPI Cards */}
           {summary && (
             <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              <div className="rounded-xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
+              <div className="min-w-0 rounded-xl bg-white p-4 shadow-sm sm:p-5 ring-1 ring-slate-200">
                 <p className="text-sm text-slate-500">Ingreso Bruto</p>
-                <p className="mt-1 text-2xl font-bold text-slate-900">${fmt(summary.gross_income)}</p>
+                <p className="mt-1 truncate text-xl font-bold tabular-nums text-slate-900 sm:text-2xl">${fmt(summary.gross_income)}</p>
                 <p className="mt-0.5 text-xs text-slate-400">{summary.order_count} ordenes</p>
               </div>
-              <div className="rounded-xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
+              <div className="min-w-0 rounded-xl bg-white p-4 shadow-sm sm:p-5 ring-1 ring-slate-200">
                 <p className="text-sm text-slate-500">Ingreso Neto (sin IVA)</p>
-                <p className="mt-1 text-2xl font-bold text-indigo-600">${fmt(summary.net_income)}</p>
-                <p className="mt-0.5 text-xs text-slate-400">IVA: ${fmt(summary.total_tax)} ({(summary.tax_rate * 100).toFixed(0)}%)</p>
+                <p className="mt-1 truncate text-xl font-bold tabular-nums text-indigo-600 sm:text-2xl">${fmt(summary.net_income)}</p>
+                <p className="mt-0.5 truncate text-xs text-slate-400">IVA: ${fmt(summary.total_tax)} ({(summary.tax_rate * 100).toFixed(0)}%)</p>
                 {summary.total_discounts > 0 && (
                   <p className="mt-0.5 text-xs font-medium text-amber-600">Descuentos: -${fmt(summary.total_discounts)}</p>
                 )}
               </div>
-              <div className="rounded-xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
+              <div className="min-w-0 rounded-xl bg-white p-4 shadow-sm sm:p-5 ring-1 ring-slate-200">
                 <p className="text-sm text-slate-500">Fondo Inversion ({summary.split.investment_pct}%)</p>
-                <p className="mt-1 text-2xl font-bold text-blue-600">${fmt(summary.investment_fund)}</p>
+                <p className="mt-1 truncate text-xl font-bold tabular-nums text-blue-600 sm:text-2xl">${fmt(summary.investment_fund)}</p>
                 <div className="mt-0.5 flex items-center gap-1">
                   <Tag
                     value={summary.investment_remaining >= 0 ? 'REMANENTE' : 'DEFICIT'}
@@ -158,9 +161,9 @@ export default function FinanceDashboardPage() {
                   </span>
                 </div>
               </div>
-              <div className="rounded-xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
+              <div className="min-w-0 rounded-xl bg-white p-4 shadow-sm sm:p-5 ring-1 ring-slate-200">
                 <p className="text-sm text-slate-500">Utilidad Real ({summary.split.profit_pct}%)</p>
-                <p className="mt-1 text-2xl font-bold text-emerald-600">${fmt(summary.net_profit)}</p>
+                <p className="mt-1 truncate text-xl font-bold tabular-nums text-emerald-600 sm:text-2xl">${fmt(summary.net_profit)}</p>
                 <p className="mt-0.5 text-xs text-slate-400">Ganancia neta del periodo</p>
               </div>
             </div>
@@ -169,7 +172,7 @@ export default function FinanceDashboardPage() {
           {/* Charts row */}
           <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
             {/* Vista 1: Stacked Bar Chart — Sales by Payment Method */}
-            <div className="rounded-xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
+            <div className="rounded-xl bg-white p-4 shadow-sm sm:p-5 ring-1 ring-slate-200">
               <h2 className="mb-1 text-base font-semibold text-slate-900">Ventas por Metodo de Pago</h2>
               <p className="mb-4 text-xs text-slate-500">Ingreso neto diario desglosado (sin IVA)</p>
               {salesData.length > 0 ? (
@@ -207,7 +210,7 @@ export default function FinanceDashboardPage() {
             </div>
 
             {/* Vista 2: 70/30 Split Comparison */}
-            <div className="rounded-xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
+            <div className="rounded-xl bg-white p-4 shadow-sm sm:p-5 ring-1 ring-slate-200">
               <h2 className="mb-1 text-base font-semibold text-slate-900">Segmentacion 70/30</h2>
               <p className="mb-4 text-xs text-slate-500">Ingreso Neto vs Fondo de Inversion vs Utilidad Real</p>
               {summary && summary.net_income > 0 ? (

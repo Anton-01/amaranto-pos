@@ -17,6 +17,7 @@ import TicketPreview from '../../components/pos/TicketPreview';
 import { useAuth } from '../../context/AuthContext';
 import useCronosAgent from '../../hooks/useCronosAgent';
 import { addDays, addMonths, todayYmd, toLocalYmd } from '../../lib/dates';
+import { STACK_TABLE, STACK_CLASS, HIDE_BELOW } from '../../lib/responsive';
 
 const quickFilters = [
   { label: 'Hoy', value: 'today' },
@@ -423,12 +424,14 @@ export default function SalesHistoryPage() {
   return (
     <AppLayout>
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-slate-900">Historial de Ventas</h1>
+        <h1 className="text-xl font-bold sm:text-2xl text-slate-900">Historial de Ventas</h1>
         <p className="mt-1 text-sm text-slate-500">Consulta y audita todas las transacciones del POS.</p>
       </div>
 
       {/* Quick filters */}
-      <div className="mb-4 flex flex-wrap items-center gap-4">
+      {/* The quick-filter group scrolls horizontally on a phone rather than
+          wrapping into three ragged rows; the two buttons sit under it. */}
+      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:gap-4">
         <SelectButton
           value={quickFilter}
           onChange={(e) => {
@@ -441,8 +444,9 @@ export default function SalesHistoryPage() {
             applyFilters({ quickFilter: e.value, dateRange: null });
           }}
           options={quickFilters}
-          className="text-sm"
+          className="-mx-3 flex max-w-full overflow-x-auto px-3 text-sm sm:mx-0 sm:overflow-visible sm:px-0"
         />
+        <div className="flex items-center justify-between gap-2 sm:contents">
         <Button
           label={showAdvanced ? 'Ocultar Filtros' : 'Filtros Avanzados'}
           icon={showAdvanced ? 'pi pi-chevron-up' : 'pi pi-filter'}
@@ -450,7 +454,7 @@ export default function SalesHistoryPage() {
           className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50"
           pt={{ root: { className: 'border border-slate-200' } }}
         />
-        <div className="ml-auto">
+        <div className="sm:ml-auto">
           <Button
             label={exporting ? 'Exportando...' : 'Exportar Excel'}
             icon="pi pi-download"
@@ -460,6 +464,7 @@ export default function SalesHistoryPage() {
             className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-500"
             pt={{ root: { className: 'border-0' } }}
           />
+        </div>
         </div>
       </div>
 
@@ -585,25 +590,36 @@ export default function SalesHistoryPage() {
           totalRecords={totalRecords}
           onPage={onPageChange}
           emptyMessage="No se encontraron ventas."
-          className="text-sm"
+          className={`text-sm ${STACK_CLASS}`}
           stripedRows
+          {...STACK_TABLE}
           pt={{
             wrapper: { className: 'rounded-xl' },
           }}
         >
+          {/*
+            Eleven columns is the widest table in the system. Below `md` the row
+            becomes a card, and the five columns that only make sense next to
+            each other on a wide screen drop out of it: what stays is the ticket,
+            when it happened, who sold it, how it was paid, what it totalled,
+            its status, and the actions.
+
+            The cash-flow trio (Descuento / Recibido / Cambio) returns at `lg`,
+            where a reconciliation is actually done.
+          */}
           <Column body={ticketIdTemplate} header="ID Ticket" style={{ width: '100px' }} />
           <Column body={dateTemplate} header="Fecha/Hora" style={{ width: '160px' }} />
           <Column body={vendorTemplate} header="Vendedor" />
-          <Column body={originTemplate} header="Origen" style={{ width: '130px' }} />
+          <Column body={originTemplate} header="Origen" className={HIDE_BELOW.md} style={{ width: '130px' }} />
           <Column body={paymentTemplate} header="Método de Pago" style={{ width: '140px' }} />
           <Column body={totalTemplate} header="Total" style={{ width: '100px' }} />
           <Column body={(row) => {
             const val = parseFloat(row.discount_total ?? 0);
             if (val === 0) return <span className="text-xs text-slate-400">-</span>;
             return <span className="text-sm font-semibold text-amber-600">-{fmt(val)}</span>;
-          }} header="Descuento" style={{ width: '100px' }} />
-          <Column body={receivedTemplate} header="Recibido" style={{ width: '100px' }} />
-          <Column body={changeTemplate} header="Cambio" style={{ width: '90px' }} />
+          }} header="Descuento" className={HIDE_BELOW.lg} style={{ width: '100px' }} />
+          <Column body={receivedTemplate} header="Recibido" className={HIDE_BELOW.lg} style={{ width: '100px' }} />
+          <Column body={changeTemplate} header="Cambio" className={HIDE_BELOW.lg} style={{ width: '90px' }} />
           <Column body={statusTemplate} header="Estatus" style={{ width: '100px' }} />
           <Column body={actionsTemplate} header="Acciones" style={{ width: '100px' }} />
         </DataTable>
@@ -643,7 +659,7 @@ export default function SalesHistoryPage() {
             </div>
           ) : detailOrder ? (
             <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-3 text-sm">
+              <div className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
                 <div className="rounded-lg bg-slate-50 p-3">
                   <p className="text-xs font-medium text-slate-500">Fecha/Hora</p>
                   <p className="mt-1 font-semibold text-slate-900">

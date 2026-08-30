@@ -7,6 +7,7 @@ import { toast } from 'sonner';
 import api from '../../api/axios';
 import { useAuth } from '../../context/AuthContext';
 import { fmtCurrency } from './tableStatus';
+import { dialogClass, DIALOG_PT } from '../../lib/responsive';
 
 /**
  * Strict confirmation for voiding a live table account.
@@ -89,7 +90,8 @@ export default function TableCancellationModal({ visible, table, session, onHide
           <span className="font-bold text-slate-900">Cancelar Mesa</span>
         </div>
       }
-      style={{ width: '460px' }}
+      className={dialogClass('md')}
+      pt={DIALOG_PT}
     >
       <form onSubmit={handleSubmit} className="space-y-4">
         <div className="rounded-lg border border-rose-100 bg-rose-50 px-3 py-2.5 text-sm text-rose-700">
@@ -147,7 +149,7 @@ export default function TableCancellationModal({ visible, table, session, onHide
           </div>
         )}
 
-        <div className="flex justify-end gap-2 pt-1">
+        <div className="flex flex-col-reverse gap-2 pt-1 sm:flex-row sm:justify-end">
           <Button
             type="button"
             label="Volver"

@@ -16,6 +16,7 @@ import { useAuth } from '../../context/AuthContext';
 import AppLayout from '../../components/layout/AppLayout';
 import DeleteDialog from '../../components/catalog/DeleteDialog';
 import { toLocalDateTime } from '../../lib/dates';
+import { STACK_TABLE, STACK_CLASS, HIDE_BELOW } from '../../lib/responsive';
 
 const typeOptions = [
   { label: 'Porcentaje', value: 'percentage' },
@@ -245,9 +246,9 @@ export default function PromotionsPage() {
 
   return (
     <AppLayout>
-      <div className="mb-6 flex items-center justify-between">
+      <div className="mb-5 flex flex-col gap-3 sm:mb-6 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Promociones</h1>
+          <h1 className="text-xl font-bold sm:text-2xl text-slate-900">Promociones</h1>
           <p className="text-sm text-slate-500">{promotions.length} promocion(es) registrada(s). Limite: 1 por ticket.</p>
         </div>
         {canManage && (
@@ -266,8 +267,8 @@ export default function PromotionsPage() {
             value={globalFilter}
             onChange={(e) => setGlobalFilter(e.target.value)}
             placeholder="Buscar promocion..."
-            className="w-72 rounded-lg border-slate-200 px-3 py-2 text-sm"
-            pt={{ root: { className: 'w-72' } }}
+            className="w-full rounded-lg border-slate-200 px-3 py-2 text-sm sm:w-72"
+            pt={{ root: { className: 'w-full sm:w-72' } }}
           />
         </div>
 
@@ -281,13 +282,16 @@ export default function PromotionsPage() {
           stripedRows
           paginator
           rows={15}
-          pt={{ root: { className: 'text-sm' }, thead: { className: 'bg-slate-50' } }}
+          {...STACK_TABLE}
+          pt={{ root: { className: `text-sm ${STACK_CLASS}` }, thead: { className: 'bg-slate-50' } }}
         >
           <Column field="name" header="Nombre" sortable />
           <Column field="type" header="Tipo" body={typeTemplate} sortable style={{ width: '10%' }} />
           <Column field="value" header="Valor" body={valueTemplate} sortable style={{ width: '10%' }} />
-          <Column header="Productos" body={productsTemplate} style={{ width: '10%' }} />
-          <Column field="start_date" header="Inicio" body={(r) => dateTemplate(r, 'start_date')} sortable style={{ width: '12%' }} />
+          <Column header="Productos" body={productsTemplate} className={HIDE_BELOW.md} style={{ width: '10%' }} />
+          {/* The expiry date is the one that decides whether a promo is live;
+              the start date is context and leaves the phone card. */}
+          <Column field="start_date" header="Inicio" body={(r) => dateTemplate(r, 'start_date')} sortable className={HIDE_BELOW.md} style={{ width: '12%' }} />
           <Column field="end_date" header="Fin" body={(r) => dateTemplate(r, 'end_date')} sortable style={{ width: '12%' }} />
           <Column field="is_active" header="Estatus" body={statusTemplate} sortable style={{ width: '10%' }} />
           {canManage && <Column header="Acciones" body={actionsTemplate} style={{ width: '12%' }} />}
@@ -327,7 +331,7 @@ export default function PromotionsPage() {
               {fieldErrors.name && <p className="mt-1 text-xs text-rose-500">{fieldErrors.name}</p>}
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div>
                 <label className="mb-1.5 block text-sm font-medium text-slate-700">Tipo *</label>
                 <Dropdown
@@ -362,7 +366,7 @@ export default function PromotionsPage() {
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div>
                 <label className="mb-1.5 block text-sm font-medium text-slate-700">Inicio *</label>
                 <Calendar

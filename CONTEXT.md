@@ -6922,3 +6922,443 @@ eliminar el espaciado fantasma que Word inyecta alrededor de cada tabla.
 
 ### Archivos Modificados
 - `backend/resources/views/mail/cash-register-closing.blade.php` — media query de 600 px, métricas en tabla apilable, detalle en tarjetas apiladas con respaldo de scroll horizontal y `word-break` en celdas
+
+## 62. REFACTORIZACIÓN MOBILE-FIRST INTEGRAL DEL POS (LAYOUT, TABLAS, MODALES Y DASHBOARDS) [🟢 COMPLETADO Y OPERATIVO]
+
+La sección 61 arregló el **correo** de cierres en el móvil. Esta arregla la
+**aplicación entera**: hasta ahora el POS solo era usable en escritorio. En un
+teléfono el sidebar fijo de 16 rem seguía reservando su ancho, así que cada
+vista nacía con 256 px menos de los que tenía, y cualquier tabla de siete
+columnas arrastraba el viewport de lado.
+
+El trabajo se ejecutó en cuatro fases y **se verificó en un navegador real**
+(Chromium headless a 320, 375, 767, 768 y 1280 px), no solo leyendo clases. Esa
+verificación encontró dos defectos que la lectura del código no habría
+detectado — están documentados en 62.7.
+
+### 62.0 Los tres invariantes
+
+1. **Mobile-first de verdad.** La declaración sin prefijo describe el teléfono;
+   `sm:` / `md:` / `lg:` **añaden** capacidad conforme hay espacio. No hay una
+   sola regla que empiece en escritorio y se "deshaga" hacia abajo.
+2. **Cero desbordamiento horizontal.** Medido, no supuesto:
+   `document.documentElement.scrollWidth === window.innerWidth` en los cuatro
+   anchos de prueba. Cuando una tabla ancha necesita scroll, ese scroll vive
+   **dentro de su propia caja**, nunca en el documento.
+3. **Áreas táctiles reales.** 44 px de mínimo en controles primarios (el umbral
+   por debajo del cual el dedo empieza a fallar), 38-40 px en acciones
+   secundarias densas.
+
+### 62.1 Dónde vive cada cosa
+
+El sistema usa **PrimeReact**, que renderiza su propio DOM: diálogos, tablas,
+paginadores, pestañas y paneles flotantes. Sus clases no son alcanzables con una
+utilidad de Tailwind desde fuera, y sus anchos venían de un `style` en línea que
+**ningún media query puede leer**. Por eso el trabajo se reparte en dos capas:
+
+- **`frontend/src/index.css`** — una capa mobile-first que corrige el DOM de
+  PrimeReact **una sola vez, a nivel de clase de vendor**. Todo diálogo y toda
+  tabla del sistema la hereda, incluidas las pantallas que todavía no existen.
+  Las reglas van **fuera de `@layer`** a propósito: el tema de PrimeReact se
+  importa sin capa en `vendor.css`, lo que lo hace ganar contra cualquier
+  utilidad de Tailwind (que sí está en capa). Una regla sin capa y de igual
+  especificidad gana por orden de origen.
+- **`frontend/src/lib/responsive.js`** — el vocabulario compartido que usan las
+  páginas: escala de anchos de diálogo, `pt` común, helpers de visibilidad de
+  columnas y props de tabla apilada.
+
+---
+
+### 62.2 FASE 1 — Navegación y estructura global
+
+**Archivos:** `components/layout/AppLayout.jsx`, `Sidebar.jsx`, `AppHeader.jsx`,
+`UserProfileDropdown.jsx`, `notifications/NotificationBell.jsx`.
+
+#### Dos estados de navegación, uno por factor de forma
+
+`AppLayout` mantiene **dos estados independientes** para que ninguno pueda
+corromper al otro:
+
+| Estado | Rango | Qué hace |
+|---|---|---|
+| `collapsed` | `>= lg` | El riel histórico de escritorio: alterna entre 16 rem con etiquetas y 72 px solo-iconos, y arrastra el margen del contenido con él. |
+| `mobileNavOpen` | `< lg` | El *drawer* off-canvas: el sidebar vive en `-translate-x-full` y entra deslizándose sobre un fondo oscurecido. |
+
+**Toda** clase gobernada por `collapsed` lleva prefijo `lg:`. Es la pieza que
+hace que los dos estados no se pisen: el riel es una afordancia exclusiva de
+escritorio, y un teléfono debe recibir siempre el drawer completo con etiquetas
+**aunque el usuario haya dejado el riel colapsado en su monitor**.
+
+#### El margen que causaba el desbordamiento
+
+La columna de contenido **no lleva margen izquierdo por debajo de `lg`**
+(`lg:ml-64` / `lg:ml-[72px]`). El drawer se superpone a la página en vez de
+desplazarla. Esto es exactamente lo que elimina la barra de scroll horizontal
+permanente que el `ml-64` fijo imponía en cualquier viewport estrecho.
+
+#### Detalles que hacen que se sienta nativo
+
+- **Cierre al navegar mediante ajuste de estado durante el render**, no con un
+  `useEffect`. El drawer tiene que estar cerrado ya en el **primer frame** que
+  pinta la nueva ruta; un efecto lo cerraría un commit tarde y se vería como un
+  parpadeo del menú encima del destino.
+- **Bloqueo de scroll del cuerpo** mientras el drawer está abierto, capturando y
+  restaurando el valor previo para componer con los diálogos de PrimeReact, que
+  fijan el suyo. Sin esto la página sigue desplazándose por debajo del dedo.
+- **`Escape` cierra**, y el backdrop es clicable.
+- El drawer mide `18rem` acotado a `85vw`: nunca llena la pantalla de lado a
+  lado, así que siempre queda contexto visible detrás que dice "esto es una capa".
+
+#### Un glifo, dos acciones
+
+La hamburguesa son **dos botones**, no uno que ramifica sobre un media query en
+JS: por debajo de `lg` abre el drawer, desde `lg` colapsa el riel. La
+visibilidad es CSS pura, lo que significa **sin listener de `resize` y sin
+parpadeo en el primer pintado**.
+
+#### Resto del chrome
+
+- El **título de página sobrevive en el teléfono** (truncado, nunca envuelto).
+  Los badges de estado degradan: el aviso offline pierde su frase y conserva el
+  icono; el contador de ventas aparece desde `md`.
+- Padding del `main`: `p-3 sm:p-4 lg:p-6`.
+- Campana, avatar y menús de perfil pasan a 40 px táctiles y sus paneles se
+  acotan a `calc(100vw - 1.5rem)`.
+- `z-index`: sidebar 50 → backdrop 40 → header 30. El drawer se superpone al
+  header, que es lo que hace que se lea como una capa y no como un panel
+  encajado debajo.
+
+**Verificado:** a 375 px el drawer está fuera de pantalla (`right = 0`), abre a
+`left = 0` con `body { overflow: hidden }` y filas de 44 px, y cierra con
+`Escape`. A 1280 px queda acoplado a 256 px (contenido a 256) y colapsa a 72 px
+(contenido a 72).
+
+---
+
+### 62.3 FASE 2 — Tablas y listados: tarjetas apiladas
+
+**19 tablas** en 17 archivos: Cierres de Caja, Auditoría de Cierres, Historial
+de Ventas, Almacén, Usuarios, Caja Chica, Productos, Categorías, Promociones,
+Métodos de Pago, Mesas, Papelera, Roles, Tickets, Caché de Módulos, Correos por
+Proceso y las tres del Monitor de Jobs.
+
+#### Por qué NO se escribió una lista de tarjetas paralela
+
+La tentación era un `<div className="md:hidden">` con tarjetas al lado de la
+tabla. Se descartó: **cada tabla del sistema lleva comportamiento que vive
+dentro del `DataTable`** — paginación (perezosa y servida por el backend en
+Cierres, Historial, Papelera, Auditoría y Monitor de Jobs; en cliente en el
+resto), búsqueda por `globalFilter`, ordenamiento y overlay de carga. Una lista
+paralela habría tenido que reimplementar todo eso **por página**, y se habría
+desincronizado de la tabla de al lado la primera vez que alguien cambiara una
+columna.
+
+La solución conserva **una sola fuente de verdad**: la misma tabla se **re-mapea
+a tarjetas por CSS** por debajo de `md`.
+
+#### Qué aporta PrimeReact y qué hubo que escribir
+
+`responsiveLayout="stack"` (exportado como `STACK_TABLE`) hace dos cosas útiles
+en esta versión: marca la raíz con `p-datatable-responsive-stack` y **renderiza
+un `<span class="p-column-title">` dentro de cada celda del cuerpo** con el
+encabezado de su columna. Ese span es la pieza clave: es lo que permite que una
+celda se lea como «TOTAL — $1,284.00» cuando la fila de encabezados desaparece.
+
+Lo que **no** hace de forma fiable es inyectar el media query que ejecuta el
+apilado. Se comprobó en el navegador: a 375 px no llegaba esa hoja al documento.
+Por eso el layout se define en `index.css`, apoyado en la clase `pos-stack` que
+las páginas ya pasan. Poseerlo también significa que **las tarjetas no pueden
+regresar en silencio con una actualización de PrimeReact**.
+
+La clase `pos-stack` hace, por debajo de 767.98 px:
+
+- Oculta `thead` y `tfoot` — los reemplazan las etiquetas dentro de cada celda.
+- Saca a `table`, `tbody` y `tr` del *table layout* (`display: block`). Mientras
+  son `display: table*`, **los anchos de columna siguen dictando el ancho
+  intrínseco de la tabla** y el wrapper se desplaza de lado: justamente lo que
+  las tarjetas existen para eliminar. Medido: 766 px de tabla dentro de un
+  wrapper de 351 px.
+- Convierte cada `<tr>` en una tarjeta (borde, radio, sombra, separación) y cada
+  `<td>` en una línea flex de etiqueta/valor, con el pie de acciones en gris.
+- Neutraliza el *zebra striping*: con tarjetas delimitadas por borde deja de
+  aportar y solo mete fondos grises inconsistentes dentro de una misma tarjeta
+  (el mismo razonamiento de 61.4).
+- Rompe palabras largas en la celda: una celda cuyo `body` devuelve **texto
+  pelado** se convierte en un *anonymous flex item* que ningún selector alcanza,
+  así que el `word-break` va sobre el `<td>`.
+
+#### El `!important` que sí es imprescindible
+
+```css
+.pos-stack .p-datatable-tbody > tr > td {
+  display: flex !important;
+  width: 100% !important;
+  min-width: 0 !important;
+  max-width: none !important;
+}
+```
+
+No es ruido defensivo. Las columnas del sistema llevan `style={{ width: '150px' }}`
+o `minWidth` en línea, y **PrimeReact copia ese estilo al `<td>`**. Un estilo en
+línea gana a cualquier declaración normal, así que sin estos overrides la
+tarjeta conservaría sus anchos de columna de escritorio: líneas de
+etiqueta/valor de 110 px una al lado de otra, es decir, exactamente el layout
+roto que las tarjetas vienen a sustituir.
+
+#### Visibilidad de columnas: `hidden md:table-cell` para PrimeReact
+
+`className` en un `<Column>` se reenvía **al `<th>` y al `<td>`**, lo que hace
+que una sola clase sea el equivalente exacto. `HIDE_BELOW.{sm,md,lg}` se escribe
+como "oculta por debajo del breakpoint" —nunca "oculta y luego muestra"— para
+que por encima del corte la celda conserve el `display` que le dé su contexto:
+`table-cell` en una tabla, `flex` dentro de una tarjeta.
+
+**En modo tarjeta estas clases eliminan la línea completa.** Eso es lo que
+mantiene la tarjeta corta: los campos secundarios sencillamente no existen en el
+teléfono. Ejemplo, Historial de Ventas (la tabla más ancha, 11 columnas):
+
+| Columna | 320-767 px | 768-1023 px | >= 1024 px |
+|---|---|---|---|
+| ID Ticket, Fecha, Vendedor, Método, Total, Estatus, Acciones | ✅ | ✅ | ✅ |
+| Origen | — | ✅ | ✅ |
+| Descuento, Recibido, Cambio | — | — | ✅ |
+
+El trío de flujo de efectivo vuelve en `lg`, que es donde de verdad se hace una
+conciliación.
+
+Otros recortes: Productos oculta Grupo (`lg`), Costo y Categoría (`md`);
+Usuarios oculta Sesión (`md`) y Creado (`lg`); Caja Chica oculta el Sello
+forense (`lg`); Almacén oculta Costo Unitario (`md`) y Usuario (`lg`); Correos
+por Proceso oculta Remitente (`lg`), Asunto y Destinos (`md`). **Cierres de Caja
+no oculta nada**: cada columna de un arqueo es material para el arqueo, así que
+su fila se convierte en una tarjeta de siete líneas.
+
+Dos columnas con `header=""` (Caja Chica, Tickets) se nombraron «Acciones»:
+en modo tarjeta un encabezado vacío deja una línea sin etiqueta.
+
+#### El alternativo: scroll táctil
+
+`TABLE_CLASS` / `TABLE_CLASS_WIDE` (`pos-table`) es para las pocas tablas que
+**no pueden apilarse** — PrimeReact ignora `responsiveLayout` cuando hay
+`scrollable`, como el desglose por artículo dentro del Resumen del Día. Ahí la
+tabla conserva su forma dentro de un scroll horizontal suave
+(`-webkit-overflow-scrolling: touch`) con un ancho mínimo de columna razonable.
+`overscroll-behavior-x: contain` impide que el deslizamiento se entregue al
+gesto de "atrás" del navegador. El `min-width` se excluye explícitamente de
+`.pos-stack`: ahí reintroduciría el scroll que las tarjetas eliminan.
+
+#### Barras de herramientas
+
+- Encabezados de listado: título sobre acción primaria por debajo de `sm`.
+- Buscadores: `w-full`, recuperan `w-64` / `w-72` desde `sm`.
+- Filtros de Historial, Usuarios, Auditoría, Cierres, Papelera y Monitor de Jobs
+  a una columna (o rejilla de 2 en el Monitor, donde son seis controles).
+- Paginador con `flex-wrap` y su leyenda «x de y» a línea completa.
+- **Pestañas (`TabView`) y grupos segmentados (`SelectButton`) se desplazan
+  horizontalmente en vez de envolverse**: un control segmentado que envuelve
+  deja de leerse como un solo control.
+
+---
+
+### 62.4 FASE 3 — Modales, formularios y flotantes
+
+#### La escala de diálogos
+
+Los diálogos se dimensionaban con `style={{ width: '50vw' }}` o `'480px'` en
+línea. Un `style` en línea es **invisible para un media query**, así que "medio
+ancho" seguía siendo medio ancho en un teléfono de 360 px: 180 px útiles. Todos
+migran a `dialogClass()` de `lib/responsive.js`:
+
+| Tamaño | Teléfono | Desde `sm` | Uso |
+|---|---|---|---|
+| `sm` | `100vw - 1.5rem` | `26rem` | Confirmaciones |
+| `md` | `100vw - 1.5rem` | `32rem` | Formularios de una columna (el caso normal) |
+| `lg` | `100vw - 1.5rem` | `48rem` en `lg` | Formularios de dos columnas |
+| `xl` | `100vw - 1.5rem` | `64rem` en `lg` | Paneles de detalle con tabla |
+
+La escala es deliberadamente **gruesa**: cuatro tamaños cubren todo el sistema, y
+tenerlos fijos es lo que hace que los modales se sientan una familia y no veinte
+decisiones independientes. En el teléfono todos resuelven a "viewport menos 12 px
+por lado", que es lo más ancho que puede ser un diálogo **sin dejar de leerse
+como una superficie flotante** en lugar de una página rota a pantalla completa.
+
+`DIALOG_PT` añade máscara con padding, tope de altura `92dvh` y contenido
+desplazable, para que encabezado y pie sigan alcanzables en un teléfono en
+horizontal. En `index.css` hay además un suelo global (`max-width`,
+`max-height`, pies apilados a ancho completo) que protege incluso a un diálogo
+que se escapara de la convención.
+
+#### Formularios
+
+Toda rejilla no responsiva pasa a **una columna** y recupera su forma desde `sm`:
+Producto (2 y 3 columnas), Promociones, Correos por Proceso, Configuración del
+Sistema, Almacén, Tickets, y las rejillas de detalle de Historial, Cierres,
+Auditoría, Usuarios, Mesas y Notificaciones. Una rejilla de dos columnas a
+360 px da ~160 px por control: más angosto que el propio texto que contiene.
+
+Las filas de acción usan **`flex-col-reverse`**: el botón que confirma se
+escribe último, así que en columna invertida queda **arriba, donde descansa el
+pulgar**, y el de cancelar debajo.
+
+Los insets de tarjeta pasan a `p-4 sm:p-6`. 24 px por lado son 48 px de una
+pantalla de 360: una séptima parte, y es justo el padding que empujaba las
+cifras largas fuera del borde.
+
+#### iOS y el zoom al enfocar
+
+Los controles de PrimeReact se fijan a **16 px de fuente en el teléfono**. Por
+debajo de 16 px, Safari hace zoom sobre la página al enfocar un campo, y el
+viewport salta en cada toque. Es el mismo tipo de problema que
+`-webkit-text-size-adjust` resolvió para el correo en 61.2.
+
+#### El POS
+
+- Barra de turno: cajero y reloj en la primera fila; folio y fondo inicial en una
+  segunda fila a ancho completo.
+- El carrito **solo es `sticky` desde `lg`**, donde es un riel lateral. En un
+  teléfono es una sección de la página y fijarlo taparía el catálogo.
+- **Barra de cobro móvil (nueva).** En el teléfono el carrito queda debajo de
+  todo el catálogo, así que el total corriente —el número que el cajero mira
+  constantemente— se iba de pantalla tras unos pocos productos. Una barra fija
+  mantiene visibles el total y el conteo de artículos y salta al ticket. Existe
+  solo por debajo de `lg` (donde el carrito no está ya visible como riel) y solo
+  mientras hay algo en él, con un espaciador equivalente para que **nunca tape la
+  última fila de productos**.
+- Steppers de cantidad de 24 → 36 px táctiles, tiles de producto con altura
+  mínima, botón de quitar línea con área real.
+- La **vista previa del ticket de 58 mm** es un artefacto de ancho fijo: se
+  desplaza dentro de su propia caja en vez de ensanchar el diálogo de cobro.
+
+---
+
+### 62.5 FASE 4 — Dashboards, métricas y tarjetas de resumen
+
+#### Rejillas
+
+Todas las rejillas de indicadores son de una columna en el teléfono y escalan
+por breakpoint: Dashboard y Monitor de Jobs (1/2/4), Panel Financiero (1/2/4),
+Caja Chica y Almacén (1/3), Analítica Financiera (1/2/4 — antes eran **dos
+columnas fijas** incluso a 360 px).
+
+#### `min-w-0`: la pieza que de verdad arregla el desbordamiento
+
+Una cifra en pesos como `$1,284,530.00` son 13 glifos. A `text-2xl` dentro de una
+tarjeta a un cuarto de ancho **es más ancha que la tarjeta**. La corrección son
+tres cosas juntas:
+
+1. Un escalón menos de tipografía en el teléfono (`text-2xl` → `text-xl`,
+   `text-xl` → `text-lg`), más `tabular-nums` para que las cifras no bailen.
+2. `truncate` sobre el valor.
+3. **`min-w-0` sobre la tarjeta.** Este es el que importa: un *grid item* tiene
+   `min-width: auto` por defecto, así que **sin él el item se niega a encogerse
+   por debajo de su contenido y `truncate` nunca llega a actuar**. La fila de
+   KPIs ensancha la página entera en vez de recortar el número.
+
+Las filas de desglose (Caja Chica, Almacén, desglose por método de pago) dejan
+truncar la etiqueta y marcan la cifra como no encogible.
+
+#### Gráficas y esqueletos
+
+La tendencia horaria se dibuja a 220 px en el teléfono y 280 px desde `sm`. El
+`DashboardSkeleton` **replica esa altura y los nuevos paddings**: si el
+esqueleto y la tarjeta real no coinciden, el primer pintado salta cuando llegan
+los datos, y eso se lee como un error, no como carga.
+
+#### Chips, encabezados y paneles
+
+- Los chips de estado de Plano de Mesas y Auditoría de Cierres **se desplazan
+  como una tira** en vez de envolverse en tres filas que empujan el contenido
+  fuera de la primera pantalla.
+- Títulos `text-xl sm:text-2xl` en las 18 páginas.
+- Plantillas de Correo convierte su layout de dos paneles en uno apilado por
+  debajo de `lg`, con marco de previsualización `70dvh` en vez de 650 px fijos:
+  650 px de iframe bajo un header y una barra no dejan nada de página visible.
+- Controles de ancho fijo restantes (filtros de Usuarios y Mesas, selector de
+  lada telefónica, etiquetas del arqueo ciego) pasan a fluidos. El arqueo ciego
+  en concreto reservaba 10 rem para la etiqueta del método de pago y dejaba
+  ~120 px para un `InputNumber` de moneda; ahora la etiqueta va **encima** del
+  campo en el teléfono.
+
+---
+
+### 62.6 Verificación en navegador
+
+No se dio nada por bueno leyendo clases. Se montó un arnés temporal con una
+tabla de 8 columnas, valores largos y una rejilla de KPIs, se sirvió el build de
+producción y se midió con Chromium a **320, 375, 767, 768 y 1280 px**:
+
+| Comprobación | Resultado |
+|---|---|
+| `scrollWidth === innerWidth` en los cuatro anchos | ✅ sin desbordamiento del documento |
+| `<= 767 px`: `thead` oculto, `tr` en bloque, `td` en flex a ancho completo | ✅ (351 px de celda en un viewport de 375) |
+| `<= 767 px`: columnas `col-hide-md` fuera de la tarjeta | ✅ 7 de 8 celdas |
+| `<= 767 px`: etiquetas `.p-column-title` visibles | ✅ |
+| `>= 768 px`: tabla de escritorio intacta, 8 columnas, etiquetas ocultas | ✅ |
+| Paginación operativa en modo tarjeta | ✅ |
+| Drawer fuera de pantalla / abierto / `Escape` / scroll bloqueado / filas de 44 px | ✅ |
+| Riel de escritorio 256 px ↔ 72 px con el margen del contenido siguiéndolo | ✅ |
+
+El arnés se eliminó antes de consolidar. El lint quedó en la **misma línea base
+que antes del trabajo** (47 errores preexistentes, ninguno nuevo).
+
+### 62.7 Los dos defectos que solo el navegador reveló
+
+Ambos habrían pasado una revisión de código sin problema:
+
+1. **PrimeReact no inyectaba su hoja de apilado.** Se asumió que
+   `responsiveLayout="stack"` traía consigo el media query que oculta el
+   encabezado y convierte las celdas en líneas. No llegaba al documento. El
+   resultado era un **híbrido a medio apilar**: encabezado visible, tabla aún
+   dimensionada por sus columnas (766 px dentro de un wrapper de 351 px) y
+   scroll lateral dentro de la caja. La corrección fue escribir el layout
+   completo en `index.css` sobre la clase `pos-stack`.
+2. **Las columnas ocultas reaparecían dentro de la tarjeta.** `.col-hide-md`
+   (especificidad 0-1-0) perdía contra la regla de tarjeta
+   `.pos-stack .p-datatable-tbody > tr > td` (0-2-3) **aunque ambas llevaran
+   `!important`**: entre dos declaraciones `!important` decide la especificidad.
+   La corrección fue darle a las reglas de visibilidad la misma forma de selector
+   (`.p-datatable .p-datatable-tbody > tr > td.col-hide-md`, 0-3-3).
+
+Se aprovechó además para alinear **todos** los breakpoints de tabla móvil en
+`767.98px`, exactamente el `md` de Tailwind: antes el apilado (`max-width: 768px`)
+y el ocultamiento de columnas (`max-width: 767.98px`) discrepaban justo en 768 px,
+donde se veía una tarjeta que aún mostraba una columna secundaria.
+
+### Archivos Modificados
+
+**Núcleo compartido**
+- `frontend/src/index.css` — capa mobile-first completa: diálogos, tarjetas
+  apiladas (`pos-stack`), scroll táctil (`pos-table`), visibilidad de columnas
+  (`col-hide-*`), paginador, pestañas y segmentados, paneles flotantes, toasts,
+  tipografía de 16 px y áreas táctiles de 44 px
+- `frontend/src/lib/responsive.js` — **nuevo**: `dialogClass()`, `DIALOG_PT`,
+  `HIDE_BELOW`, `STACK_TABLE`, `STACK_CLASS`, `TABLE_CLASS`
+
+**Fase 1 — layout**
+- `components/layout/AppLayout.jsx`, `Sidebar.jsx`, `AppHeader.jsx`,
+  `UserProfileDropdown.jsx`
+- `components/notifications/NotificationBell.jsx`
+
+**Fase 2 — tablas y listados**
+- `pages/admin/` — `CashRegisterClosingsPage`, `CashClosingsAuditPage`,
+  `UsersPage`, `TrashPage`, `PaymentMethodsPage`, `TablesPage`,
+  `RolesPermissionsPage`, `JobsMonitorPage` (3 tablas)
+- `pages/sales/SalesHistoryPage`, `pages/logistics/StockMovementsPage`,
+  `pages/finance/PettyCashPage`, `pages/catalog/ProductsPage`,
+  `pages/catalog/CategoriesPage`, `pages/promotions/PromotionsPage`,
+  `pages/settings/TicketConfigPage`
+- `components/settings/CacheSettingsPanel`, `EmailNotificationsPanel`
+
+**Fase 3 — modales y formularios**
+- `components/pos/CheckoutModal`, `PrintConfirmationModal`
+- `components/catalog/DeleteDialog`, `components/finance/WithdrawModal`
+- `components/dining/TableDetailModal`, `TableCancellationModal`
+- `components/notifications/NotificationDetailTemplates`
+- `pages/pos/POSPage` (barra de cobro móvil), `pages/catalog/ProductFormPage`,
+  `pages/auth/LoginPage`, `pages/admin/SystemSettingsPage`
+
+**Fase 4 — dashboards y métricas**
+- `pages/DashboardPage`, `components/dashboard/DashboardSkeleton`,
+  `MonthlyAnalyticsModal`
+- `pages/finance/FinanceDashboardPage`, `pages/dining/TablesFloorPlanPage`,
+  `pages/admin/MailTemplatesPage`, `pages/profile/ProfilePage`

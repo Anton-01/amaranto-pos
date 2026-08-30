@@ -10,6 +10,7 @@ import { toast } from 'sonner';
 import { useAuth } from '../../context/AuthContext';
 import api from '../../api/axios';
 import AppLayout from '../../components/layout/AppLayout';
+import { STACK_TABLE, STACK_CLASS, HIDE_BELOW, dialogClass, DIALOG_PT } from '../../lib/responsive';
 
 const TRASH_TYPES = [
   { label: 'Productos Eliminados', value: 'products' },
@@ -231,9 +232,9 @@ export default function TrashPage() {
 
   return (
     <AppLayout>
-      <div className="mb-6 flex items-center justify-between">
+      <div className="mb-5 flex flex-col gap-3 sm:mb-6 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Papelera Global</h1>
+          <h1 className="text-xl font-bold sm:text-2xl text-slate-900">Papelera Global</h1>
           <p className="mt-1 text-sm text-slate-500">
             Auditoría forense de registros eliminados del sistema.
           </p>
@@ -245,12 +246,12 @@ export default function TrashPage() {
         />
       </div>
 
-      <div className="mb-4 flex items-center gap-3">
+      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center">
         <Dropdown
           value={type}
           options={TRASH_TYPES}
           onChange={(e) => setType(e.value)}
-          className="w-80"
+          className="w-full sm:w-80"
           placeholder="Seleccionar módulo"
         />
         <InputText
@@ -260,7 +261,7 @@ export default function TrashPage() {
             setPage(1);
           }}
           placeholder="Buscar por nombre, SKU o email..."
-          className="w-72"
+          className="w-full sm:w-72"
         />
       </div>
 
@@ -277,10 +278,12 @@ export default function TrashPage() {
           emptyMessage="No hay registros en la papelera."
           stripedRows
           size="small"
+          {...STACK_TABLE}
+          pt={{ root: { className: STACK_CLASS } }}
         >
           <Column header="Registro" body={nameColumn} style={{ minWidth: '180px' }} />
           {extraHeader[type] && (
-            <Column header={extraHeader[type]} body={extraColumn} style={{ minWidth: '100px' }} />
+            <Column header={extraHeader[type]} body={extraColumn} className={HIDE_BELOW.md} style={{ minWidth: '100px' }} />
           )}
           <Column header="Eliminado por" body={deletedByColumn} style={{ minWidth: '160px' }} />
           <Column header="Fecha de Baja" body={deletedAtColumn} style={{ minWidth: '160px' }} />
@@ -294,7 +297,8 @@ export default function TrashPage() {
         visible={reasonModal.visible}
         onHide={() => setReasonModal({ visible: false, text: '' })}
         header="Motivo de la Baja"
-        style={{ width: '480px' }}
+        className={dialogClass('md')}
+        pt={DIALOG_PT}
         modal
         draggable={false}
       >
@@ -312,7 +316,8 @@ export default function TrashPage() {
           setPurgeConfirmation('');
         }}
         header="Eliminar Permanentemente"
-        style={{ width: '520px' }}
+        className={dialogClass('md')}
+        pt={DIALOG_PT}
         modal
         draggable={false}
         closable={!actionLoading}

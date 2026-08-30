@@ -45,6 +45,395 @@ body {
   transition: transform 0.2s ease;
 }
 
+/* ==========================================================================
+   MOBILE-FIRST FOUNDATION
+   --------------------------------------------------------------------------
+   PrimeReact renders its own DOM (dialogs, tables, paginators, dropdowns) and
+   accepts Tailwind classes only through `pt`, one call site at a time. These
+   rules therefore fix the responsive behaviour once, at the vendor-class level,
+   so every dialog and every table in the system inherits it — including the
+   ones a future screen has not written yet.
+
+   They live outside `@layer` on purpose: the PrimeReact theme is imported
+   without a layer in vendor.css, which makes it win against any layered
+   Tailwind utility. Unlayered rules of equal specificity beat it by source
+   order.
+   ========================================================================== */
+
+/* No view may drag the viewport sideways. This is the outermost guarantee of
+   requirement #2 (zero horizontal overflow); every component below narrows the
+   problem further so this rule is never actually needed. */
+html,
+body {
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+/* iOS zooms the page in when a focused input is smaller than 16px. Keeping the
+   control fonts at 16px on phones is what stops the viewport from jumping on
+   every tap into a field. */
+@media (max-width: 640px) {
+  .p-inputtext,
+  .p-dropdown .p-dropdown-label,
+  .p-multiselect .p-multiselect-label,
+  .p-inputnumber-input,
+  .p-calendar .p-inputtext,
+  .p-password input {
+    font-size: 16px;
+  }
+
+  /* Touch-friendly minimums (requirement #3). 44px is the smallest reliably
+     tappable target on a touchscreen. */
+  .p-button,
+  .p-dropdown,
+  .p-multiselect,
+  .p-inputtext,
+  .p-calendar .p-inputtext,
+  .p-inputnumber-input {
+    min-height: 44px;
+  }
+
+  .p-button.p-button-icon-only {
+    min-width: 44px;
+  }
+
+  /* `p-button-sm` is used for inline row actions; it stays compact but still
+     clears a comfortable 38px. */
+  .p-button.p-button-sm {
+    min-height: 38px;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   DIALOGS — full-bleed on phones, centred card from `sm` up
+   --------------------------------------------------------------------------
+   Most dialogs in the system were sized with an inline `style={{ width: 'Nvw' }}`,
+   which an inline style makes unreachable from a media query. Widths have been
+   moved to classes at the call sites; these rules are the floor that guarantees
+   a dialog can never exceed the viewport even if a call site is missed. */
+.p-dialog-mask {
+  padding: 0.75rem;
+}
+
+.p-dialog {
+  max-width: calc(100vw - 1.5rem);
+  max-height: calc(100dvh - 1.5rem);
+}
+
+.p-dialog .p-dialog-content {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+@media (max-width: 640px) {
+  .p-dialog {
+    width: calc(100vw - 1.5rem) !important;
+    margin: 0;
+  }
+
+  .p-dialog .p-dialog-header,
+  .p-dialog .p-dialog-content,
+  .p-dialog .p-dialog-footer {
+    padding-left: 1rem;
+    padding-right: 1rem;
+  }
+
+  .p-dialog .p-dialog-title {
+    font-size: 1rem;
+    line-height: 1.4;
+  }
+
+  /* A footer of three buttons is the single most common source of sideways
+     overflow inside a dialog: stacked full-width is both safer and easier to
+     tap. */
+  .p-dialog .p-dialog-footer {
+    display: flex;
+    flex-direction: column-reverse;
+    gap: 0.5rem;
+  }
+
+  .p-dialog .p-dialog-footer .p-button {
+    width: 100%;
+    margin: 0;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   DATATABLES — smooth horizontal touch scrolling
+   --------------------------------------------------------------------------
+   Wide operational tables (Cierres, Almacén, Historial) keep their table shape
+   and scroll inside their own box. The scroll is confined to the wrapper, so it
+   never becomes a page-level horizontal scroll, and `overscroll-behavior-x`
+   stops the swipe from being handed to the browser's back-navigation gesture. */
+.p-datatable-wrapper {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+}
+
+/* Tables tagged `.pos-table` opt into a comfortable minimum column width so a
+   scrolled table reads as a table rather than as crushed columns. */
+@media (max-width: 767.98px) {
+  .pos-table:not(.pos-stack) .p-datatable-table {
+    min-width: 640px;
+  }
+
+  .pos-table.pos-table-wide:not(.pos-stack) .p-datatable-table {
+    min-width: 900px;
+  }
+
+  /* Denser padding buys roughly one extra column of visible width. */
+  .pos-table .p-datatable-thead > tr > th,
+  .pos-table .p-datatable-tbody > tr > td {
+    padding: 0.6rem 0.65rem;
+  }
+
+  /* The paginator lays its elements out in one nowrap row by default and is a
+     reliable overflow source at 360px. */
+  .p-paginator {
+    flex-wrap: wrap;
+    row-gap: 0.25rem;
+    padding: 0.5rem 0.25rem;
+  }
+
+  .p-paginator .p-paginator-current {
+    order: 1;
+    width: 100%;
+    text-align: center;
+    font-size: 0.75rem;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   COLUMN VISIBILITY — Tailwind's `hidden md:table-cell` for PrimeReact columns
+   --------------------------------------------------------------------------
+   PrimeReact renders the `<th>` and `<td>` elements itself, so a Tailwind
+   visibility utility cannot be attached to them from the outside. `className`
+   on a <Column>, however, is forwarded to BOTH the header and the body cell —
+   which makes a single class the exact equivalent.
+
+   The rules are written as "hide below the breakpoint" rather than "hide, then
+   show above it", so above the breakpoint the cell keeps whatever display mode
+   its context gives it: `table-cell` in a normal table, `flex` in a stacked
+   card.
+
+   The long selectors are deliberate. The stacked-card rules below set
+   `display: flex !important` on every `<td>` through a three-part descendant
+   selector; a bare `.col-hide-md` would lose the specificity contest to it and
+   the column would reappear inside the card. Matching that selector's shape
+   here is what makes hiding win, and the bare class keeps the rule working on
+   any element outside a table.
+
+   In a stacked card these classes drop the whole label/value line, which is how
+   a card stays short enough to scan: secondary fields simply do not appear on
+   a phone.
+   ========================================================================== */
+@media (max-width: 639.98px) {
+  .p-datatable .p-datatable-thead > tr > th.col-hide-sm,
+  .p-datatable .p-datatable-tbody > tr > td.col-hide-sm,
+  .col-hide-sm {
+    display: none !important;
+  }
+}
+
+@media (max-width: 767.98px) {
+  .p-datatable .p-datatable-thead > tr > th.col-hide-md,
+  .p-datatable .p-datatable-tbody > tr > td.col-hide-md,
+  .col-hide-md {
+    display: none !important;
+  }
+}
+
+@media (max-width: 1023.98px) {
+  .p-datatable .p-datatable-thead > tr > th.col-hide-lg,
+  .p-datatable .p-datatable-tbody > tr > td.col-hide-lg,
+  .col-hide-lg {
+    display: none !important;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   STACKED CARD TABLES (`pos-stack`)
+   --------------------------------------------------------------------------
+   Paired with `responsiveLayout="stack" breakpoint="768px"` on the DataTable.
+
+   WHAT PRIMEREACT GIVES US, AND WHAT IT DOES NOT
+   ----------------------------------------------
+   `responsiveLayout="stack"` makes PrimeReact do exactly two useful things: it
+   stamps `p-datatable-responsive-stack` on the root and it renders a
+   `<span class="p-column-title">` inside every body cell, carrying the column
+   header as real markup. That span is the whole point — it is what lets a cell
+   read as "Total  $1,284.00" once the header row is gone.
+
+   What it does NOT reliably do in this version is inject the media query that
+   performs the stacking; verified in a browser at 375px, no such stylesheet
+   reaches the document, and the table kept its header row and its
+   column-driven width. So the layout is defined here instead, keyed off the
+   `pos-stack` class the call sites already pass. Owning it outright also means
+   the cards cannot silently regress on a PrimeReact upgrade.
+
+   The table, its body and its rows all become block boxes so the table stops
+   being sized by its columns; each row is then a bordered card and each cell a
+   label/value line.
+   ========================================================================== */
+@media (max-width: 767.98px) {
+  /* The header row is what the labels inside each cell replace. */
+  .pos-stack .p-datatable-thead,
+  .pos-stack .p-datatable-tfoot {
+    display: none;
+  }
+
+  /* Drop out of table layout entirely: while these are `display: table*`, the
+     column widths still drive the table's intrinsic width and the wrapper
+     scrolls sideways — the exact thing the cards exist to remove. */
+  .pos-stack .p-datatable-table,
+  .pos-stack .p-datatable-tbody {
+    display: block;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .pos-stack .p-datatable-tbody > tr {
+    display: block;
+    width: 100%;
+    margin-bottom: 0.75rem;
+    border: 1px solid #e2e8f0;
+    border-radius: 0.75rem;
+    background: #ffffff;
+    box-shadow: 0 1px 2px rgb(15 23 42 / 0.04);
+    overflow: hidden;
+  }
+
+  /*
+   * `!important` is load-bearing here, not defensive noise.
+   *
+   * Columns across the system carry an inline `style={{ width: '150px' }}` /
+   * `minWidth` that PrimeReact copies onto the `<td>`, and an inline style
+   * beats any plain declaration. Without these overrides a stacked card would
+   * keep its desktop column widths — 110px label/value lines side by side,
+   * i.e. exactly the broken layout the cards replace.
+   */
+  .pos-stack .p-datatable-tbody > tr > td {
+    display: flex !important;
+    width: 100% !important;
+    min-width: 0 !important;
+    max-width: none !important;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0.625rem 0.875rem;
+    border: 0 none;
+    border-bottom: 1px solid #f1f5f9 !important;
+    text-align: left;
+    /* A cell whose body template returns bare text becomes an anonymous flex
+       item, which no selector can reach. Breaking long words on the cell
+       itself is what keeps an unspaced product name or a hash inside the
+       card. */
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+
+  .pos-stack .p-datatable-tbody > tr > td:last-child {
+    border-bottom: 0 none !important;
+    background: #f8fafc;
+  }
+
+  .pos-stack .p-datatable-tbody > tr > td > .p-column-title {
+    display: block;
+    flex: 0 0 auto;
+    color: #64748b;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  /* The value side must be free to shrink, or a long product name pushes the
+     card wider than the screen. */
+  .pos-stack .p-datatable-tbody > tr > td > *:not(.p-column-title) {
+    min-width: 0;
+    max-width: 70%;
+    text-align: right;
+  }
+
+  /* Zebra striping is meaningless once every row is a delimited card, and it
+     leaves inconsistent grey blocks inside a single card. */
+  .pos-stack.p-datatable-striped .p-datatable-tbody > tr:nth-child(even) > td,
+  .pos-stack .p-datatable-tbody > tr:nth-child(even) {
+    background: #ffffff;
+  }
+
+  .pos-stack.p-datatable-striped .p-datatable-tbody > tr:nth-child(even) > td:last-child {
+    background: #f8fafc;
+  }
+
+  /* The empty-state and loading rows are not data: they read better as plain
+     centred text than as an empty card. */
+  .pos-stack .p-datatable-tbody > tr.p-datatable-emptymessage {
+    border: 0 none;
+    box-shadow: none;
+    background: transparent;
+  }
+
+  .pos-stack .p-datatable-tbody > tr.p-datatable-emptymessage > td {
+    display: block !important;
+    text-align: center;
+    background: transparent;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   TAB BARS AND BUTTON GROUPS
+   --------------------------------------------------------------------------
+   `TabView` (Usuarios, Monitor de Jobs) lays its tabs out in one nowrap row and
+   `SelectButton` (Historial, Cierres) does the same with its segments. Both are
+   wider than a phone. Scrolling the strip is the right answer rather than
+   wrapping it: a segmented control that wraps stops reading as one control. */
+@media (max-width: 767.98px) {
+  .p-tabview .p-tabview-nav {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+  }
+
+  .p-tabview .p-tabview-nav::-webkit-scrollbar {
+    display: none;
+  }
+
+  .p-tabview .p-tabview-nav li .p-tabview-nav-link {
+    white-space: nowrap;
+    padding: 0.75rem 0.875rem;
+    font-size: 0.8125rem;
+  }
+
+  .p-tabview .p-tabview-panels {
+    padding: 1rem 0;
+  }
+
+  .p-selectbutton {
+    display: flex;
+    flex-wrap: nowrap;
+  }
+
+  .p-selectbutton .p-button {
+    white-space: nowrap;
+    padding: 0.6rem 0.75rem;
+    font-size: 0.8125rem;
+  }
+}
+
+/* Sonner toasts sit under the sticky header on phones and stretch edge to edge
+   rather than hanging off the right side of a 360px screen. */
+@media (max-width: 640px) {
+  [data-sonner-toaster] {
+    width: calc(100vw - 1.5rem) !important;
+    right: 0.75rem !important;
+    left: 0.75rem !important;
+  }
+}
+
 @media print {
   @page {
     size: 58mm auto;

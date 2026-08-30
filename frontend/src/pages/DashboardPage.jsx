@@ -79,9 +79,9 @@ export default function DashboardPage() {
 
   return (
     <AppLayout>
-      <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
+      <div className="mb-5 flex flex-col gap-3 sm:mb-6 sm:flex-row sm:flex-wrap sm:items-end sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Dashboard</h1>
+          <h1 className="text-xl font-bold sm:text-2xl text-slate-900">Dashboard</h1>
           <p className="text-sm text-slate-500">
             Bienvenido, {user?.name}. Resumen ejecutivo del negocio.
           </p>
@@ -92,7 +92,7 @@ export default function DashboardPage() {
         {canSeeAnalytics && (
           <button
             onClick={() => setShowAnalytics(true)}
-            className="group flex cursor-pointer items-center gap-2.5 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-4 py-2.5 text-sm font-semibold text-white shadow-md shadow-indigo-200 transition-all hover:shadow-lg hover:shadow-indigo-300"
+            className="group flex w-full cursor-pointer items-center justify-center gap-2.5 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-4 py-3 text-sm font-semibold text-white shadow-md shadow-indigo-200 transition-all hover:shadow-lg hover:shadow-indigo-300 sm:w-auto sm:py-2.5"
           >
             <i className="pi pi-chart-line" />
             Analítica Financiera
@@ -107,7 +107,7 @@ export default function DashboardPage() {
         {kpis.map((kpi) => {
           const c = colorMap[kpi.color];
           return (
-            <div key={kpi.label} className={`rounded-xl bg-white p-5 shadow-sm ring-1 ${c.ring}`}>
+            <div key={kpi.label} className={`min-w-0 rounded-xl bg-white p-4 shadow-sm sm:p-5 ring-1 ${c.ring}`}>
               <div className="flex items-center gap-3">
                 <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${c.bg}`}>
                   <svg className={`h-5 w-5 ${c.icon}`} fill="none" viewBox="0 0 24 24" strokeWidth={1.75} stroke="currentColor">
@@ -116,7 +116,7 @@ export default function DashboardPage() {
                 </div>
                 <div className="min-w-0">
                   <p className="truncate text-xs font-medium text-slate-500">{kpi.label}</p>
-                  <p className="text-xl font-bold text-slate-900">{kpi.value}</p>
+                  <p className="truncate text-lg font-bold tabular-nums text-slate-900 sm:text-xl">{kpi.value}</p>
                 </div>
               </div>
             </div>
@@ -125,10 +125,10 @@ export default function DashboardPage() {
       </div>
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
-        <div className="rounded-xl bg-white p-5 shadow-sm ring-1 ring-slate-200 xl:col-span-2">
+        <div className="rounded-xl bg-white p-4 shadow-sm sm:p-5 ring-1 ring-slate-200 xl:col-span-2">
           <h2 className="mb-4 text-sm font-semibold text-slate-800">Tendencia de Ventas por Hora (Hoy)</h2>
           {hourly.some(h => h.total > 0) ? (
-            <ResponsiveContainer width="100%" height={280}>
+            <ResponsiveContainer width="100%" height={220} className="sm:!h-[280px]">
               <LineChart data={hourly} margin={{ top: 5, right: 20, bottom: 5, left: 10 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
                 <XAxis dataKey="hour" tick={{ fontSize: 11 }} stroke="#94a3b8" interval={2} />
@@ -147,7 +147,7 @@ export default function DashboardPage() {
           )}
         </div>
 
-        <div className="rounded-xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
+        <div className="rounded-xl bg-white p-4 shadow-sm sm:p-5 ring-1 ring-slate-200">
           <h2 className="mb-4 text-sm font-semibold text-slate-800">Top 5 Productos (Mes)</h2>
           {topProducts.length > 0 ? (
             <>

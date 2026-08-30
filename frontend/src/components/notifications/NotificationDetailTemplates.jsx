@@ -16,14 +16,14 @@ export function AutoCashClosingDetail({ data }) {
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <div className="rounded-xl bg-indigo-50 p-3 text-center">
           <p className="text-[11px] font-medium text-indigo-600">Cajas Cerradas</p>
-          <p className="mt-1 text-xl font-bold text-indigo-900">{data?.registers_closed ?? 0}</p>
+          <p className="mt-1 truncate text-lg font-bold tabular-nums text-indigo-900 sm:text-xl">{data?.registers_closed ?? 0}</p>
         </div>
         <div className="rounded-xl bg-emerald-50 p-3 text-center">
           <p className="text-[11px] font-medium text-emerald-600">Total Esperado</p>
-          <p className="mt-1 text-xl font-bold text-emerald-900">{fmt(data?.total_expected)}</p>
+          <p className="mt-1 truncate text-lg font-bold tabular-nums text-emerald-900 sm:text-xl">{fmt(data?.total_expected)}</p>
         </div>
         <div className={`rounded-xl p-3 text-center ${data?.registers_failed > 0 ? 'bg-rose-50' : 'bg-slate-50'}`}>
           <p className={`text-[11px] font-medium ${data?.registers_failed > 0 ? 'text-rose-600' : 'text-slate-500'}`}>Fallidas</p>

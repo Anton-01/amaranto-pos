@@ -192,13 +192,13 @@ export default function ProfilePage() {
   return (
     <AppLayout>
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-slate-900">Mi Perfil</h1>
+        <h1 className="text-xl font-bold sm:text-2xl text-slate-900">Mi Perfil</h1>
         <p className="text-sm text-slate-500">Gestiona tu informacion personal y seguridad.</p>
       </div>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         {/* Personal Data */}
-        <div className="rounded-xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
+        <div className="rounded-xl bg-white p-4 shadow-sm sm:p-6 ring-1 ring-slate-200">
           <div className="mb-5 flex items-center gap-4">
             <div className="flex h-14 w-14 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-indigo-700 text-lg font-bold text-white shadow-md shadow-indigo-200">
               {initials}
@@ -230,7 +230,7 @@ export default function ProfilePage() {
                   onChange={(e) => { setPhoneCountryCode(e.value); setPhone(''); }}
                   disabled={savingProfile}
                   className="shrink-0 text-sm"
-                  pt={{ root: { className: 'w-40' } }}
+                  pt={{ root: { className: 'w-28 sm:w-40' } }}
                 />
                 <InputMask
                   value={phone}
@@ -255,7 +255,7 @@ export default function ProfilePage() {
         </div>
 
         {/* Password */}
-        <div className="rounded-xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
+        <div className="rounded-xl bg-white p-4 shadow-sm sm:p-6 ring-1 ring-slate-200">
           <h2 className="mb-5 text-base font-semibold text-slate-900">Seguridad</h2>
           <form onSubmit={handleChangePassword} className="space-y-4">
             <div>
@@ -350,7 +350,7 @@ export default function ProfilePage() {
         </div>
 
         {/* Sessions */}
-        <div className="rounded-xl bg-white p-6 shadow-sm ring-1 ring-slate-200 lg:col-span-2">
+        <div className="rounded-xl bg-white p-4 shadow-sm sm:p-6 ring-1 ring-slate-200 lg:col-span-2">
           <h2 className="mb-4 text-base font-semibold text-slate-900">Auditoria de Sesiones</h2>
           {sessions.length === 0 ? (
             <p className="text-sm text-slate-400">Sin registros de sesion.</p>

@@ -11,6 +11,7 @@ import { toast } from 'sonner';
 import api from '../../api/axios';
 import AppLayout from '../../components/layout/AppLayout';
 import { tableStatusMeta, fmtCurrency } from '../../components/dining/tableStatus';
+import { STACK_TABLE, STACK_CLASS, HIDE_BELOW } from '../../lib/responsive';
 
 const statusOptions = [
   { label: 'Disponible', value: 'available' },
@@ -178,18 +179,18 @@ export default function TablesPage() {
           <h1 className="text-xl font-semibold text-slate-900">Catálogo de Mesas</h1>
           <p className="text-sm text-slate-500">Alta, capacidad y zona de las mesas del comedor.</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
           <InputText
             value={globalFilter}
             onChange={(e) => setGlobalFilter(e.target.value)}
             placeholder="Buscar mesa o zona..."
-            className="w-56 rounded-lg border-slate-200 px-3 py-2 text-sm"
+            className="w-full rounded-lg border-slate-200 px-3 py-2 text-sm sm:w-56"
           />
           <Button
             label="Nueva Mesa"
             icon="pi pi-plus"
             onClick={openCreate}
-            className="cursor-pointer rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500"
+            className="w-full cursor-pointer justify-center rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-indigo-500 sm:w-auto sm:py-2"
             pt={{ root: { className: 'border-0' } }}
           />
         </div>
@@ -204,14 +205,17 @@ export default function TablesPage() {
           paginator
           rows={15}
           emptyMessage="No hay mesas registradas."
-          className="text-sm"
+          className={`text-sm ${STACK_CLASS}`}
+          {...STACK_TABLE}
         >
           <Column field="name" header="Mesa" sortable />
           <Column field="capacity" header="Capacidad" sortable body={(r) => `${r.capacity} lugares`} />
           <Column field="zone" header="Zona" sortable body={(r) => r.zone || <span className="text-slate-400">—</span>} />
           <Column field="status" header="Estatus" body={statusTemplate} sortable />
           <Column header="Cuenta abierta" body={sessionTemplate} />
-          <Column field="is_active" header="Alta" body={activeTemplate} sortable />
+          {/* Soft-delete state is an admin detail; status and open tab are what
+              a phone needs to see. */}
+          <Column field="is_active" header="Alta" body={activeTemplate} sortable className={HIDE_BELOW.md} />
           <Column header="Acciones" body={actionsTemplate} style={{ width: '110px' }} />
         </DataTable>
       </div>

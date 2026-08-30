@@ -32,7 +32,7 @@ function AnalyticsSkeleton() {
         <div className="h-6 w-6 animate-spin rounded-full border-3 border-indigo-600 border-t-transparent" />
         <span className="text-sm font-medium text-slate-500">Procesando métricas del mes...</span>
       </div>
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
         {[...Array(4)].map((_, i) => (
           <div key={i} className="animate-pulse rounded-xl bg-slate-100 p-4">
             <div className="h-3 w-20 rounded bg-slate-200" />
@@ -148,13 +148,13 @@ export default function MonthlyAnalyticsModal({ visible, onHide }) {
       header={null}
       className="w-full max-w-5xl"
       pt={{
-        mask: { className: 'backdrop-blur-sm bg-black/30' },
-        root: { className: 'rounded-2xl border-0 shadow-2xl' },
-        content: { className: 'p-0' },
+        mask: { className: 'backdrop-blur-sm bg-black/30 p-3 sm:p-4' },
+        root: { className: 'rounded-2xl border-0 shadow-2xl max-h-[92dvh]' },
+        content: { className: 'p-0 overflow-y-auto overscroll-contain' },
       }}
     >
-      <div className="p-6">
-        <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+      <div className="p-4 sm:p-6">
+        <div className="mb-4 flex flex-col gap-3 sm:mb-5 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
           <div className="flex items-center gap-3">
             <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-50">
               <i className="pi pi-chart-line text-lg text-indigo-600" />
@@ -166,6 +166,8 @@ export default function MonthlyAnalyticsModal({ visible, onHide }) {
           </div>
 
           <div className="flex items-center gap-2">
+            {/* Month steppers keep their size; the export button takes the rest
+                of the row on a phone instead of wrapping onto its own line. */}
             <Button
               icon="pi pi-chevron-left"
               onClick={() => shiftMonth(-1)}
@@ -189,7 +191,7 @@ export default function MonthlyAnalyticsModal({ visible, onHide }) {
               icon="pi pi-download"
               onClick={exportCsv}
               disabled={loading || !data}
-              className="cursor-pointer rounded-lg bg-indigo-600 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
+              className="flex-1 cursor-pointer justify-center rounded-lg bg-indigo-600 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50 sm:flex-none"
               pt={{ root: { className: 'border-0' } }}
             />
           </div>
@@ -202,11 +204,11 @@ export default function MonthlyAnalyticsModal({ visible, onHide }) {
         ) : (
           <div className="space-y-4">
             {/* KPIs con comparativa */}
-            <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
               {kpis.map((kpi) => (
-                <div key={kpi.label} className={`rounded-xl p-4 ${kpi.bg}`}>
+                <div key={kpi.label} className={`min-w-0 rounded-xl p-3 sm:p-4 ${kpi.bg}`}>
                   <p className={`text-[11px] font-medium ${kpi.tag}`}>{kpi.label}</p>
-                  <p className={`mt-1 text-xl font-bold ${kpi.text}`}>{kpi.value}</p>
+                  <p className={`mt-1 truncate text-lg font-bold tabular-nums sm:text-xl ${kpi.text}`}>{kpi.value}</p>
                   <div className="mt-1.5"><DeltaChip value={kpi.delta} /></div>
                 </div>
               ))}

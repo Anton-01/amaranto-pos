@@ -103,7 +103,8 @@ export default function NotificationBell() {
     <>
       <button
         onClick={(e) => panelRef.current?.toggle(e)}
-        className="relative flex h-9 w-9 cursor-pointer items-center justify-center rounded-lg text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700"
+        // 40px hit area on touch screens, back to the denser 36px from sm up.
+        className="relative flex h-10 w-10 cursor-pointer items-center justify-center rounded-lg text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700 sm:h-9 sm:w-9"
         title="Notificaciones"
       >
         <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.75} stroke="currentColor">
@@ -183,7 +184,7 @@ export default function NotificationBell() {
                           <span className="text-[11px] text-slate-400">{timeAgo(n.created_at)}</span>
                           <button
                             onClick={() => openDetail(n)}
-                            className="cursor-pointer text-[11px] font-semibold text-indigo-600 hover:text-indigo-800"
+                            className="-my-1 cursor-pointer py-1 text-[11px] font-semibold text-indigo-600 hover:text-indigo-800"
                           >
                             Ver Detalles →
                           </button>

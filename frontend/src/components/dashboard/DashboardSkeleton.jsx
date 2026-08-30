@@ -29,15 +29,15 @@ export default function DashboardSkeleton() {
       <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
         <div className="space-y-2">
           <div className="h-7 w-40 animate-pulse rounded-lg bg-slate-200" />
-          <div className="h-4 w-72 animate-pulse rounded bg-slate-100" />
+          <div className="h-4 w-full max-w-72 animate-pulse rounded bg-slate-100" />
         </div>
-        <div className="h-10 w-48 animate-pulse rounded-xl bg-slate-200" />
+        <div className="h-10 w-full animate-pulse rounded-xl bg-slate-200 sm:w-48" />
       </div>
 
       {/* KPI strip: same 1 / 2 / 4 column grid as the real cards. */}
       <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {[0, 1, 2, 3].map((i) => (
-          <div key={i} className="rounded-xl bg-white p-5 shadow-sm ring-1 ring-slate-100">
+          <div key={i} className="rounded-xl bg-white p-4 shadow-sm ring-1 ring-slate-100 sm:p-5">
             <div className="flex items-center gap-3">
               <div className="h-10 w-10 shrink-0 animate-pulse rounded-xl bg-slate-200" />
               <div className="min-w-0 flex-1 space-y-2">
@@ -52,9 +52,9 @@ export default function DashboardSkeleton() {
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
         {/* Hourly trend: the bars stand in for the line chart's plotting area,
             with staggered heights so the block does not read as a flat slab. */}
-        <div className="rounded-xl bg-white p-5 shadow-sm ring-1 ring-slate-200 xl:col-span-2">
+        <div className="rounded-xl bg-white p-4 shadow-sm ring-1 ring-slate-200 sm:p-5 xl:col-span-2">
           <div className="mb-4 h-4 w-56 animate-pulse rounded bg-slate-200" />
-          <div className="flex h-[280px] items-end gap-2">
+          <div className="flex h-[220px] items-end gap-2 sm:h-[280px]">
             {[45, 70, 35, 85, 55, 75, 40, 90, 60, 50, 80, 65].map((height, i) => (
               <div
                 key={i}

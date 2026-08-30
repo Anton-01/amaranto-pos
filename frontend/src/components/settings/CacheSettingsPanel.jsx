@@ -8,6 +8,7 @@ import { Dialog } from 'primereact/dialog';
 import { Tag } from 'primereact/tag';
 import { toast } from 'sonner';
 import api from '../../api/axios';
+import { STACK_TABLE, STACK_CLASS, HIDE_BELOW, dialogClass, DIALOG_PT } from '../../lib/responsive';
 
 const emptyForm = {
   module_name: '',
@@ -286,13 +287,14 @@ export default function CacheSettingsPanel() {
         loading={loading}
         dataKey="module_name"
         emptyMessage="No hay módulos cacheables registrados."
-        className="text-sm"
+        className={`text-sm ${STACK_CLASS}`}
         stripedRows
+        {...STACK_TABLE}
       >
         <Column header="Módulo" body={moduleTemplate} style={{ minWidth: '260px' }} />
         <Column header="Tiempo de Refresco" body={durationTemplate} style={{ minWidth: '200px' }} />
         <Column header="Estatus" body={statusTemplate} style={{ width: '120px' }} />
-        <Column header="Última Modificación" body={updatedTemplate} style={{ minWidth: '180px' }} />
+        <Column header="Última Modificación" body={updatedTemplate} className={HIDE_BELOW.lg} style={{ minWidth: '180px' }} />
         <Column header="Acciones" body={actionsTemplate} style={{ width: '150px' }} />
       </DataTable>
 
@@ -300,7 +302,8 @@ export default function CacheSettingsPanel() {
         visible={showForm}
         onHide={() => !saving && setShowForm(false)}
         header={editing ? 'Editar Política de Caché' : 'Nueva Política de Caché'}
-        style={{ width: '520px' }}
+        className={dialogClass('md')}
+        pt={DIALOG_PT}
         modal
         draggable={false}
         closable={!saving}
@@ -384,7 +387,8 @@ export default function CacheSettingsPanel() {
         visible={deleteTarget !== null}
         onHide={() => !deleting && setDeleteTarget(null)}
         header="Eliminar Política de Caché"
-        style={{ width: '420px' }}
+        className={dialogClass('sm')}
+        pt={DIALOG_PT}
         modal
         draggable={false}
         closable={!deleting}
