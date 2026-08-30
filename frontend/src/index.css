@@ -173,7 +173,7 @@ body {
 
 /* Tables tagged `.pos-table` opt into a comfortable minimum column width so a
    scrolled table reads as a table rather than as crushed columns. */
-@media (max-width: 768px) {
+@media (max-width: 767.98px) {
   .pos-table:not(.pos-stack) .p-datatable-table {
     min-width: 640px;
   }
@@ -213,27 +213,40 @@ body {
    which makes a single class the exact equivalent.
 
    The rules are written as "hide below the breakpoint" rather than "hide, then
-   show above it" so that above the breakpoint the cell keeps whatever display
-   mode its context gives it: `table-cell` in a normal table, `flex` in a
-   stacked card (below). `!important` is required because PrimeReact's injected
-   stack stylesheet targets `td` through a higher-specificity selector.
+   show above it", so above the breakpoint the cell keeps whatever display mode
+   its context gives it: `table-cell` in a normal table, `flex` in a stacked
+   card.
 
-   In a stacked card these classes drop the whole label/value line, which is
-   how a card stays short enough to scan: secondary fields simply do not appear
-   on a phone. */
+   The long selectors are deliberate. The stacked-card rules below set
+   `display: flex !important` on every `<td>` through a three-part descendant
+   selector; a bare `.col-hide-md` would lose the specificity contest to it and
+   the column would reappear inside the card. Matching that selector's shape
+   here is what makes hiding win, and the bare class keeps the rule working on
+   any element outside a table.
+
+   In a stacked card these classes drop the whole label/value line, which is how
+   a card stays short enough to scan: secondary fields simply do not appear on
+   a phone.
+   ========================================================================== */
 @media (max-width: 639.98px) {
+  .p-datatable .p-datatable-thead > tr > th.col-hide-sm,
+  .p-datatable .p-datatable-tbody > tr > td.col-hide-sm,
   .col-hide-sm {
     display: none !important;
   }
 }
 
 @media (max-width: 767.98px) {
+  .p-datatable .p-datatable-thead > tr > th.col-hide-md,
+  .p-datatable .p-datatable-tbody > tr > td.col-hide-md,
   .col-hide-md {
     display: none !important;
   }
 }
 
 @media (max-width: 1023.98px) {
+  .p-datatable .p-datatable-thead > tr > th.col-hide-lg,
+  .p-datatable .p-datatable-tbody > tr > td.col-hide-lg,
   .col-hide-lg {
     display: none !important;
   }
@@ -244,19 +257,45 @@ body {
    --------------------------------------------------------------------------
    Paired with `responsiveLayout="stack" breakpoint="768px"` on the DataTable.
 
-   PrimeReact injects, per table, a media query that hides the header row and
-   turns every `<td>` into a full-width flex line with its column title on the
-   left and the value on the right. That gives the label/value structure but no
-   visual grouping: consecutive rows run together as one undifferentiated list.
+   WHAT PRIMEREACT GIVES US, AND WHAT IT DOES NOT
+   ----------------------------------------------
+   `responsiveLayout="stack"` makes PrimeReact do exactly two useful things: it
+   stamps `p-datatable-responsive-stack` on the root and it renders a
+   `<span class="p-column-title">` inside every body cell, carrying the column
+   header as real markup. That span is the whole point — it is what lets a cell
+   read as "Total  $1,284.00" once the header row is gone.
 
-   These rules supply the missing part — each `<tr>` becomes a bordered, rounded
-   card. The result keeps DataTable's pagination, sorting, filtering and lazy
-   loading completely intact, which a hand-rolled card list would have had to
-   reimplement per page.
+   What it does NOT reliably do in this version is inject the media query that
+   performs the stacking; verified in a browser at 375px, no such stylesheet
+   reaches the document, and the table kept its header row and its
+   column-driven width. So the layout is defined here instead, keyed off the
+   `pos-stack` class the call sites already pass. Owning it outright also means
+   the cards cannot silently regress on a PrimeReact upgrade.
+
+   The table, its body and its rows all become block boxes so the table stops
+   being sized by its columns; each row is then a bordered card and each cell a
+   label/value line.
    ========================================================================== */
-@media (max-width: 768px) {
+@media (max-width: 767.98px) {
+  /* The header row is what the labels inside each cell replace. */
+  .pos-stack .p-datatable-thead,
+  .pos-stack .p-datatable-tfoot {
+    display: none;
+  }
+
+  /* Drop out of table layout entirely: while these are `display: table*`, the
+     column widths still drive the table's intrinsic width and the wrapper
+     scrolls sideways — the exact thing the cards exist to remove. */
+  .pos-stack .p-datatable-table,
+  .pos-stack .p-datatable-tbody {
+    display: block;
+    width: 100%;
+    min-width: 0;
+  }
+
   .pos-stack .p-datatable-tbody > tr {
     display: block;
+    width: 100%;
     margin-bottom: 0.75rem;
     border: 1px solid #e2e8f0;
     border-radius: 0.75rem;
@@ -269,22 +308,29 @@ body {
    * `!important` is load-bearing here, not defensive noise.
    *
    * Columns across the system carry an inline `style={{ width: '150px' }}` /
-   * `minWidth` that PrimeReact copies onto the `<td>`. An inline style beats
-   * the `width: 100%` PrimeReact's own stack stylesheet sets, so without these
-   * overrides a stacked card would keep its desktop column widths — 110px
-   * label/value lines side by side, i.e. exactly the broken layout the cards
-   * exist to replace.
+   * `minWidth` that PrimeReact copies onto the `<td>`, and an inline style
+   * beats any plain declaration. Without these overrides a stacked card would
+   * keep its desktop column widths — 110px label/value lines side by side,
+   * i.e. exactly the broken layout the cards replace.
    */
   .pos-stack .p-datatable-tbody > tr > td {
     display: flex !important;
     width: 100% !important;
     min-width: 0 !important;
     max-width: none !important;
+    align-items: center;
+    justify-content: space-between;
     gap: 1rem;
     padding: 0.625rem 0.875rem;
     border: 0 none;
     border-bottom: 1px solid #f1f5f9 !important;
     text-align: left;
+    /* A cell whose body template returns bare text becomes an anonymous flex
+       item, which no selector can reach. Breaking long words on the cell
+       itself is what keeps an unspaced product name or a hash inside the
+       card. */
+    overflow-wrap: anywhere;
+    word-break: break-word;
   }
 
   .pos-stack .p-datatable-tbody > tr > td:last-child {
@@ -293,8 +339,8 @@ body {
   }
 
   .pos-stack .p-datatable-tbody > tr > td > .p-column-title {
+    display: block;
     flex: 0 0 auto;
-    margin-right: auto;
     color: #64748b;
     font-size: 0.6875rem;
     font-weight: 600;
@@ -330,28 +376,9 @@ body {
   }
 
   .pos-stack .p-datatable-tbody > tr.p-datatable-emptymessage > td {
-    display: block;
+    display: block !important;
     text-align: center;
     background: transparent;
-  }
-}
-
-/* --------------------------------------------------------------------------
-   OVERLAYS — dropdowns, overlay panels and the notification tray must never be
-   wider than the screen they pop over. */
-@media (max-width: 640px) {
-  .p-overlaypanel,
-  .p-dropdown-panel,
-  .p-multiselect-panel,
-  .p-datepicker:not(.p-datepicker-inline) {
-    max-width: calc(100vw - 1.5rem) !important;
-  }
-
-  /* Anchoring the left edge is enough: with `max-width` already capped, a
-     panel opened from a button near the right edge can no longer spill past
-     the viewport. */
-  .p-overlaypanel {
-    left: 0.75rem !important;
   }
 }
 
@@ -362,7 +389,7 @@ body {
    `SelectButton` (Historial, Cierres) does the same with its segments. Both are
    wider than a phone. Scrolling the strip is the right answer rather than
    wrapping it: a segmented control that wraps stops reading as one control. */
-@media (max-width: 768px) {
+@media (max-width: 767.98px) {
   .p-tabview .p-tabview-nav {
     flex-wrap: nowrap;
     overflow-x: auto;
