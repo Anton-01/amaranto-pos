@@ -9,6 +9,7 @@ import { Dropdown } from 'primereact/dropdown';
 import { toast } from 'sonner';
 import api from '../../api/axios';
 import AppLayout from '../../components/layout/AppLayout';
+import { STACK_TABLE, STACK_CLASS, HIDE_BELOW } from '../../lib/responsive';
 
 const statusFilterOptions = [
   { label: 'Todos', value: null },
@@ -166,7 +167,7 @@ export default function PaymentMethodsPage() {
 
   return (
     <AppLayout>
-      <div className="mb-6 flex items-center justify-between">
+      <div className="mb-5 flex flex-col gap-3 sm:mb-6 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Métodos de Pago</h1>
           <p className="text-sm text-slate-500">Administra los métodos de pago aceptados en el POS.</p>
@@ -185,8 +186,8 @@ export default function PaymentMethodsPage() {
             value={globalFilter}
             onChange={(e) => setGlobalFilter(e.target.value)}
             placeholder="Buscar método de pago..."
-            className="w-72 rounded-lg border-slate-200 px-3 py-2 text-sm"
-            pt={{ root: { className: 'w-72' } }}
+            className="w-full rounded-lg border-slate-200 px-3 py-2 text-sm sm:w-72"
+            pt={{ root: { className: 'w-full sm:w-72' } }}
           />
         </div>
 
@@ -198,13 +199,15 @@ export default function PaymentMethodsPage() {
           sortField="name"
           sortOrder={1}
           stripedRows
+          {...STACK_TABLE}
           pt={{
-            root: { className: 'text-sm' },
+            root: { className: `text-sm ${STACK_CLASS}` },
             thead: { className: 'bg-slate-50' },
           }}
         >
           <Column field="name" header="Nombre" sortable className="font-medium" />
-          <Column field="slug" header="Slug" sortable className="font-mono text-xs" />
+          {/* Slug is a developer-facing identifier: dropped from the phone card. */}
+          <Column field="slug" header="Slug" sortable className={`font-mono text-xs ${HIDE_BELOW.md}`} />
           <Column field="status" header="Estatus" body={statusTemplate} sortable />
           <Column field="is_system" header="Tipo" body={systemTemplate} sortable />
           <Column header="Acciones" body={actionsTemplate} className="w-32" />

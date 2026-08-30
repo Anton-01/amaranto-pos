@@ -174,11 +174,11 @@ body {
 /* Tables tagged `.pos-table` opt into a comfortable minimum column width so a
    scrolled table reads as a table rather than as crushed columns. */
 @media (max-width: 768px) {
-  .pos-table .p-datatable-table {
+  .pos-table:not(.pos-stack) .p-datatable-table {
     min-width: 640px;
   }
 
-  .pos-table.pos-table-wide .p-datatable-table {
+  .pos-table.pos-table-wide:not(.pos-stack) .p-datatable-table {
     min-width: 900px;
   }
 
@@ -204,37 +204,135 @@ body {
   }
 }
 
-/* Column visibility helpers for PrimeReact, which renders `<th>`/`<td>` itself:
-   Tailwind's `hidden md:table-cell` cannot be applied to a column PrimeReact
-   owns, but `className` on <Column> lands on both the header and body cells, so
-   these two classes do the same job declaratively. */
-.col-hide-sm {
-  display: none;
-}
+/* --------------------------------------------------------------------------
+   COLUMN VISIBILITY — Tailwind's `hidden md:table-cell` for PrimeReact columns
+   --------------------------------------------------------------------------
+   PrimeReact renders the `<th>` and `<td>` elements itself, so a Tailwind
+   visibility utility cannot be attached to them from the outside. `className`
+   on a <Column>, however, is forwarded to BOTH the header and the body cell —
+   which makes a single class the exact equivalent.
 
-@media (min-width: 640px) {
+   The rules are written as "hide below the breakpoint" rather than "hide, then
+   show above it" so that above the breakpoint the cell keeps whatever display
+   mode its context gives it: `table-cell` in a normal table, `flex` in a
+   stacked card (below). `!important` is required because PrimeReact's injected
+   stack stylesheet targets `td` through a higher-specificity selector.
+
+   In a stacked card these classes drop the whole label/value line, which is
+   how a card stays short enough to scan: secondary fields simply do not appear
+   on a phone. */
+@media (max-width: 639.98px) {
   .col-hide-sm {
-    display: table-cell;
+    display: none !important;
   }
 }
 
-.col-hide-md {
-  display: none;
-}
-
-@media (min-width: 768px) {
+@media (max-width: 767.98px) {
   .col-hide-md {
-    display: table-cell;
+    display: none !important;
   }
 }
 
-.col-hide-lg {
-  display: none;
+@media (max-width: 1023.98px) {
+  .col-hide-lg {
+    display: none !important;
+  }
 }
 
-@media (min-width: 1024px) {
-  .col-hide-lg {
-    display: table-cell;
+/* --------------------------------------------------------------------------
+   STACKED CARD TABLES (`pos-stack`)
+   --------------------------------------------------------------------------
+   Paired with `responsiveLayout="stack" breakpoint="768px"` on the DataTable.
+
+   PrimeReact injects, per table, a media query that hides the header row and
+   turns every `<td>` into a full-width flex line with its column title on the
+   left and the value on the right. That gives the label/value structure but no
+   visual grouping: consecutive rows run together as one undifferentiated list.
+
+   These rules supply the missing part — each `<tr>` becomes a bordered, rounded
+   card. The result keeps DataTable's pagination, sorting, filtering and lazy
+   loading completely intact, which a hand-rolled card list would have had to
+   reimplement per page.
+   ========================================================================== */
+@media (max-width: 768px) {
+  .pos-stack .p-datatable-tbody > tr {
+    display: block;
+    margin-bottom: 0.75rem;
+    border: 1px solid #e2e8f0;
+    border-radius: 0.75rem;
+    background: #ffffff;
+    box-shadow: 0 1px 2px rgb(15 23 42 / 0.04);
+    overflow: hidden;
+  }
+
+  /*
+   * `!important` is load-bearing here, not defensive noise.
+   *
+   * Columns across the system carry an inline `style={{ width: '150px' }}` /
+   * `minWidth` that PrimeReact copies onto the `<td>`. An inline style beats
+   * the `width: 100%` PrimeReact's own stack stylesheet sets, so without these
+   * overrides a stacked card would keep its desktop column widths — 110px
+   * label/value lines side by side, i.e. exactly the broken layout the cards
+   * exist to replace.
+   */
+  .pos-stack .p-datatable-tbody > tr > td {
+    display: flex !important;
+    width: 100% !important;
+    min-width: 0 !important;
+    max-width: none !important;
+    gap: 1rem;
+    padding: 0.625rem 0.875rem;
+    border: 0 none;
+    border-bottom: 1px solid #f1f5f9 !important;
+    text-align: left;
+  }
+
+  .pos-stack .p-datatable-tbody > tr > td:last-child {
+    border-bottom: 0 none !important;
+    background: #f8fafc;
+  }
+
+  .pos-stack .p-datatable-tbody > tr > td > .p-column-title {
+    flex: 0 0 auto;
+    margin-right: auto;
+    color: #64748b;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  /* The value side must be free to shrink, or a long product name pushes the
+     card wider than the screen. */
+  .pos-stack .p-datatable-tbody > tr > td > *:not(.p-column-title) {
+    min-width: 0;
+    max-width: 70%;
+    text-align: right;
+  }
+
+  /* Zebra striping is meaningless once every row is a delimited card, and it
+     leaves inconsistent grey blocks inside a single card. */
+  .pos-stack.p-datatable-striped .p-datatable-tbody > tr:nth-child(even) > td,
+  .pos-stack .p-datatable-tbody > tr:nth-child(even) {
+    background: #ffffff;
+  }
+
+  .pos-stack.p-datatable-striped .p-datatable-tbody > tr:nth-child(even) > td:last-child {
+    background: #f8fafc;
+  }
+
+  /* The empty-state and loading rows are not data: they read better as plain
+     centred text than as an empty card. */
+  .pos-stack .p-datatable-tbody > tr.p-datatable-emptymessage {
+    border: 0 none;
+    box-shadow: none;
+    background: transparent;
+  }
+
+  .pos-stack .p-datatable-tbody > tr.p-datatable-emptymessage > td {
+    display: block;
+    text-align: center;
+    background: transparent;
   }
 }
 
@@ -254,6 +352,48 @@ body {
      the viewport. */
   .p-overlaypanel {
     left: 0.75rem !important;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   TAB BARS AND BUTTON GROUPS
+   --------------------------------------------------------------------------
+   `TabView` (Usuarios, Monitor de Jobs) lays its tabs out in one nowrap row and
+   `SelectButton` (Historial, Cierres) does the same with its segments. Both are
+   wider than a phone. Scrolling the strip is the right answer rather than
+   wrapping it: a segmented control that wraps stops reading as one control. */
+@media (max-width: 768px) {
+  .p-tabview .p-tabview-nav {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+  }
+
+  .p-tabview .p-tabview-nav::-webkit-scrollbar {
+    display: none;
+  }
+
+  .p-tabview .p-tabview-nav li .p-tabview-nav-link {
+    white-space: nowrap;
+    padding: 0.75rem 0.875rem;
+    font-size: 0.8125rem;
+  }
+
+  .p-tabview .p-tabview-panels {
+    padding: 1rem 0;
+  }
+
+  .p-selectbutton {
+    display: flex;
+    flex-wrap: nowrap;
+  }
+
+  .p-selectbutton .p-button {
+    white-space: nowrap;
+    padding: 0.6rem 0.75rem;
+    font-size: 0.8125rem;
   }
 }
 

@@ -9,6 +9,7 @@ import { toast } from 'sonner';
 import api from '../../api/axios';
 import AppLayout from '../../components/layout/AppLayout';
 import TicketPreview from '../../components/pos/TicketPreview';
+import { STACK_TABLE, STACK_CLASS, HIDE_BELOW } from '../../lib/responsive';
 
 const emptyForm = {
   business_name: '',
@@ -109,7 +110,7 @@ export default function TicketConfigPage() {
 
   return (
     <AppLayout>
-      <div className="mb-6 flex items-center justify-between">
+      <div className="mb-5 flex flex-col gap-3 sm:mb-6 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Diseno de Ticket</h1>
           <p className="text-sm text-slate-500">Cada cambio genera una nueva version inmutable (Append-Only).</p>
@@ -132,14 +133,16 @@ export default function TicketConfigPage() {
           stripedRows
           paginator
           rows={10}
-          pt={{ root: { className: 'text-sm' }, thead: { className: 'bg-slate-50' } }}
+          {...STACK_TABLE}
+          pt={{ root: { className: `text-sm ${STACK_CLASS}` }, thead: { className: 'bg-slate-50' } }}
         >
           <Column field="version" header="Version" body={versionTemplate} sortable style={{ width: '15%' }} />
           <Column field="business_name" header="Razon Social" sortable style={{ width: '25%' }} />
-          <Column field="rfc" header="RFC" style={{ width: '15%' }} />
-          <Column field="phone" header="Telefono" style={{ width: '12%' }} />
+          <Column field="rfc" header="RFC" className={HIDE_BELOW.md} style={{ width: '15%' }} />
+          <Column field="phone" header="Telefono" className={HIDE_BELOW.md} style={{ width: '12%' }} />
           <Column field="created_at" header="Fecha Creacion" body={dateTemplate} sortable style={{ width: '20%' }} />
-          <Column header="" body={actionsTemplate} style={{ width: '10%' }} />
+          {/* Named so the stacked card line is labelled rather than anonymous. */}
+          <Column header="Acciones" body={actionsTemplate} style={{ width: '10%' }} />
         </DataTable>
       </div>
 

@@ -15,6 +15,7 @@ import api from '../../api/axios';
 import AppLayout from '../../components/layout/AppLayout';
 import useCronosAgent from '../../hooks/useCronosAgent';
 import { addDays, startOfMonth, todayYmd, toLocalYmd } from '../../lib/dates';
+import { STACK_TABLE, STACK_CLASS } from '../../lib/responsive';
 
 const fmtMXN = (v) =>
   new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(v ?? 0);
@@ -411,9 +412,9 @@ export default function CashRegisterClosingsPage() {
       <Tooltip target=".p-button" />
 
       {/* Page header */}
-      <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+      <div className="mb-5 flex flex-col gap-3 sm:mb-6 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Cierres de Caja</h1>
+          <h1 className="text-xl font-bold text-slate-900 sm:text-2xl">Cierres de Caja</h1>
           <p className="mt-0.5 text-sm text-slate-500">Historial forense e inmutable de arqueos por turno</p>
         </div>
         <Button
@@ -426,13 +427,15 @@ export default function CashRegisterClosingsPage() {
       </div>
 
       {/* Filters bar */}
-      <div className="mb-5 rounded-xl bg-white p-4 shadow-sm ring-1 ring-slate-200">
-        <div className="flex flex-wrap items-center gap-4">
+      <div className="mb-5 rounded-xl bg-white p-3 shadow-sm ring-1 ring-slate-200 sm:p-4">
+        {/* Stacked on phones; the export pair keeps its right-hand alignment
+            only once there is a row to align within. */}
+        <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:gap-4">
           <SelectButton
             value={quickFilter}
             options={quickOptions}
             onChange={(e) => handleQuickFilter(e.value)}
-            className="text-sm"
+            className="-mx-1 flex max-w-full overflow-x-auto px-1 text-sm sm:mx-0 sm:overflow-visible sm:px-0"
           />
           <Calendar
             value={dateRange}
@@ -441,8 +444,9 @@ export default function CashRegisterClosingsPage() {
             placeholder="Rango personalizado"
             dateFormat="dd/mm/yy"
             showIcon
-            className="text-sm"
-            inputClassName="rounded-lg border-slate-200 px-3 py-2 text-sm"
+            className="w-full text-sm sm:w-auto"
+            inputClassName="w-full rounded-lg border-slate-200 px-3 py-2 text-sm"
+            pt={{ root: { className: 'w-full sm:w-auto' } }}
           />
           {(dateFrom || dateTo) && (
             <button
@@ -457,7 +461,7 @@ export default function CashRegisterClosingsPage() {
               Limpiar filtros
             </button>
           )}
-          <div className="ml-auto flex items-center gap-2">
+          <div className="flex items-center gap-2 sm:ml-auto">
             <Button
               label={exportingExcel ? 'Exportando...' : 'Excel'}
               icon="pi pi-file-excel"
@@ -494,9 +498,10 @@ export default function CashRegisterClosingsPage() {
           first={page * perPage}
           onPage={(e) => setPage(e.page)}
           emptyMessage="No hay cierres registrados para el periodo seleccionado."
-          className="text-sm"
+          className={`text-sm ${STACK_CLASS}`}
           rowHover
           stripedRows
+          {...STACK_TABLE}
         >
           <Column
             header="ID Caja"

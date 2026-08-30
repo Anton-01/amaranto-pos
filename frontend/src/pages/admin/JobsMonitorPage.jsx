@@ -14,6 +14,7 @@ import api from '../../api/axios';
 import AppLayout from '../../components/layout/AppLayout';
 import { useAuth } from '../../context/AuthContext';
 import { toLocalYmd } from '../../lib/dates';
+import { STACK_TABLE, STACK_CLASS, HIDE_BELOW } from '../../lib/responsive';
 
 /**
  * Monitor de Telemetria de Jobs y Boveda de Respaldos — EXCLUSIVO de admin.
@@ -306,8 +307,9 @@ export default function JobsMonitorPage() {
               loading={loadingCatalog}
               dataKey="job_name"
               emptyMessage="Todavía no se ha ejecutado ningún job en segundo plano."
-              className="text-sm"
+              className={`text-sm ${STACK_CLASS}`}
               stripedRows
+              {...STACK_TABLE}
             >
               <Column
                 header="Job"
@@ -319,7 +321,9 @@ export default function JobsMonitorPage() {
                 )}
               />
               <Column header="Último estado" body={(row) => <StatusBadge status={row.last_status} />} />
-              <Column header="Ejecuciones" body={(row) => <span className="tabular-nums">{row.total_runs}</span>} />
+              {/* The run count is the sum of the success/failure split shown
+                  next to it, so on a phone card it is pure redundancy. */}
+              <Column header="Ejecuciones" body={(row) => <span className="tabular-nums">{row.total_runs}</span>} className={HIDE_BELOW.md} />
               <Column
                 header="Éxito / Fallo"
                 body={(row) => (
@@ -350,10 +354,10 @@ export default function JobsMonitorPage() {
                   )
                 }
               />
-              <Column header="Duración media" body={(row) => fmtDuration(row.avg_duration_ms)} />
+              <Column header="Duración media" body={(row) => fmtDuration(row.avg_duration_ms)} className={HIDE_BELOW.lg} />
               <Column header="Última ejecución" body={(row) => fmtDate(row.last_seen_at)} />
               <Column
-                header=""
+                header="Histórico"
                 body={(row) => (
                   <Button
                     icon="pi pi-filter"
@@ -374,7 +378,9 @@ export default function JobsMonitorPage() {
 
           {/* ---------------- Historico forense ---------------- */}
           <TabPanel header="Histórico Forense" leftIcon="pi pi-history mr-2">
-            <div className="mb-4 flex flex-wrap items-center gap-2">
+            {/* Six controls: a two-column grid on phones (the two action
+                buttons share the last row), a wrapping row from md up. */}
+            <div className="mb-4 grid grid-cols-2 gap-2 md:flex md:flex-wrap md:items-center">
               <Dropdown
                 value={statusFilter}
                 options={STATUS_OPTIONS}
@@ -383,7 +389,7 @@ export default function JobsMonitorPage() {
                   fetchHistory(0, { statusFilter: e.value });
                 }}
                 placeholder="Estatus"
-                className="w-44 text-sm"
+                className="col-span-2 w-full text-sm md:w-44"
               />
               <Dropdown
                 value={jobFilter}
@@ -394,7 +400,7 @@ export default function JobsMonitorPage() {
                 }}
                 placeholder="Job"
                 filter
-                className="w-56 text-sm"
+                className="col-span-2 w-full text-sm md:w-56"
               />
               <Calendar
                 value={dateRange}
@@ -407,23 +413,25 @@ export default function JobsMonitorPage() {
                 showButtonBar
                 placeholder="Rango de fechas"
                 dateFormat="dd/mm/yy"
-                className="w-60 text-sm"
+                className="col-span-2 w-full text-sm md:w-60"
+                pt={{ root: { className: 'w-full md:w-60' } }}
               />
-              <span className="p-input-icon-left">
+              <span className="col-span-2 p-input-icon-left w-full md:w-auto">
                 <InputText
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && fetchHistory(0)}
                   placeholder="Buscar job o error…"
-                  className="w-60 text-sm"
+                  className="w-full text-sm md:w-60"
                 />
               </span>
-              <Button label="Aplicar" icon="pi pi-search" size="small" onClick={() => fetchHistory(0)} />
+              <Button label="Aplicar" icon="pi pi-search" size="small" onClick={() => fetchHistory(0)} className="w-full md:w-auto" />
               <Button
                 label="Limpiar"
                 icon="pi pi-times"
                 size="small"
                 outlined
+                className="w-full md:w-auto"
                 onClick={() => {
                   setStatusFilter(null);
                   setJobFilter(null);
@@ -445,8 +453,9 @@ export default function JobsMonitorPage() {
               totalRecords={totalRecords}
               onPage={(e) => fetchHistory(e.page)}
               emptyMessage="Sin ejecuciones que coincidan con los filtros."
-              className="text-sm"
+              className={`text-sm ${STACK_CLASS}`}
               stripedRows
+              {...STACK_TABLE}
               rowClassName={(row) => (row.status === 'failed' ? 'bg-rose-50/40' : '')}
             >
               <Column header="Estatus" body={(row) => <StatusBadge status={row.status} />} />
@@ -461,9 +470,10 @@ export default function JobsMonitorPage() {
                   </div>
                 )}
               />
-              <Column header="Duración" body={(row) => fmtDuration(row.duration_ms)} />
+              <Column header="Duración" body={(row) => fmtDuration(row.duration_ms)} className={HIDE_BELOW.md} />
               <Column
                 header="Disparado por"
+                className={HIDE_BELOW.md}
                 body={(row) => (
                   <div className="min-w-0">
                     <p className="truncate text-slate-700">
@@ -559,8 +569,9 @@ export default function JobsMonitorPage() {
               loading={loadingVault}
               dataKey="name"
               emptyMessage="No hay puntos de restauración en la bóveda."
-              className="text-sm"
+              className={`text-sm ${STACK_CLASS}`}
               stripedRows
+              {...STACK_TABLE}
             >
               <Column
                 header="Snapshot"
@@ -588,8 +599,8 @@ export default function JobsMonitorPage() {
                   )
                 }
               />
-              <Column header="Origen" body={(row) => <span className="text-slate-600">{row.trigger}</span>} />
-              <Column header="Autor" body={(row) => row.created_by_name ?? '—'} />
+              <Column header="Origen" body={(row) => <span className="text-slate-600">{row.trigger}</span>} className={HIDE_BELOW.lg} />
+              <Column header="Autor" body={(row) => row.created_by_name ?? '—'} className={HIDE_BELOW.md} />
               <Column
                 header="Acciones"
                 body={(row) => (

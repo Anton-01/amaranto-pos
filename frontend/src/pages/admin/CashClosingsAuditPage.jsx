@@ -13,6 +13,7 @@ import api from '../../api/axios';
 import AppLayout from '../../components/layout/AppLayout';
 import { useAuth } from '../../context/AuthContext';
 import { toLocalYmd } from '../../lib/dates';
+import { STACK_TABLE, STACK_CLASS, HIDE_BELOW } from '../../lib/responsive';
 
 const fmt = (v) => `$${Number(v ?? 0).toLocaleString('es-MX', { minimumFractionDigits: 2 })}`;
 
@@ -151,7 +152,9 @@ export default function CashClosingsAuditPage() {
       </div>
 
       {/* Filtros */}
-      <div className="mb-4 flex flex-wrap items-center gap-2">
+      {/* One filter per row on a phone; the search field and its button share
+          the last row so the button never lands on a line of its own. */}
+      <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
         <Dropdown
           value={typeFilter}
           options={[
@@ -164,8 +167,8 @@ export default function CashClosingsAuditPage() {
             // Click deliberado en el dropdown = aplicar filtro al instante.
             fetchClosings(0, { typeFilter: e.value });
           }}
-          className="w-56 text-sm"
-          pt={{ root: { className: 'w-56' } }}
+          className="w-full text-sm sm:w-56"
+          pt={{ root: { className: 'w-full sm:w-56' } }}
         />
         <Calendar
           value={dateRange}
@@ -178,22 +181,26 @@ export default function CashClosingsAuditPage() {
           placeholder="Rango de fechas"
           dateFormat="dd/mm/yy"
           showButtonBar
-          className="w-64"
-          inputClassName="rounded-lg border-slate-200 px-3 py-2 text-sm"
+          className="w-full sm:w-64"
+          inputClassName="w-full rounded-lg border-slate-200 px-3 py-2 text-sm"
+          pt={{ root: { className: 'w-full sm:w-64' } }}
         />
-        <InputText
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && fetchClosings(0)}
-          placeholder="Buscar operador..."
-          className="w-56 rounded-lg border-slate-200 px-3 py-2 text-sm"
-        />
-        <Button
-          icon="pi pi-search"
-          onClick={() => fetchClosings(0)}
-          className="cursor-pointer h-9 w-9 rounded-lg bg-indigo-600 text-white hover:bg-indigo-500"
-          pt={{ root: { className: 'border-0' } }}
-        />
+        <div className="flex gap-2">
+          <InputText
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && fetchClosings(0)}
+            placeholder="Buscar operador..."
+            className="w-full rounded-lg border-slate-200 px-3 py-2 text-sm sm:w-56"
+            pt={{ root: { className: 'flex-1 sm:flex-none' } }}
+          />
+          <Button
+            icon="pi pi-search"
+            onClick={() => fetchClosings(0)}
+            className="h-11 w-11 shrink-0 cursor-pointer rounded-lg bg-indigo-600 text-white hover:bg-indigo-500 sm:h-9 sm:w-9"
+            pt={{ root: { className: 'border-0' } }}
+          />
+        </div>
       </div>
 
       <div className="rounded-xl bg-white shadow-sm ring-1 ring-slate-200">
@@ -207,9 +214,10 @@ export default function CashClosingsAuditPage() {
           totalRecords={totalRecords}
           onPage={(e) => fetchClosings(e.page)}
           emptyMessage="Sin cierres registrados con los filtros aplicados."
-          className="text-sm"
+          className={`text-sm ${STACK_CLASS}`}
           onRowClick={(e) => setDetail(e.data)}
           rowClassName={() => 'cursor-pointer hover:bg-slate-50'}
+          {...STACK_TABLE}
         >
           <Column
             header="Caja"
@@ -226,7 +234,9 @@ export default function CashClosingsAuditPage() {
             style={{ width: '170px' }}
           />
           <Column header="Operador de Caja" body={(row) => row.cash_register?.user?.name ?? 'N/D'} />
-          <Column header="Cerrado por" body={responsibleTemplate} />
+          {/* The two operator columns say the same thing on an automatic
+              closing; the phone card keeps the one that opened the till. */}
+          <Column header="Cerrado por" body={responsibleTemplate} className={HIDE_BELOW.md} />
           <Column header="Tipo" body={typeTemplate} style={{ width: '130px' }} />
           <Column header="Esperado" body={(row) => <span className="font-medium">{fmt(row.expected_amount)}</span>} align="right" style={{ width: '120px' }} />
           <Column header="Declarado" body={(row) => fmt(row.declared_amount)} align="right" style={{ width: '120px' }} />

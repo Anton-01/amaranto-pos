@@ -13,6 +13,7 @@ import { toast } from 'sonner';
 import api from '../../api/axios';
 import AppLayout from '../../components/layout/AppLayout';
 import { useAuth } from '../../context/AuthContext';
+import { STACK_TABLE, STACK_CLASS, HIDE_BELOW } from '../../lib/responsive';
 
 const statusOptions = [
   { label: 'Todos', value: '' },
@@ -313,7 +314,7 @@ export default function UsersPage() {
 
   return (
     <AppLayout>
-      <div className="mb-6 flex items-center justify-between">
+      <div className="mb-5 flex flex-col gap-3 sm:mb-6 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Gestion de Usuarios</h1>
           <p className="text-sm text-slate-500">Administra el ciclo de vida, accesos y auditoria de cada operador.</p>
@@ -327,13 +328,13 @@ export default function UsersPage() {
       </div>
 
       {/* Filters */}
-      <div className="mb-4 flex flex-wrap items-center gap-3">
+      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
         <InputText
           value={globalFilter}
           onChange={(e) => setGlobalFilter(e.target.value)}
           placeholder="Buscar por nombre o email..."
-          className="w-64 rounded-lg border-slate-200 px-3 py-2 text-sm"
-          pt={{ root: { className: 'w-64' } }}
+          className="w-full rounded-lg border-slate-200 px-3 py-2 text-sm sm:w-64"
+          pt={{ root: { className: 'w-full sm:w-64' } }}
         />
         <Dropdown
           value={statusFilter}
@@ -341,7 +342,7 @@ export default function UsersPage() {
           onChange={(e) => setStatusFilter(e.value)}
           placeholder="Estatus"
           className="text-sm"
-          pt={{ root: { className: 'w-40' } }}
+          pt={{ root: { className: 'w-full sm:w-40' } }}
         />
         <Dropdown
           value={roleFilter}
@@ -373,13 +374,16 @@ export default function UsersPage() {
           stripedRows
           paginator
           rows={15}
-          pt={{ root: { className: 'text-sm' }, thead: { className: 'bg-slate-50' } }}
+          {...STACK_TABLE}
+          pt={{ root: { className: `text-sm ${STACK_CLASS}` }, thead: { className: 'bg-slate-50' } }}
         >
           <Column field="name" header="Usuario" body={nameTemplate} sortable style={{ width: '25%' }} />
           <Column field="roles" header="Rol" body={roleTemplate} style={{ width: '10%' }} />
           <Column field="status" header="Estatus" body={statusTemplate} sortable style={{ width: '10%' }} />
-          <Column header="Sesion" body={sessionTemplate} style={{ width: '10%' }} />
-          <Column field="created_at" header="Creado" body={dateTemplate} sortable style={{ width: '18%' }} />
+          {/* Session state and creation date are audit detail: they stay on the
+              desktop table and leave the phone card at four lines. */}
+          <Column header="Sesion" body={sessionTemplate} className={HIDE_BELOW.md} style={{ width: '10%' }} />
+          <Column field="created_at" header="Creado" body={dateTemplate} sortable className={HIDE_BELOW.lg} style={{ width: '18%' }} />
           <Column header="Acciones" body={actionsTemplate} style={{ width: '27%' }} />
         </DataTable>
       </div>

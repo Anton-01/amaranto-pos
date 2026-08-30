@@ -11,6 +11,7 @@ import { Dialog } from 'primereact/dialog';
 import { Tag } from 'primereact/tag';
 import { toast } from 'sonner';
 import api from '../../api/axios';
+import { STACK_TABLE, STACK_CLASS, HIDE_BELOW } from '../../lib/responsive';
 
 const emptyForm = {
   process_type: 'jobs',
@@ -375,14 +376,17 @@ export default function EmailNotificationsPanel() {
         loading={loading}
         dataKey="id"
         emptyMessage="Aún no hay configuraciones de correo. Crea la del proceso 'jobs' para recibir los cierres automáticos de caja."
-        className="text-sm"
+        className={`text-sm ${STACK_CLASS}`}
         stripedRows
+        {...STACK_TABLE}
       >
         <Column header="Tipo de Proceso" body={processTemplate} style={{ minWidth: '200px' }} />
         <Column header="Proveedor" body={providerTemplate} style={{ minWidth: '160px' }} />
-        <Column header="Remitente" body={senderTemplate} style={{ minWidth: '200px' }} />
-        <Column header="Asunto" field="subject" style={{ minWidth: '220px' }} />
-        <Column header="Correos Destino" body={recipientsTemplate} style={{ minWidth: '240px' }} />
+        {/* Sender address and subject line are long free text: they would
+            dominate a phone card and are one tap away in the edit dialog. */}
+        <Column header="Remitente" body={senderTemplate} className={HIDE_BELOW.lg} style={{ minWidth: '200px' }} />
+        <Column header="Asunto" field="subject" className={HIDE_BELOW.md} style={{ minWidth: '220px' }} />
+        <Column header="Correos Destino" body={recipientsTemplate} className={HIDE_BELOW.md} style={{ minWidth: '240px' }} />
         <Column header="Estatus" body={statusTemplate} style={{ width: '110px' }} />
         <Column header="Acciones" body={actionsTemplate} style={{ width: '120px' }} />
       </DataTable>

@@ -68,12 +68,41 @@ export const HIDE_BELOW = {
 };
 
 /**
- * Standard wrapper for a table that keeps its table shape on phones and scrolls
- * horizontally inside its own box.
+ * Props that turn a PrimeReact `<DataTable>` into a stacked card list below
+ * 768px, spread as `{...STACK_TABLE}`.
  *
- * `pos-table` applies the minimum column widths and the touch-scroll behaviour
- * from index.css; `pos-table-wide` raises the minimum for tables with more than
- * roughly six columns.
+ * WHY THIS AND NOT A HAND-ROLLED CARD LIST
+ * ----------------------------------------
+ * Every table in the system carries behaviour that lives inside DataTable:
+ * pagination (lazy and server-driven on Cierres and Historial, client-side
+ * elsewhere), `globalFilter` search, sorting, and the loading overlay. A
+ * parallel `<div className="md:hidden">` card list would have to reimplement
+ * all of it per page, and would drift out of sync with the table beside it the
+ * first time a column changed.
+ *
+ * `responsiveLayout="stack"` keeps exactly one source of truth. PrimeReact
+ * injects a per-table media query that hides the header row and turns each
+ * `<td>` into a label/value line; the `pos-stack` class (index.css) supplies
+ * the card chrome around each `<tr>`. Below the breakpoint the user sees
+ * stacked cards, above it the original table — from one declaration.
+ *
+ * The breakpoint is `768px` (Tailwind's `md`) everywhere, so it lines up with
+ * the `HIDE_BELOW.md` column rules and with the `md:` utilities used in the
+ * surrounding page chrome.
  */
+export const STACK_TABLE = {
+  responsiveLayout: 'stack',
+  breakpoint: '768px',
+};
+
+/**
+ * Class for a stacked table. Combine with `STACK_TABLE`.
+ *
+ * `TABLE_CLASS` / `TABLE_CLASS_WIDE` are the alternative for the few tables
+ * that cannot stack — PrimeReact ignores `responsiveLayout` when `scrollable`
+ * is set — and keep their table shape inside a smooth horizontal touch scroll
+ * instead, with a sensible minimum column width.
+ */
+export const STACK_CLASS = 'pos-stack';
 export const TABLE_CLASS = 'pos-table';
 export const TABLE_CLASS_WIDE = 'pos-table pos-table-wide';

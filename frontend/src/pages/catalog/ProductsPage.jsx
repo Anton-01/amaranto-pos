@@ -14,6 +14,7 @@ import { toast } from 'sonner';
 import api from '../../api/axios';
 import AppLayout from '../../components/layout/AppLayout';
 import DeleteDialog from '../../components/catalog/DeleteDialog';
+import { STACK_TABLE, STACK_CLASS, HIDE_BELOW } from '../../lib/responsive';
 
 const statusOptions = [
   { label: 'Activo', value: true },
@@ -216,7 +217,7 @@ export default function ProductsPage() {
 
   return (
     <AppLayout>
-      <div className="mb-6 flex items-center justify-between">
+      <div className="mb-5 flex flex-col gap-3 sm:mb-6 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Productos</h1>
           <p className="text-sm text-slate-500">{products.length} producto(s) en el catalogo.</p>
@@ -243,8 +244,9 @@ export default function ProductsPage() {
           paginator
           rows={20}
           rowsPerPageOptions={[10, 20, 50]}
+          {...STACK_TABLE}
           pt={{
-            root: { className: 'text-sm' },
+            root: { className: `text-sm ${STACK_CLASS}` },
             thead: { className: 'bg-slate-50' },
           }}
         >
@@ -264,11 +266,13 @@ export default function ProductsPage() {
             showFilterMenu={false}
             style={{ width: '22%' }}
           />
+          {/* Parent SKU is an internal grouping key, not something a cashier
+              reads on a phone: it leaves the card below lg. */}
           <Column
             field="parent_sku"
             header="Grupo"
             sortable
-            className="font-mono text-xs text-slate-500"
+            className={`font-mono text-xs text-slate-500 ${HIDE_BELOW.lg}`}
             style={{ width: '10%' }}
           />
           <Column
@@ -278,14 +282,17 @@ export default function ProductsPage() {
             filter
             filterElement={categoryFilterTemplate}
             showFilterMenu={false}
+            className={HIDE_BELOW.md}
             style={{ width: '14%' }}
           />
+          {/* Cost sits next to the sale price only where both fit; on a phone
+              the sale price is the one that matters. */}
           <Column
             field="cost_price"
             header="Costo"
             body={(row) => priceTemplate(row, 'cost_price')}
             sortable
-            className="text-right"
+            className={`text-right ${HIDE_BELOW.md}`}
             style={{ width: '10%' }}
           />
           <Column

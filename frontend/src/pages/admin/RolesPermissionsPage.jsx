@@ -9,6 +9,7 @@ import { Tag } from 'primereact/tag';
 import { toast } from 'sonner';
 import api from '../../api/axios';
 import AppLayout from '../../components/layout/AppLayout';
+import { STACK_TABLE, STACK_CLASS } from '../../lib/responsive';
 
 export default function RolesPermissionsPage() {
   const [roles, setRoles] = useState([]);
@@ -156,7 +157,7 @@ export default function RolesPermissionsPage() {
 
   return (
     <AppLayout>
-      <div className="mb-6 flex items-center justify-between">
+      <div className="mb-5 flex flex-col gap-3 sm:mb-6 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Roles y Permisos</h1>
           <p className="text-sm text-slate-500">Administra los roles del sistema y su matriz de alcances.</p>
@@ -181,7 +182,8 @@ export default function RolesPermissionsPage() {
               loading={loading}
               emptyMessage="No hay roles."
               stripedRows
-              pt={{ root: { className: 'text-sm' }, thead: { className: 'bg-slate-50' } }}
+              {...STACK_TABLE}
+              pt={{ root: { className: `text-sm ${STACK_CLASS}` }, thead: { className: 'bg-slate-50' } }}
             >
               <Column field="name" header="Rol" body={nameTemplate} sortable style={{ width: '40%' }} />
               <Column header="Asignados" body={usersCountTemplate} style={{ width: '30%' }} />

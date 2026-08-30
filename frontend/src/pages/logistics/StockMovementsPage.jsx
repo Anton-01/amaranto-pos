@@ -10,6 +10,7 @@ import { Dialog } from 'primereact/dialog';
 import { toast } from 'sonner';
 import api from '../../api/axios';
 import AppLayout from '../../components/layout/AppLayout';
+import { STACK_TABLE, STACK_CLASS, HIDE_BELOW } from '../../lib/responsive';
 
 const typeOptions = [
   { label: 'Entrada (Compra)', value: 'purchase_input' },
@@ -201,7 +202,7 @@ export default function StockMovementsPage() {
         </div>
       )}
 
-      <div className="mb-6 flex items-center justify-between">
+      <div className="mb-5 flex flex-col gap-3 sm:mb-6 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Movimientos de Stock</h1>
           <p className="text-sm text-slate-500">Registro de entradas, mermas y ajustes de inventario.</p>
@@ -220,8 +221,8 @@ export default function StockMovementsPage() {
             value={globalFilter}
             onChange={(e) => setGlobalFilter(e.target.value)}
             placeholder="Buscar por producto o usuario..."
-            className="w-72 rounded-lg border-slate-200 px-3 py-2 text-sm"
-            pt={{ root: { className: 'w-72' } }}
+            className="w-full rounded-lg border-slate-200 px-3 py-2 text-sm sm:w-72"
+            pt={{ root: { className: 'w-full sm:w-72' } }}
           />
         </div>
 
@@ -235,16 +236,19 @@ export default function StockMovementsPage() {
           stripedRows
           paginator
           rows={15}
-          pt={{ root: { className: 'text-sm' }, thead: { className: 'bg-slate-50' } }}
+          {...STACK_TABLE}
+          pt={{ root: { className: `text-sm ${STACK_CLASS}` }, thead: { className: 'bg-slate-50' } }}
         >
           <Column field="created_at" header="Fecha" body={dateTemplate} sortable style={{ width: '18%' }} />
           <Column field="product.name" header="Producto" sortable style={{ width: '20%' }} />
           <Column field="type" header="Tipo" body={typeTemplate} sortable style={{ width: '10%' }} />
           <Column field="quantity" header="Cantidad" body={qtyTemplate} sortable style={{ width: '10%' }} />
-          <Column field="cost_price_at_movement" header="Costo Unit." body={costTemplate} sortable style={{ width: '12%' }} />
+          {/* Unit cost is derivable from the total; on a phone only the total
+              earns a line. */}
+          <Column field="cost_price_at_movement" header="Costo Unit." body={costTemplate} sortable className={HIDE_BELOW.md} style={{ width: '12%' }} />
           <Column header="Costo Total" body={totalTemplate} style={{ width: '12%' }} />
           <Column field="reason" header="Motivo" body={reasonTemplate} sortable style={{ width: '12%' }} />
-          <Column field="user.name" header="Usuario" sortable style={{ width: '10%' }} />
+          <Column field="user.name" header="Usuario" sortable className={HIDE_BELOW.lg} style={{ width: '10%' }} />
         </DataTable>
       </div>
 
