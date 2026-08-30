@@ -537,7 +537,7 @@ export default function UsersPage() {
                                 className="text-xs"
                               />
                             </div>
-                            <div className="grid grid-cols-3 gap-2 text-xs">
+                            <div className="grid grid-cols-1 gap-2 text-xs sm:grid-cols-3">
                               <div>
                                 <span className="text-slate-500 block">Apertura</span>
                                 <span className="font-semibold text-slate-900">${parseFloat(cr.opening_balance).toLocaleString('es-MX', { minimumFractionDigits: 2 })}</span>

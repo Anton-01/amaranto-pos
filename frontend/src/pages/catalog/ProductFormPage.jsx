@@ -197,7 +197,7 @@ export default function ProductFormPage() {
 
       <form onSubmit={handleSave} className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         {/* Identificacion */}
-        <div className="rounded-xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
+        <div className="rounded-xl bg-white p-4 shadow-sm sm:p-6 ring-1 ring-slate-200">
           <h2 className="mb-4 text-base font-semibold text-slate-900">Identificacion</h2>
 
           <div className="space-y-4">
@@ -334,9 +334,9 @@ export default function ProductFormPage() {
 
         {/* Precios y Stock */}
         <div className="space-y-6">
-          <div className="rounded-xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
+          <div className="rounded-xl bg-white p-4 shadow-sm sm:p-6 ring-1 ring-slate-200">
             <h2 className="mb-4 text-base font-semibold text-slate-900">Precios</h2>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div>
                 <label className="mb-1.5 block text-sm font-medium text-slate-700">Costo *</label>
                 <InputNumber
@@ -379,7 +379,7 @@ export default function ProductFormPage() {
             )}
           </div>
 
-          <div className="rounded-xl bg-white p-6 shadow-sm ring-1 ring-slate-200">
+          <div className="rounded-xl bg-white p-4 shadow-sm sm:p-6 ring-1 ring-slate-200">
             <div className="mb-4 flex items-center justify-between">
               <h2 className="text-base font-semibold text-slate-900">Inventario</h2>
               <div className="flex items-center gap-3">
@@ -399,7 +399,7 @@ export default function ProductFormPage() {
               </div>
             )}
 
-            <div className={`grid grid-cols-3 gap-4 transition-all duration-300 ${!formData.track_stock ? 'pointer-events-none opacity-30' : 'opacity-100'}`}>
+            <div className={`grid grid-cols-1 gap-4 transition-all duration-300 sm:grid-cols-3 ${!formData.track_stock ? 'pointer-events-none opacity-30' : 'opacity-100'}`}>
               <div>
                 <label className="mb-1.5 block text-sm font-medium text-slate-700">Stock Inicial</label>
                 <InputNumber
@@ -441,13 +441,13 @@ export default function ProductFormPage() {
         </div>
 
         {/* Action buttons */}
-        <div className="lg:col-span-2 flex flex-wrap items-center gap-3">
+        <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center lg:col-span-2">
           <Button
             type="button"
             label="Cancelar"
             onClick={() => navigate('/products')}
             disabled={saving}
-            className="rounded-lg border border-slate-200 bg-white px-5 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+            className="w-full justify-center rounded-lg border border-slate-200 bg-white px-5 py-3 text-sm font-medium text-slate-700 hover:bg-slate-50 sm:w-auto sm:py-2.5"
             pt={{ root: { className: 'border border-slate-200' } }}
           />
           <Button
@@ -455,7 +455,7 @@ export default function ProductFormPage() {
             label={saving ? 'Guardando...' : (isEditing ? 'Actualizar Producto' : 'Guardar Producto')}
             disabled={saving}
             loading={saving}
-            className="rounded-lg bg-indigo-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-indigo-500 disabled:opacity-50"
+            className="w-full justify-center rounded-lg bg-indigo-600 px-5 py-3 text-sm font-semibold text-white shadow-sm hover:bg-indigo-500 disabled:opacity-50 sm:w-auto sm:py-2.5"
             pt={{ root: { className: 'border-0' } }}
           />
           {!isEditing && (
@@ -465,7 +465,7 @@ export default function ProductFormPage() {
               onClick={handleSaveAndVariation}
               disabled={saving}
               loading={saving}
-              className="rounded-lg bg-emerald-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-emerald-500 disabled:opacity-50"
+              className="w-full justify-center rounded-lg bg-emerald-600 px-5 py-3 text-sm font-semibold text-white shadow-sm hover:bg-emerald-500 disabled:opacity-50 sm:w-auto sm:py-2.5"
               pt={{ root: { className: 'border-0' } }}
             />
           )}

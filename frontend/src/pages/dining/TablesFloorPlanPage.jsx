@@ -289,7 +289,7 @@ export default function TablesFloorPlanPage() {
           content: { className: 'p-0' },
         }}
       >
-        <div className="p-6">
+        <div className="p-4 sm:p-6">
           <h3 className="text-lg font-semibold text-slate-900">Abrir {openTarget?.name}</h3>
           <p className="mt-0.5 text-xs text-slate-500">
             Se generara la cuenta de la mesa a tu nombre.

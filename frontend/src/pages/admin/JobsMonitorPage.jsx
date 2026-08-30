@@ -14,7 +14,7 @@ import api from '../../api/axios';
 import AppLayout from '../../components/layout/AppLayout';
 import { useAuth } from '../../context/AuthContext';
 import { toLocalYmd } from '../../lib/dates';
-import { STACK_TABLE, STACK_CLASS, HIDE_BELOW } from '../../lib/responsive';
+import { STACK_TABLE, STACK_CLASS, HIDE_BELOW, dialogClass, DIALOG_PT } from '../../lib/responsive';
 
 /**
  * Monitor de Telemetria de Jobs y Boveda de Respaldos — EXCLUSIVO de admin.
@@ -641,7 +641,8 @@ export default function JobsMonitorPage() {
         visible={!!detail}
         onHide={() => setDetail(null)}
         header={detail ? `${detail.short_name} — intento #${detail.attempt}` : ''}
-        style={{ width: '56rem', maxWidth: '95vw' }}
+        className={dialogClass('xl')}
+        pt={DIALOG_PT}
         dismissableMask
       >
         {detail && (
@@ -719,7 +720,8 @@ export default function JobsMonitorPage() {
         onHide={() => (restoring ? null : setRestoreTarget(null))}
         closable={!restoring}
         header="Restauración de emergencia (Rollback)"
-        style={{ width: '34rem', maxWidth: '95vw' }}
+        className={dialogClass('md')}
+        pt={DIALOG_PT}
       >
         {restoreTarget && (
           <div className="space-y-4 text-sm">

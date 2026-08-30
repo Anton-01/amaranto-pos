@@ -15,7 +15,7 @@ import api from '../../api/axios';
 import AppLayout from '../../components/layout/AppLayout';
 import useCronosAgent from '../../hooks/useCronosAgent';
 import { addDays, startOfMonth, todayYmd, toLocalYmd } from '../../lib/dates';
-import { STACK_TABLE, STACK_CLASS } from '../../lib/responsive';
+import { STACK_TABLE, STACK_CLASS, dialogClass, DIALOG_PT } from '../../lib/responsive';
 
 const fmtMXN = (v) =>
   new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(v ?? 0);
@@ -554,7 +554,8 @@ export default function CashRegisterClosingsPage() {
             <span className="font-bold text-slate-900">Cierre de Caja — Arqueo Ciego</span>
           </div>
         }
-        style={{ width: '480px' }}
+        className={dialogClass('md')}
+        pt={DIALOG_PT}
         modal
         closable={!closingLoading}
         draggable={false}
@@ -648,13 +649,14 @@ export default function CashRegisterClosingsPage() {
             <span className="font-bold text-slate-900">Detalle del Arqueo</span>
           </div>
         }
-        style={{ width: '560px' }}
+        className={dialogClass('md')}
+        pt={DIALOG_PT}
         modal
         draggable={false}
       >
         {selectedClosing && (
           <>
-            <div className="mb-4 grid grid-cols-2 gap-3 text-sm">
+            <div className="mb-4 grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
               <div className="rounded-lg bg-slate-50 p-3">
                 <p className="text-xs text-slate-400 mb-0.5">Fecha / Hora</p>
                 <p className="font-semibold text-slate-800">{fmtDate(selectedClosing.created_at)}</p>
@@ -747,7 +749,8 @@ export default function CashRegisterClosingsPage() {
             )}
           </div>
         }
-        style={{ width: '460px' }}
+        className={dialogClass('md')}
+        pt={DIALOG_PT}
         modal
         closable={!sendingEmail}
         draggable={false}

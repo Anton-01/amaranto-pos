@@ -11,7 +11,7 @@ import { Dialog } from 'primereact/dialog';
 import { Tag } from 'primereact/tag';
 import { toast } from 'sonner';
 import api from '../../api/axios';
-import { STACK_TABLE, STACK_CLASS, HIDE_BELOW } from '../../lib/responsive';
+import { STACK_TABLE, STACK_CLASS, HIDE_BELOW, dialogClass, DIALOG_PT } from '../../lib/responsive';
 
 const emptyForm = {
   process_type: 'jobs',
@@ -398,13 +398,14 @@ export default function EmailNotificationsPanel() {
         // that no longer exists.
         onHide={() => !saving && !testing && setShowForm(false)}
         header={editing ? 'Editar Configuración de Correo' : 'Nueva Configuración de Correo'}
-        style={{ width: '560px' }}
+        className={dialogClass('md')}
+        pt={DIALOG_PT}
         modal
         draggable={false}
         closable={!saving && !testing}
       >
         <form onSubmit={handleSave} className="space-y-4">
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div>
               <label className="mb-1.5 block text-sm font-medium text-slate-700">Tipo de Proceso *</label>
               <Dropdown
@@ -454,7 +455,7 @@ export default function EmailNotificationsPanel() {
             {fieldError('api_key')}
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div>
               <label className="mb-1.5 block text-sm font-medium text-slate-700">Correo Remitente *</label>
               <InputText
@@ -570,7 +571,8 @@ export default function EmailNotificationsPanel() {
         visible={deleteTarget !== null}
         onHide={() => !deleting && setDeleteTarget(null)}
         header="Eliminar Configuración"
-        style={{ width: '420px' }}
+        className={dialogClass('sm')}
+        pt={DIALOG_PT}
         modal
         draggable={false}
         closable={!deleting}

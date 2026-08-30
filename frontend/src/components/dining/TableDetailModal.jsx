@@ -181,7 +181,7 @@ export default function TableDetailModal({ visible, table, onHide, onCharge, onS
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-6 p-6 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-5 p-4 sm:gap-6 sm:p-6 lg:grid-cols-2">
         {/* Catalogo: un clic = un consumo registrado */}
         <div>
           <label className="mb-1.5 block text-sm font-medium text-slate-700">Agregar consumo</label>
@@ -193,7 +193,7 @@ export default function TableDetailModal({ visible, table, onHide, onCharge, onS
             pt={{ root: { className: 'w-full' } }}
           />
 
-          <div className="mt-3 grid max-h-96 grid-cols-2 gap-2 overflow-y-auto pr-1">
+          <div className="mt-3 grid max-h-96 grid-cols-1 gap-2 overflow-y-auto pr-1 sm:grid-cols-2">
             {filteredProducts.map((product) => {
               const unavailable = product.track_stock && product.current_stock <= 0;
               return (

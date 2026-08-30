@@ -100,7 +100,7 @@ export default function PrintConfirmationModal({
         content: { className: 'p-0' },
       }}
     >
-      <div className="p-6">
+      <div className="p-4 sm:p-6">
         {/* Encabezado */}
         <div className="mb-5 flex items-center gap-3">
           <div className="flex h-10 w-10 items-center justify-center rounded-full bg-emerald-50">
@@ -232,7 +232,7 @@ export default function PrintConfirmationModal({
         )}
 
         {/* Acciones */}
-        <div className="mt-5 flex gap-3">
+        <div className="mt-5 flex flex-col-reverse gap-3 sm:flex-row">
           <Button
             type="button"
             label="Omitir / No imprimir"

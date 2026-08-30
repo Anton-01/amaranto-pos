@@ -107,7 +107,7 @@ export default function DashboardPage() {
         {kpis.map((kpi) => {
           const c = colorMap[kpi.color];
           return (
-            <div key={kpi.label} className={`rounded-xl bg-white p-5 shadow-sm ring-1 ${c.ring}`}>
+            <div key={kpi.label} className={`rounded-xl bg-white p-4 shadow-sm sm:p-5 ring-1 ${c.ring}`}>
               <div className="flex items-center gap-3">
                 <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${c.bg}`}>
                   <svg className={`h-5 w-5 ${c.icon}`} fill="none" viewBox="0 0 24 24" strokeWidth={1.75} stroke="currentColor">
@@ -125,7 +125,7 @@ export default function DashboardPage() {
       </div>
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
-        <div className="rounded-xl bg-white p-5 shadow-sm ring-1 ring-slate-200 xl:col-span-2">
+        <div className="rounded-xl bg-white p-4 shadow-sm sm:p-5 ring-1 ring-slate-200 xl:col-span-2">
           <h2 className="mb-4 text-sm font-semibold text-slate-800">Tendencia de Ventas por Hora (Hoy)</h2>
           {hourly.some(h => h.total > 0) ? (
             <ResponsiveContainer width="100%" height={280}>
@@ -147,7 +147,7 @@ export default function DashboardPage() {
           )}
         </div>
 
-        <div className="rounded-xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
+        <div className="rounded-xl bg-white p-4 shadow-sm sm:p-5 ring-1 ring-slate-200">
           <h2 className="mb-4 text-sm font-semibold text-slate-800">Top 5 Productos (Mes)</h2>
           {topProducts.length > 0 ? (
             <>

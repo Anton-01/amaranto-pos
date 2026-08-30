@@ -386,7 +386,10 @@ export default function POSPage() {
   return (
     <>
       {/* Shift Status Card */}
-      <div className="mb-5 rounded-xl bg-white px-5 py-3.5 shadow-sm ring-1 ring-slate-200">
+      <div className="mb-4 rounded-xl bg-white px-3 py-3 shadow-sm ring-1 ring-slate-200 sm:mb-5 sm:px-5 sm:py-3.5">
+        {/* Cashier + clock share the first row on a phone; the shift folio and
+            opening balance drop to a full-width second row rather than being
+            squeezed into a third of a 360px screen. */}
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-3">
             <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-indigo-50">
@@ -398,7 +401,7 @@ export default function POSPage() {
             </div>
           </div>
           {/* Acceso al comedor: estrictamente a la izquierda del reloj */}
-          <div className="ml-auto flex items-center gap-3">
+          <div className="ml-auto flex items-center gap-2 sm:gap-3">
             <button
               type="button"
               onClick={() => navigate('/mesas')}
@@ -431,7 +434,7 @@ export default function POSPage() {
               <p className="text-lg font-bold tabular-nums text-indigo-600">{formattedTime}</p>
             </div>
           </div>
-          <div className="flex items-center gap-4 rounded-lg bg-slate-50 px-4 py-2">
+          <div className="flex w-full items-center gap-4 rounded-lg bg-slate-50 px-3 py-2 sm:w-auto sm:px-4">
             <div>
               <p className="text-xs text-slate-500">Turno</p>
               <p className="text-xs font-mono font-semibold text-slate-700">{shiftFolio}</p>
@@ -474,7 +477,7 @@ export default function POSPage() {
                         key={product.id}
                         onClick={() => addToCart(product)}
                         disabled={isUnavailable}
-                        className="cursor-pointer group relative rounded-lg border border-slate-200 p-3 text-left transition-all hover:border-indigo-300 hover:shadow-md disabled:opacity-40 disabled:cursor-not-allowed"
+                        className="group relative min-h-[88px] cursor-pointer rounded-lg border border-slate-200 p-3 text-left transition-all hover:border-indigo-300 hover:shadow-md disabled:cursor-not-allowed disabled:opacity-40"
                       >
                         <p className="text-sm font-medium text-slate-900 truncate">{product.name}</p>
                         <p className="text-xs text-slate-500 font-mono">{product.sku}</p>
@@ -504,7 +507,13 @@ export default function POSPage() {
 
         {/* Cart */}
         <div className="lg:col-span-1">
-          <div className="sticky top-6 rounded-xl bg-white shadow-sm ring-1 ring-slate-200">
+          {/*
+            `id` is the anchor for the mobile summary bar below, which scrolls
+            the cashier here instead of making them hunt past the whole catalog.
+            Sticky only from `lg`: on a phone the cart is a section of the page,
+            not a side rail, and pinning it would cover the products.
+          */}
+          <div id="pos-cart-panel" className="rounded-xl bg-white shadow-sm ring-1 ring-slate-200 lg:sticky lg:top-6">
             <div className="border-b border-slate-200 p-4">
               <h2 className="text-lg font-semibold text-slate-900">Ticket de Venta</h2>
               {hasActivePromotion && (
@@ -534,7 +543,7 @@ export default function POSPage() {
                           </div>
                           <button
                             onClick={() => removeFromCart(index)}
-                            className="shrink-0 text-slate-400 hover:text-rose-500 transition-colors"
+                            className="-m-2 shrink-0 cursor-pointer p-2 text-slate-400 transition-colors hover:text-rose-500"
                           >
                             <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
                               <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
@@ -547,14 +556,14 @@ export default function POSPage() {
                             <button
                               onClick={() => updateQuantity(index, item.quantity - 1)}
                               disabled={item.quantity <= 1}
-                              className="flex h-6 w-6 items-center justify-center rounded bg-slate-100 text-sm font-bold text-slate-600 hover:bg-slate-200 disabled:opacity-40"
+                              className="flex h-9 w-9 cursor-pointer items-center justify-center rounded bg-slate-100 text-base font-bold text-slate-600 hover:bg-slate-200 disabled:opacity-40 lg:h-6 lg:w-6 lg:text-sm"
                             >
                               -
                             </button>
                             <span className="w-8 text-center text-sm font-medium">{item.quantity}</span>
                             <button
                               onClick={() => updateQuantity(index, item.quantity + 1)}
-                              className="flex h-6 w-6 items-center justify-center rounded bg-slate-100 text-sm font-bold text-slate-600 hover:bg-slate-200"
+                              className="flex h-9 w-9 cursor-pointer items-center justify-center rounded bg-slate-100 text-base font-bold text-slate-600 hover:bg-slate-200 lg:h-6 lg:w-6 lg:text-sm"
                             >
                               +
                             </button>
@@ -631,6 +640,46 @@ export default function POSPage() {
           </div>
         </div>
       </div>
+
+      {/*
+        MOBILE CHECKOUT BAR
+        -------------------
+        On a phone the cart sits below the whole catalog, so the running total —
+        the number the cashier checks constantly — scrolls out of sight after
+        the first few products. This bar keeps it pinned, and its button jumps
+        straight to the ticket. It exists only below `lg`, where the cart is not
+        already visible as a side rail, and only while there is something in it.
+
+        The page gets matching bottom padding so the bar can never cover the
+        last row of products.
+      */}
+      {cart.length > 0 && (
+        <>
+          <div className="h-20 lg:hidden" aria-hidden="true" />
+          <div className="fixed inset-x-0 bottom-0 z-30 border-t border-slate-200 bg-white/95 px-3 py-2.5 shadow-[0_-4px_12px_rgba(15,23,42,0.06)] backdrop-blur-md lg:hidden">
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-[11px] font-medium text-slate-500">
+                  {cart.length} articulo{cart.length !== 1 ? 's' : ''} en el ticket
+                </p>
+                <p className="truncate text-lg font-bold tabular-nums text-slate-900">
+                  ${total.toLocaleString('es-MX', { minimumFractionDigits: 2 })}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() =>
+                  document.getElementById('pos-cart-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+                }
+                className="flex h-11 shrink-0 cursor-pointer items-center gap-2 rounded-lg bg-emerald-600 px-5 text-sm font-bold text-white shadow-sm transition-colors hover:bg-emerald-500"
+              >
+                Ver ticket
+                <i className="pi pi-arrow-down text-xs" />
+              </button>
+            </div>
+          </div>
+        </>
+      )}
 
       <CheckoutModal
         visible={showCheckout}

@@ -16,7 +16,7 @@ export function AutoCashClosingDetail({ data }) {
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <div className="rounded-xl bg-indigo-50 p-3 text-center">
           <p className="text-[11px] font-medium text-indigo-600">Cajas Cerradas</p>
           <p className="mt-1 text-xl font-bold text-indigo-900">{data?.registers_closed ?? 0}</p>

@@ -8,7 +8,7 @@ import { Dialog } from 'primereact/dialog';
 import { Tag } from 'primereact/tag';
 import { toast } from 'sonner';
 import api from '../../api/axios';
-import { STACK_TABLE, STACK_CLASS, HIDE_BELOW } from '../../lib/responsive';
+import { STACK_TABLE, STACK_CLASS, HIDE_BELOW, dialogClass, DIALOG_PT } from '../../lib/responsive';
 
 const emptyForm = {
   module_name: '',
@@ -302,7 +302,8 @@ export default function CacheSettingsPanel() {
         visible={showForm}
         onHide={() => !saving && setShowForm(false)}
         header={editing ? 'Editar Política de Caché' : 'Nueva Política de Caché'}
-        style={{ width: '520px' }}
+        className={dialogClass('md')}
+        pt={DIALOG_PT}
         modal
         draggable={false}
         closable={!saving}
@@ -386,7 +387,8 @@ export default function CacheSettingsPanel() {
         visible={deleteTarget !== null}
         onHide={() => !deleting && setDeleteTarget(null)}
         header="Eliminar Política de Caché"
-        style={{ width: '420px' }}
+        className={dialogClass('sm')}
+        pt={DIALOG_PT}
         modal
         draggable={false}
         closable={!deleting}

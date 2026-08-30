@@ -10,7 +10,7 @@ import { toast } from 'sonner';
 import { useAuth } from '../../context/AuthContext';
 import api from '../../api/axios';
 import AppLayout from '../../components/layout/AppLayout';
-import { STACK_TABLE, STACK_CLASS, HIDE_BELOW } from '../../lib/responsive';
+import { STACK_TABLE, STACK_CLASS, HIDE_BELOW, dialogClass, DIALOG_PT } from '../../lib/responsive';
 
 const TRASH_TYPES = [
   { label: 'Productos Eliminados', value: 'products' },
@@ -297,7 +297,8 @@ export default function TrashPage() {
         visible={reasonModal.visible}
         onHide={() => setReasonModal({ visible: false, text: '' })}
         header="Motivo de la Baja"
-        style={{ width: '480px' }}
+        className={dialogClass('md')}
+        pt={DIALOG_PT}
         modal
         draggable={false}
       >
@@ -315,7 +316,8 @@ export default function TrashPage() {
           setPurgeConfirmation('');
         }}
         header="Eliminar Permanentemente"
-        style={{ width: '520px' }}
+        className={dialogClass('md')}
+        pt={DIALOG_PT}
         modal
         draggable={false}
         closable={!actionLoading}

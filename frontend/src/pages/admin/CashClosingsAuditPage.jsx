@@ -282,7 +282,7 @@ export default function CashClosingsAuditPage() {
               <Tag value="REGISTRO INMUTABLE" severity="secondary" icon="pi pi-shield" className="text-[10px]" />
             </div>
 
-            <div className="mb-4 grid grid-cols-2 gap-3 text-sm">
+            <div className="mb-4 grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
               <div className="rounded-lg bg-slate-50 p-3">
                 <p className="text-xs font-medium text-slate-500">Operador de la Caja</p>
                 <p className="mt-1 font-semibold text-slate-900">{detail.cash_register?.user?.name ?? 'N/D'}</p>
@@ -304,7 +304,7 @@ export default function CashClosingsAuditPage() {
               </div>
             </div>
 
-            <div className="mb-4 grid grid-cols-3 gap-3">
+            <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
               <div className="rounded-xl bg-indigo-50 p-3 text-center">
                 <p className="text-[11px] font-medium text-indigo-600">Dinero Calculado</p>
                 <p className="mt-1 text-lg font-bold text-indigo-900">{fmt(detail.expected_amount)}</p>
