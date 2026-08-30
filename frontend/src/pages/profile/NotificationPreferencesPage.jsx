@@ -83,7 +83,7 @@ export default function NotificationPreferencesPage() {
   return (
     <AppLayout>
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-slate-900">Preferencias de Notificaciones</h1>
+        <h1 className="text-xl font-bold sm:text-2xl text-slate-900">Preferencias de Notificaciones</h1>
         <p className="mt-1 text-sm text-slate-500">
           Configura cómo deseas recibir alertas del sistema. Los cambios se aplican de inmediato.
         </p>

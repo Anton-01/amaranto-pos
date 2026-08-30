@@ -175,23 +175,23 @@ export default function StockMovementsPage() {
       {/* Summary cards */}
       {summary && (
         <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
-          <div className="rounded-xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
+          <div className="min-w-0 rounded-xl bg-white p-4 shadow-sm ring-1 ring-slate-200 sm:p-5">
             <p className="text-sm text-slate-500">Entradas (Compras)</p>
-            <p className="mt-1 text-2xl font-bold text-emerald-600">+{purchaseSummary?.total_quantity || 0} uds</p>
-            <p className="mt-0.5 text-sm text-slate-500">${parseFloat(purchaseSummary?.total_cost || 0).toLocaleString('es-MX', { minimumFractionDigits: 2 })} invertido</p>
+            <p className="mt-1 truncate text-xl font-bold tabular-nums text-emerald-600 sm:text-2xl">+{purchaseSummary?.total_quantity || 0} uds</p>
+            <p className="mt-0.5 truncate text-sm tabular-nums text-slate-500">${parseFloat(purchaseSummary?.total_cost || 0).toLocaleString('es-MX', { minimumFractionDigits: 2 })} invertido</p>
           </div>
-          <div className="rounded-xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
+          <div className="min-w-0 rounded-xl bg-white p-4 shadow-sm ring-1 ring-slate-200 sm:p-5">
             <p className="text-sm text-slate-500">Mermas (Perdidas)</p>
-            <p className="mt-1 text-2xl font-bold text-rose-600">-{mermaSummary?.total_quantity || 0} uds</p>
-            <p className="mt-0.5 text-sm text-slate-500">${parseFloat(mermaSummary?.total_cost || 0).toLocaleString('es-MX', { minimumFractionDigits: 2 })} perdido</p>
+            <p className="mt-1 truncate text-xl font-bold tabular-nums text-rose-600 sm:text-2xl">-{mermaSummary?.total_quantity || 0} uds</p>
+            <p className="mt-0.5 truncate text-sm tabular-nums text-slate-500">${parseFloat(mermaSummary?.total_cost || 0).toLocaleString('es-MX', { minimumFractionDigits: 2 })} perdido</p>
           </div>
-          <div className="rounded-xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
+          <div className="min-w-0 rounded-xl bg-white p-4 shadow-sm ring-1 ring-slate-200 sm:p-5">
             <p className="text-sm text-slate-500">Desglose Merma por Motivo</p>
             <div className="mt-2 space-y-1">
               {summary.merma_by_reason?.map((r, i) => (
-                <div key={i} className="flex justify-between text-xs">
-                  <span className="text-slate-600">{reasonLabels[r.reason] || r.reason}</span>
-                  <span className="font-medium text-slate-900">{r.count}x ({r.total_quantity} uds)</span>
+                <div key={i} className="flex justify-between gap-2 text-xs">
+                  <span className="truncate text-slate-600">{reasonLabels[r.reason] || r.reason}</span>
+                  <span className="shrink-0 font-medium tabular-nums text-slate-900">{r.count}x ({r.total_quantity} uds)</span>
                 </div>
               ))}
               {(!summary.merma_by_reason || summary.merma_by_reason.length === 0) && (
@@ -204,7 +204,7 @@ export default function StockMovementsPage() {
 
       <div className="mb-5 flex flex-col gap-3 sm:mb-6 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Movimientos de Stock</h1>
+          <h1 className="text-xl font-bold sm:text-2xl text-slate-900">Movimientos de Stock</h1>
           <p className="text-sm text-slate-500">Registro de entradas, mermas y ajustes de inventario.</p>
         </div>
         <Button

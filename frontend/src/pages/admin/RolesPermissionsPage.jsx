@@ -159,7 +159,7 @@ export default function RolesPermissionsPage() {
     <AppLayout>
       <div className="mb-5 flex flex-col gap-3 sm:mb-6 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Roles y Permisos</h1>
+          <h1 className="text-xl font-bold sm:text-2xl text-slate-900">Roles y Permisos</h1>
           <p className="text-sm text-slate-500">Administra los roles del sistema y su matriz de alcances.</p>
         </div>
         <Button

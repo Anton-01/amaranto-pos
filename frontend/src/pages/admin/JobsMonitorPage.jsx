@@ -75,12 +75,12 @@ function SummaryCard({ label, value, tone, icon }) {
   };
 
   return (
-    <div className={`flex items-center gap-3 rounded-xl border p-4 ${tones[tone] ?? tones.neutral}`}>
+    <div className={`flex min-w-0 items-center gap-3 rounded-xl border p-3 sm:p-4 ${tones[tone] ?? tones.neutral}`}>
       <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-white/70">
         <i className={`pi ${icon}`} />
       </span>
       <div className="min-w-0">
-        <p className="text-2xl font-bold leading-none tabular-nums">{value}</p>
+        <p className="truncate text-xl font-bold leading-none tabular-nums sm:text-2xl">{value}</p>
         <p className="mt-1 truncate text-xs font-medium uppercase tracking-wide opacity-80">{label}</p>
       </div>
     </div>

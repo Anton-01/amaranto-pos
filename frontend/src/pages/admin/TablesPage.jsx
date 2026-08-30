@@ -179,18 +179,18 @@ export default function TablesPage() {
           <h1 className="text-xl font-semibold text-slate-900">Catálogo de Mesas</h1>
           <p className="text-sm text-slate-500">Alta, capacidad y zona de las mesas del comedor.</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
           <InputText
             value={globalFilter}
             onChange={(e) => setGlobalFilter(e.target.value)}
             placeholder="Buscar mesa o zona..."
-            className="w-56 rounded-lg border-slate-200 px-3 py-2 text-sm"
+            className="w-full rounded-lg border-slate-200 px-3 py-2 text-sm sm:w-56"
           />
           <Button
             label="Nueva Mesa"
             icon="pi pi-plus"
             onClick={openCreate}
-            className="cursor-pointer rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500"
+            className="w-full cursor-pointer justify-center rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-indigo-500 sm:w-auto sm:py-2"
             pt={{ root: { className: 'border-0' } }}
           />
         </div>

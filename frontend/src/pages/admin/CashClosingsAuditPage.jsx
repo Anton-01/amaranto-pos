@@ -131,10 +131,10 @@ export default function CashClosingsAuditPage() {
 
   return (
     <AppLayout>
-      <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+      <div className="mb-4 flex flex-col gap-3 sm:mb-5 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
         <div>
-          <div className="flex items-center gap-2">
-            <h1 className="text-xl font-semibold text-slate-900">Auditoría de Cierres de Caja</h1>
+          <div className="flex flex-wrap items-center gap-2">
+            <h1 className="text-lg font-semibold text-slate-900 sm:text-xl">Auditoría de Cierres de Caja</h1>
             <Tag value="ADMIN" severity="danger" className="text-[10px]" />
             <Tag value="SOLO LECTURA" severity="secondary" icon="pi pi-lock" className="text-[10px]" />
           </div>
@@ -142,9 +142,9 @@ export default function CashClosingsAuditPage() {
             Registro forense inmutable de todos los arqueos, manuales y automáticos.
           </p>
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex gap-2 overflow-x-auto pb-1 sm:flex-wrap sm:overflow-visible sm:pb-0">
           {summaryChips.map((chip) => (
-            <span key={chip.label} className={`rounded-lg px-3 py-1.5 text-xs font-semibold ring-1 ${chip.cls}`}>
+            <span key={chip.label} className={`shrink-0 whitespace-nowrap rounded-lg px-3 py-1.5 text-xs font-semibold ring-1 ${chip.cls}`}>
               {chip.label}
             </span>
           ))}

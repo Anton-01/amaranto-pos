@@ -316,7 +316,7 @@ export default function UsersPage() {
     <AppLayout>
       <div className="mb-5 flex flex-col gap-3 sm:mb-6 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Gestion de Usuarios</h1>
+          <h1 className="text-xl font-bold sm:text-2xl text-slate-900">Gestion de Usuarios</h1>
           <p className="text-sm text-slate-500">Administra el ciclo de vida, accesos y auditoria de cada operador.</p>
         </div>
         <Button
@@ -350,7 +350,7 @@ export default function UsersPage() {
           onChange={(e) => setRoleFilter(e.value)}
           placeholder="Rol"
           className="text-sm"
-          pt={{ root: { className: 'w-40' } }}
+          pt={{ root: { className: 'w-full sm:w-40' } }}
         />
         <Dropdown
           value={sessionFilter}
@@ -358,7 +358,7 @@ export default function UsersPage() {
           onChange={(e) => setSessionFilter(e.value)}
           placeholder="Sesion"
           className="text-sm"
-          pt={{ root: { className: 'w-48' } }}
+          pt={{ root: { className: 'w-full sm:w-48' } }}
         />
       </div>
 

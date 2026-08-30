@@ -192,7 +192,7 @@ export default function ProfilePage() {
   return (
     <AppLayout>
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-slate-900">Mi Perfil</h1>
+        <h1 className="text-xl font-bold sm:text-2xl text-slate-900">Mi Perfil</h1>
         <p className="text-sm text-slate-500">Gestiona tu informacion personal y seguridad.</p>
       </div>
 
@@ -230,7 +230,7 @@ export default function ProfilePage() {
                   onChange={(e) => { setPhoneCountryCode(e.value); setPhone(''); }}
                   disabled={savingProfile}
                   className="shrink-0 text-sm"
-                  pt={{ root: { className: 'w-40' } }}
+                  pt={{ root: { className: 'w-28 sm:w-40' } }}
                 />
                 <InputMask
                   value={phone}

@@ -234,7 +234,7 @@ export default function TrashPage() {
     <AppLayout>
       <div className="mb-5 flex flex-col gap-3 sm:mb-6 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Papelera Global</h1>
+          <h1 className="text-xl font-bold sm:text-2xl text-slate-900">Papelera Global</h1>
           <p className="mt-1 text-sm text-slate-500">
             Auditoría forense de registros eliminados del sistema.
           </p>

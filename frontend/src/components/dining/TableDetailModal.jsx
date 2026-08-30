@@ -176,7 +176,7 @@ export default function TableDetailModal({ visible, table, onHide, onCharge, onS
           </div>
           <div className="text-right">
             <p className="text-xs font-medium text-slate-500">Consumo acumulado</p>
-            <p className="text-2xl font-bold tabular-nums text-slate-900">{fmtCurrency(session?.total)}</p>
+            <p className="truncate text-xl font-bold tabular-nums text-slate-900 sm:text-2xl">{fmtCurrency(session?.total)}</p>
           </div>
         </div>
       </div>

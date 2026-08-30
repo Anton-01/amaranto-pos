@@ -107,24 +107,24 @@ export default function PettyCashPage() {
       {/* Summary cards */}
       {summary && (
         <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
-          <div className="rounded-xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
+          <div className="min-w-0 rounded-xl bg-white p-4 shadow-sm ring-1 ring-slate-200 sm:p-5">
             <p className="text-sm text-slate-500">Retiros Hoy</p>
-            <p className="mt-1 text-2xl font-bold text-slate-900">{summary.transactions_today}</p>
-            <p className="mt-0.5 text-sm text-rose-600">-${parseFloat(summary.total_today).toLocaleString('es-MX', { minimumFractionDigits: 2 })}</p>
+            <p className="mt-1 truncate text-xl font-bold tabular-nums text-slate-900 sm:text-2xl">{summary.transactions_today}</p>
+            <p className="mt-0.5 truncate text-sm tabular-nums text-rose-600">-${parseFloat(summary.total_today).toLocaleString('es-MX', { minimumFractionDigits: 2 })}</p>
           </div>
-          <div className="rounded-xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
+          <div className="min-w-0 rounded-xl bg-white p-4 shadow-sm ring-1 ring-slate-200 sm:p-5">
             <p className="text-sm text-slate-500">Total Acumulado</p>
-            <p className="mt-1 text-2xl font-bold text-rose-600">
+            <p className="mt-1 truncate text-xl font-bold tabular-nums text-rose-600 sm:text-2xl">
               -${parseFloat(summary.total_withdrawals).toLocaleString('es-MX', { minimumFractionDigits: 2 })}
             </p>
           </div>
-          <div className="rounded-xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
+          <div className="min-w-0 rounded-xl bg-white p-4 shadow-sm ring-1 ring-slate-200 sm:p-5">
             <p className="text-sm text-slate-500">Desglose por Motivo</p>
             <div className="mt-2 space-y-1">
               {summary.by_reason?.map((r, i) => (
-                <div key={i} className="flex justify-between text-xs">
-                  <span className="text-slate-600">{reasonLabels[r.reason] || r.reason}</span>
-                  <span className="font-medium text-slate-900">{r.count}x (${parseFloat(r.total).toFixed(2)})</span>
+                <div key={i} className="flex justify-between gap-2 text-xs">
+                  <span className="truncate text-slate-600">{reasonLabels[r.reason] || r.reason}</span>
+                  <span className="shrink-0 font-medium tabular-nums text-slate-900">{r.count}x (${parseFloat(r.total).toFixed(2)})</span>
                 </div>
               ))}
               {(!summary.by_reason || summary.by_reason.length === 0) && (
@@ -137,7 +137,7 @@ export default function PettyCashPage() {
 
       <div className="mb-5 flex flex-col gap-3 sm:mb-6 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Caja Chica</h1>
+          <h1 className="text-xl font-bold sm:text-2xl text-slate-900">Caja Chica</h1>
           <p className="text-sm text-slate-500">Registro de egresos con auditoria inmutable SHA256.</p>
         </div>
         <Button

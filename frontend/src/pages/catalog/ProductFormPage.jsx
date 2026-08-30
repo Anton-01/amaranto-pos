@@ -185,7 +185,7 @@ export default function ProductFormPage() {
           </svg>
           Volver a productos
         </button>
-        <h1 className="text-2xl font-bold text-slate-900">
+        <h1 className="text-xl font-bold sm:text-2xl text-slate-900">
           {isEditing ? 'Editar Producto' : 'Nuevo Producto'}
         </h1>
         {variationCount > 0 && (

@@ -112,7 +112,7 @@ export default function TicketConfigPage() {
     <AppLayout>
       <div className="mb-5 flex flex-col gap-3 sm:mb-6 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Diseno de Ticket</h1>
+          <h1 className="text-xl font-bold sm:text-2xl text-slate-900">Diseno de Ticket</h1>
           <p className="text-sm text-slate-500">Cada cambio genera una nueva version inmutable (Append-Only).</p>
         </div>
         <Button

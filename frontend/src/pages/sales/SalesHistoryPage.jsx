@@ -424,7 +424,7 @@ export default function SalesHistoryPage() {
   return (
     <AppLayout>
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-slate-900">Historial de Ventas</h1>
+        <h1 className="text-xl font-bold sm:text-2xl text-slate-900">Historial de Ventas</h1>
         <p className="mt-1 text-sm text-slate-500">Consulta y audita todas las transacciones del POS.</p>
       </div>
 

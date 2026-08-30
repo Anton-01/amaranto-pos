@@ -116,7 +116,7 @@ export default function SystemSettingsPage() {
     <AppLayout>
       <div className="mb-6 flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Configuracion del Sistema</h1>
+          <h1 className="text-xl font-bold sm:text-2xl text-slate-900">Configuracion del Sistema</h1>
           <p className="text-sm text-slate-500">Parametros globales del negocio.</p>
         </div>
         <Button

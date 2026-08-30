@@ -49,9 +49,9 @@ export default function MailTemplatesPage() {
 
   return (
     <AppLayout>
-      <div className="flex h-[calc(100vh-4rem)] gap-0 overflow-hidden">
+      <div className="flex h-auto flex-col gap-4 overflow-hidden lg:h-[calc(100vh-4rem)] lg:flex-row lg:gap-0">
         {/* Left panel */}
-        <div className="w-80 shrink-0 border-r border-slate-200 bg-white">
+        <div className="w-full shrink-0 rounded-xl border border-slate-200 bg-white lg:w-80 lg:rounded-none lg:border-0 lg:border-r">
           <div className="border-b border-slate-100 px-5 py-4">
             <h2 className="text-sm font-semibold text-slate-900">Plantillas de Correo</h2>
             <p className="mt-0.5 text-xs text-slate-500">Vista previa de los correos del sistema</p>
@@ -89,7 +89,7 @@ export default function MailTemplatesPage() {
         {/* Right panel */}
         <div className="flex flex-1 flex-col bg-slate-100">
           {/* Toolbar */}
-          <div className="flex items-center justify-between border-b border-slate-200 bg-white px-5 py-3">
+          <div className="flex flex-col gap-2 border-b border-slate-200 bg-white px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5">
             <div className="flex items-center gap-2">
               <span className="text-sm font-medium text-slate-700">
                 {selected?.name || 'Selecciona una plantilla'}
@@ -112,7 +112,7 @@ export default function MailTemplatesPage() {
           </div>
 
           {/* Viewer */}
-          <div className="flex flex-1 items-start justify-center overflow-auto p-6">
+          <div className="flex flex-1 items-start justify-center overflow-auto p-3 sm:p-6">
             {!selected && (
               <div className="flex h-96 items-center justify-center">
                 <p className="text-sm text-slate-400">Selecciona una plantilla del panel izquierdo</p>
@@ -151,9 +151,11 @@ export default function MailTemplatesPage() {
               <iframe
                 srcDoc={html}
                 title={`Preview — ${selected.name}`}
-                className={`h-[650px] bg-white rounded-lg shadow-sm border border-slate-200 transition-all duration-300 ${
+                /* A shorter frame on a phone: 650px of iframe below a header
+                   and a toolbar leaves nothing of the page visible. */
+                className={`h-[70dvh] w-full rounded-lg border border-slate-200 bg-white shadow-sm transition-all duration-300 sm:h-[650px] ${
                   viewport === 'mobile' ? 'max-w-[375px]' : 'max-w-[600px]'
-                } w-full`}
+                }`}
                 sandbox="allow-same-origin"
               />
             )}

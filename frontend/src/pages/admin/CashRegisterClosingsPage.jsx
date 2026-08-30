@@ -585,8 +585,8 @@ export default function CashRegisterClosingsPage() {
 
             <div className="space-y-3">
               {paymentMethods.map((pm) => (
-                <div key={pm.id} className="flex items-center gap-3">
-                  <label className="w-40 flex-shrink-0 text-sm font-medium text-slate-700">
+                <div key={pm.id} className="flex flex-col gap-1.5 sm:flex-row sm:items-center sm:gap-3">
+                  <label className="text-sm font-medium text-slate-700 sm:w-40 sm:flex-shrink-0">
                     {pm.name}
                   </label>
                   <InputNumber

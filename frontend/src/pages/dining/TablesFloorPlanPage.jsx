@@ -168,16 +168,16 @@ export default function TablesFloorPlanPage() {
 
   return (
     <>
-      <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+      <div className="mb-4 flex flex-col gap-3 sm:mb-5 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
         <div>
           <h1 className="text-xl font-semibold text-slate-900">Plano de Mesas</h1>
           <p className="text-sm text-slate-500">
             {summary.total} mesa{summary.total !== 1 ? 's' : ''} en servicio · toca una mesa para abrirla o ver su cuenta
           </p>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex items-center gap-2 overflow-x-auto pb-1 sm:flex-wrap sm:overflow-visible sm:pb-0">
           {statusChips.map(chip => (
-            <span key={chip.label} className={`rounded-lg px-3 py-1.5 text-xs font-semibold ring-1 ${chip.cls}`}>
+            <span key={chip.label} className={`shrink-0 whitespace-nowrap rounded-lg px-3 py-1.5 text-xs font-semibold ring-1 ${chip.cls}`}>
               {chip.value} {chip.label}
             </span>
           ))}
@@ -199,8 +199,8 @@ export default function TablesFloorPlanPage() {
               onChange={(e) => setZoneFilter(e.value === ALL_ZONES ? null : e.value)}
               placeholder="Todas las zonas"
               aria-label="Filtrar mesas por zona"
-              className="w-48 text-sm"
-              pt={{ root: { className: 'w-48' } }}
+              className="w-full text-sm sm:w-48"
+              pt={{ root: { className: 'w-full sm:w-48' } }}
             />
           )}
           <Button
@@ -232,7 +232,7 @@ export default function TablesFloorPlanPage() {
               <button
                 key={table.id}
                 onClick={() => handleTableClick(table)}
-                className={`cursor-pointer rounded-xl border-2 p-4 text-left shadow-sm transition-all hover:shadow-md ${meta.card}`}
+                className={`min-h-[104px] cursor-pointer rounded-xl border-2 p-3 text-left shadow-sm transition-all hover:shadow-md sm:p-4 ${meta.card}`}
               >
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">

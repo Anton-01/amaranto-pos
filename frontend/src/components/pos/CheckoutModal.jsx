@@ -395,7 +395,7 @@ export default function CheckoutModal({ visible, onHide, cart, taxRate = 0.16, o
               {!cashInsufficient && amountReceived != null && (
                 <div className="mt-2 rounded-lg bg-emerald-50 border border-emerald-200 px-3 py-2.5 text-center">
                   <span className="text-xs text-emerald-600 font-medium">Cambio a devolver</span>
-                  <p className="text-2xl font-bold text-emerald-700">
+                  <p className="truncate text-xl font-bold tabular-nums text-emerald-700 sm:text-2xl">
                     ${amountChange.toLocaleString('es-MX', { minimumFractionDigits: 2 })}
                   </p>
                 </div>
