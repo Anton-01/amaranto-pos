@@ -47,7 +47,7 @@ const navGroups = [
   },
 ];
 
-export default function Sidebar({ collapsed, onToggle }) {
+export default function Sidebar({ collapsed, onToggle, mobileOpen = false, onCloseMobile }) {
   const { user } = useAuth();
   const { pathname } = useLocation();
   const navRef = useRef(null);
@@ -116,10 +116,27 @@ export default function Sidebar({ collapsed, onToggle }) {
     .filter((group) => group.items.length > 0);
 
   return (
+    /*
+     * MOBILE-FIRST SIDEBAR
+     * --------------------
+     * Below `lg` this is an off-canvas drawer: a fixed 18rem panel parked at
+     * `-translate-x-full` and slid in by `mobileOpen`. It never reserves layout
+     * width on a phone, so the content column keeps the full viewport.
+     *
+     * From `lg` up it becomes the historic docked rail: `lg:translate-x-0`
+     * pins it open and `collapsed` swaps between the 72px icon rail and the
+     * 16rem labelled column.
+     *
+     * Every `collapsed`-driven class below is `lg:`-prefixed on purpose. The
+     * rail is a desktop-only affordance, and a phone must always receive the
+     * fully labelled drawer even when the user last left the desktop rail
+     * collapsed.
+     */
     <aside
-      className={`fixed inset-y-0 left-0 z-50 flex flex-col border-r border-slate-200 bg-white transition-all duration-300 ease-in-out ${
-        collapsed ? 'w-[72px]' : 'w-64'
-      }`}
+      id="app-sidebar"
+      className={`fixed inset-y-0 left-0 z-50 flex w-[18rem] max-w-[85vw] flex-col border-r border-slate-200 bg-white shadow-xl transition-transform duration-300 ease-in-out lg:max-w-none lg:shadow-none lg:transition-all ${
+        mobileOpen ? 'translate-x-0' : '-translate-x-full'
+      } lg:translate-x-0 ${collapsed ? 'lg:w-[72px]' : 'lg:w-64'}`}
     >
       <div className="flex h-16 items-center gap-3 border-b border-slate-100 px-4">
         <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-indigo-600">
@@ -129,21 +146,36 @@ export default function Sidebar({ collapsed, onToggle }) {
         </div>
         <span
           className={`text-lg font-bold tracking-tight text-slate-900 transition-opacity duration-200 ${
-            collapsed ? 'pointer-events-none w-0 opacity-0' : 'opacity-100'
+            collapsed ? 'lg:pointer-events-none lg:w-0 lg:opacity-0' : 'opacity-100'
           }`}
         >
           Cronos
         </span>
+
+        {/* Drawer dismissal. 44x44 hit area, mobile only — the docked rail on
+            desktop is closed with the chevron in the footer instead. */}
+        <button
+          type="button"
+          onClick={onCloseMobile}
+          aria-label="Cerrar menu"
+          className="ml-auto flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-lg text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 lg:hidden"
+        >
+          <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.75} stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
+          </svg>
+        </button>
       </div>
 
       <nav ref={navRef} className="flex-1 overflow-y-auto px-3 py-4">
         {visibleGroups.map((group) => (
           <div key={group.label} className="mb-5">
-            {!collapsed && (
-              <p className="mb-2 px-3 text-[10px] font-semibold uppercase tracking-widest text-slate-400">
-                {group.label}
-              </p>
-            )}
+            <p
+              className={`mb-2 px-3 text-[10px] font-semibold uppercase tracking-widest text-slate-400 ${
+                collapsed ? 'lg:hidden' : ''
+              }`}
+            >
+              {group.label}
+            </p>
             <ul className="space-y-0.5">
               {group.items.map((item) => (
                 <li key={item.path}>
@@ -165,11 +197,11 @@ export default function Sidebar({ collapsed, onToggle }) {
                     onMouseEnter={() => prefetchRoute(item.path)}
                     onFocus={() => prefetchRoute(item.path)}
                     className={({ isActive }) =>
-                      `group flex items-center gap-3 rounded-lg px-3 py-2.5 text-[13px] font-medium transition-all duration-150 ${
+                      `group flex min-h-[44px] items-center gap-3 rounded-lg px-3 py-3 text-sm font-medium transition-all duration-150 lg:min-h-0 lg:py-2.5 lg:text-[13px] ${
                         isActive
                           ? 'bg-indigo-50 text-indigo-700 shadow-sm shadow-indigo-100'
                           : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
-                      } ${collapsed ? 'justify-center' : ''}`
+                      } ${collapsed ? 'lg:justify-center' : ''}`
                     }
                   >
                     {({ isActive }) => (
@@ -186,8 +218,10 @@ export default function Sidebar({ collapsed, onToggle }) {
                           <path strokeLinecap="round" strokeLinejoin="round" d={item.icon} />
                         </svg>
                         <span
-                          className={`transition-opacity duration-200 ${
-                            collapsed ? 'pointer-events-none w-0 overflow-hidden opacity-0' : 'opacity-100'
+                          className={`truncate transition-opacity duration-200 ${
+                            collapsed
+                              ? 'lg:pointer-events-none lg:w-0 lg:overflow-hidden lg:opacity-0'
+                              : 'opacity-100'
                           }`}
                         >
                           {item.label}
@@ -202,10 +236,11 @@ export default function Sidebar({ collapsed, onToggle }) {
         ))}
       </nav>
 
-      <div className="border-t border-slate-100 p-3">
+      <div className="hidden border-t border-slate-100 p-3 lg:block">
         <button
           onClick={onToggle}
-          className="flex w-full items-center justify-center rounded-lg p-2 text-slate-400 transition-colors hover:bg-slate-50 hover:text-slate-600"
+          aria-label={collapsed ? 'Expandir menu' : 'Colapsar menu'}
+          className="flex w-full cursor-pointer items-center justify-center rounded-lg p-2 text-slate-400 transition-colors hover:bg-slate-50 hover:text-slate-600"
         >
           <svg
             className={`h-5 w-5 transition-transform duration-300 ${collapsed ? 'rotate-180' : ''}`}

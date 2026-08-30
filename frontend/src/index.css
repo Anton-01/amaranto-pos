@@ -45,6 +45,228 @@ body {
   transition: transform 0.2s ease;
 }
 
+/* ==========================================================================
+   MOBILE-FIRST FOUNDATION
+   --------------------------------------------------------------------------
+   PrimeReact renders its own DOM (dialogs, tables, paginators, dropdowns) and
+   accepts Tailwind classes only through `pt`, one call site at a time. These
+   rules therefore fix the responsive behaviour once, at the vendor-class level,
+   so every dialog and every table in the system inherits it — including the
+   ones a future screen has not written yet.
+
+   They live outside `@layer` on purpose: the PrimeReact theme is imported
+   without a layer in vendor.css, which makes it win against any layered
+   Tailwind utility. Unlayered rules of equal specificity beat it by source
+   order.
+   ========================================================================== */
+
+/* No view may drag the viewport sideways. This is the outermost guarantee of
+   requirement #2 (zero horizontal overflow); every component below narrows the
+   problem further so this rule is never actually needed. */
+html,
+body {
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+/* iOS zooms the page in when a focused input is smaller than 16px. Keeping the
+   control fonts at 16px on phones is what stops the viewport from jumping on
+   every tap into a field. */
+@media (max-width: 640px) {
+  .p-inputtext,
+  .p-dropdown .p-dropdown-label,
+  .p-multiselect .p-multiselect-label,
+  .p-inputnumber-input,
+  .p-calendar .p-inputtext,
+  .p-password input {
+    font-size: 16px;
+  }
+
+  /* Touch-friendly minimums (requirement #3). 44px is the smallest reliably
+     tappable target on a touchscreen. */
+  .p-button,
+  .p-dropdown,
+  .p-multiselect,
+  .p-inputtext,
+  .p-calendar .p-inputtext,
+  .p-inputnumber-input {
+    min-height: 44px;
+  }
+
+  .p-button.p-button-icon-only {
+    min-width: 44px;
+  }
+
+  /* `p-button-sm` is used for inline row actions; it stays compact but still
+     clears a comfortable 38px. */
+  .p-button.p-button-sm {
+    min-height: 38px;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   DIALOGS — full-bleed on phones, centred card from `sm` up
+   --------------------------------------------------------------------------
+   Most dialogs in the system were sized with an inline `style={{ width: 'Nvw' }}`,
+   which an inline style makes unreachable from a media query. Widths have been
+   moved to classes at the call sites; these rules are the floor that guarantees
+   a dialog can never exceed the viewport even if a call site is missed. */
+.p-dialog-mask {
+  padding: 0.75rem;
+}
+
+.p-dialog {
+  max-width: calc(100vw - 1.5rem);
+  max-height: calc(100dvh - 1.5rem);
+}
+
+.p-dialog .p-dialog-content {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+@media (max-width: 640px) {
+  .p-dialog {
+    width: calc(100vw - 1.5rem) !important;
+    margin: 0;
+  }
+
+  .p-dialog .p-dialog-header,
+  .p-dialog .p-dialog-content,
+  .p-dialog .p-dialog-footer {
+    padding-left: 1rem;
+    padding-right: 1rem;
+  }
+
+  .p-dialog .p-dialog-title {
+    font-size: 1rem;
+    line-height: 1.4;
+  }
+
+  /* A footer of three buttons is the single most common source of sideways
+     overflow inside a dialog: stacked full-width is both safer and easier to
+     tap. */
+  .p-dialog .p-dialog-footer {
+    display: flex;
+    flex-direction: column-reverse;
+    gap: 0.5rem;
+  }
+
+  .p-dialog .p-dialog-footer .p-button {
+    width: 100%;
+    margin: 0;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   DATATABLES — smooth horizontal touch scrolling
+   --------------------------------------------------------------------------
+   Wide operational tables (Cierres, Almacén, Historial) keep their table shape
+   and scroll inside their own box. The scroll is confined to the wrapper, so it
+   never becomes a page-level horizontal scroll, and `overscroll-behavior-x`
+   stops the swipe from being handed to the browser's back-navigation gesture. */
+.p-datatable-wrapper {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+}
+
+/* Tables tagged `.pos-table` opt into a comfortable minimum column width so a
+   scrolled table reads as a table rather than as crushed columns. */
+@media (max-width: 768px) {
+  .pos-table .p-datatable-table {
+    min-width: 640px;
+  }
+
+  .pos-table.pos-table-wide .p-datatable-table {
+    min-width: 900px;
+  }
+
+  /* Denser padding buys roughly one extra column of visible width. */
+  .pos-table .p-datatable-thead > tr > th,
+  .pos-table .p-datatable-tbody > tr > td {
+    padding: 0.6rem 0.65rem;
+  }
+
+  /* The paginator lays its elements out in one nowrap row by default and is a
+     reliable overflow source at 360px. */
+  .p-paginator {
+    flex-wrap: wrap;
+    row-gap: 0.25rem;
+    padding: 0.5rem 0.25rem;
+  }
+
+  .p-paginator .p-paginator-current {
+    order: 1;
+    width: 100%;
+    text-align: center;
+    font-size: 0.75rem;
+  }
+}
+
+/* Column visibility helpers for PrimeReact, which renders `<th>`/`<td>` itself:
+   Tailwind's `hidden md:table-cell` cannot be applied to a column PrimeReact
+   owns, but `className` on <Column> lands on both the header and body cells, so
+   these two classes do the same job declaratively. */
+.col-hide-sm {
+  display: none;
+}
+
+@media (min-width: 640px) {
+  .col-hide-sm {
+    display: table-cell;
+  }
+}
+
+.col-hide-md {
+  display: none;
+}
+
+@media (min-width: 768px) {
+  .col-hide-md {
+    display: table-cell;
+  }
+}
+
+.col-hide-lg {
+  display: none;
+}
+
+@media (min-width: 1024px) {
+  .col-hide-lg {
+    display: table-cell;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   OVERLAYS — dropdowns, overlay panels and the notification tray must never be
+   wider than the screen they pop over. */
+@media (max-width: 640px) {
+  .p-overlaypanel,
+  .p-dropdown-panel,
+  .p-multiselect-panel,
+  .p-datepicker:not(.p-datepicker-inline) {
+    max-width: calc(100vw - 1.5rem) !important;
+  }
+
+  /* Anchoring the left edge is enough: with `max-width` already capped, a
+     panel opened from a button near the right edge can no longer spill past
+     the viewport. */
+  .p-overlaypanel {
+    left: 0.75rem !important;
+  }
+}
+
+/* Sonner toasts sit under the sticky header on phones and stretch edge to edge
+   rather than hanging off the right side of a 360px screen. */
+@media (max-width: 640px) {
+  [data-sonner-toaster] {
+    width: calc(100vw - 1.5rem) !important;
+    right: 0.75rem !important;
+    left: 0.75rem !important;
+  }
+}
+
 @media print {
   @page {
     size: 58mm auto;
