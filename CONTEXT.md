@@ -7362,3 +7362,449 @@ donde se veía una tarjeta que aún mostraba una columna secundaria.
   `MonthlyAnalyticsModal`
 - `pages/finance/FinanceDashboardPage`, `pages/dining/TablesFloorPlanPage`,
   `pages/admin/MailTemplatesPage`, `pages/profile/ProfilePage`
+
+---
+
+## 63. MÓDULO DE MEDIOS Y MULTIMEDIA ENTERPRISE — GOOGLE DRIVE, TIPOS DINÁMICOS Y TRAZABILIDAD FORENSE [🟢 COMPLETADO Y OPERATIVO]
+
+Biblioteca de medios centralizada, estilo WordPress, con el almacenamiento
+delegado a Google Drive y **cuatro controles de seguridad que se sostienen unos
+a otros**: qué puede entrar (tipos dinámicos), con qué identidad salimos hacia
+Google (credenciales cifradas), quién puede leer lo almacenado (endurecimiento
+de permisos) y qué hizo cada quién (auditoría append-only).
+
+### 63.1 La decisión de arquitectura que gobierna todo el módulo
+
+**El archivo en Drive NUNCA recibe el permiso `anyone with the link`.** Todo lo
+demás se deriva de ahí.
+
+Un enlace público de Drive no caduca, no se puede contar, no se revoca sin tocar
+la ACL del objeto y —lo peor— sigue siendo válido en cada caché de navegador y
+cada historial de chat donde se haya pegado. Compartir se invierte: el POS emite
+un token propio, entrega una URL **que apunta a sí mismo**, y sirve los bytes
+solo después de validar ese token contra la base de datos. Caducidad, tope de
+descargas y revocación instantánea pasan a ser hechos consultables, y cada
+apertura queda en la auditoría con su IP.
+
+El precio es que los bytes atraviesan el servidor en lugar de ir del navegador a
+Google. A cambio, no existe ninguna URL de Drive que sobreviva a una revocación.
+
+### 63.2 Tabla de tipos permitidos — la política de subida es un dato, no código
+
+`allowed_file_types` **es** la política de subida del sistema. No hay una lista
+de extensiones escrita en ningún punto del backend: cada subida resuelve la fila
+que corresponde a su extensión, y una fila ausente o inactiva rechaza el archivo
+**antes** de que un solo byte llegue a Drive.
+
+| Columna | Papel |
+|---|---|
+| `extension` | Clave única, normalizada (minúsculas, sin punto). `.PDF`, `PDF` y `pdf` colisionan a propósito |
+| `mime_type` | MIME canónico esperado. Se compara contra el contenido REAL del archivo |
+| `max_size_kb` | Techo por tipo, siempre acotado por `config('media.max_upload_kb')` |
+| `category` | `document`, `image`, `spreadsheet`, `presentation`, `archive`, `other`. Gobierna el motor de vista previa y los filtros |
+| `is_active` | Interruptor de corte. Sin caché intermedia: la siguiente subida ya obedece |
+| `is_system` | Fila del catálogo base: se puede desactivar, nunca eliminar |
+
+`App\Services\Media\FileTypeValidator` valida en **cuatro capas ordenadas**, y el
+orden importa: informar "excede el límite" de una extensión que nadie habilitó
+mandaría al operador a perseguir el problema equivocado.
+
+1. **La extensión debe tener fila** → `ERR_MEDIA_TYPE_NOT_REGISTERED`
+2. **La fila debe estar activa** → `ERR_MEDIA_TYPE_DISABLED`
+3. **El MIME real debe coincidir** → `ERR_MEDIA_MIME_MISMATCH`
+4. **El tamaño debe caber** → `ERR_MEDIA_FILE_TOO_LARGE`
+
+La capa 3 es la defensa contra el archivo renombrado. Se compara
+`getMimeType()` —que PHP deriva de los *magic bytes* del archivo en disco— y
+**no** `getClientMimeType()`, que es una cabecera que escribe el cliente y por
+tanto controla un atacante. Renombrar `payload.php` a `factura.pdf` pasa la capa
+1 y muere aquí. Existe una lista corta y explícita de alias equivalentes
+(`image/jpeg` ≡ `image/jpg`; los formatos OOXML viajan como `application/zip`)
+porque un navegador que elige una grafía registrada distinta no es un ataque, y
+bloquearlo solo enseñaría a los administradores a desactivar la comprobación.
+
+**El techo de plataforma no es negociable desde el navegador.** `max_size_kb` se
+clampa siempre contra `config('media.max_upload_kb')`: una fila que declare
+500 MB no concede 500 MB. La memoria de PHP y el timeout de la petición son
+propiedades del servidor, y ninguna fila editable desde un formulario puede
+elevarlas.
+
+**El catálogo base siembra `svg` y `zip` DESACTIVADOS**, y es una decisión, no un
+olvido. Un SVG es un formato de documento, no de imagen: puede transportar
+`<script>`, y el navegador que lo renderiza desde el origen de esta aplicación
+ejecuta ese script. Un ZIP nunca se expande, así que su contenido **elude por
+completo** la lista blanca: es un agujero recto a través de la política. Ambos
+deben abrirse por una decisión deliberada de quien conoce el intercambio.
+
+### 63.3 Credenciales de Drive cifradas en la base de datos
+
+`drive_credentials` guarda la Service Account. **Por qué no un archivo:** meter
+el JSON en la imagen hornea una credencial viva en cada artefacto de build y
+cada capa del registry; montarlo como volumen convierte la rotación en un ticket
+de operaciones y un reinicio de contenedor. Aquí el secreto vive en una columna
+cifrada, se rota desde el panel y aplica en la siguiente subida.
+
+- `service_account_json`, `private_key` y `client_secret` pasan por el cast
+  `encrypted` (AES-256 con `APP_KEY`): un dump de la base —la fuga realista—
+  entrega texto cifrado. Verificado: la columna en PostgreSQL no contiene
+  `BEGIN PRIVATE KEY`.
+- Las tres están además en `$hidden`, así que **ningún** controlador puede
+  filtrarlas devolviendo el modelo. El panel trabaja con `has_private_key`,
+  `has_service_account` y el `client_email` — suficiente para reconocer qué
+  cuenta está cargada, inútil para suplantarla.
+- `client_email`, `project_id` y `private_key` se **desnormalizan** al guardar el
+  JSON: el firmante necesita la llave en cada refresco de token y la UI el emisor
+  en cada carga; descifrar y parsear el documento completo para eso sería trabajo
+  en un camino caliente y pondría la credencial en memoria mucho más seguido de
+  lo necesario.
+- Un campo de JSON vacío al guardar significa **"conserva la credencial
+  actual"**, igual que la API Key del módulo de correo. Rotar exige pegar un
+  documento nuevo, lo que impide que un guardado accidental borre una conexión
+  que funciona mientras se editaba la lista de lectores.
+- Toda escritura llama a `forgetAccessToken()`. Sin eso, el token emitido por la
+  llave anterior sigue vivo dentro de su ventana de una hora y la revocación
+  parecería no haber aplicado — la clase exacta de fallo que vuelve
+  indigno de confianza a un control de seguridad.
+
+**Autenticación (`GoogleDriveClient`).** Se habla la API REST de Drive v3
+directamente sobre el cliente HTTP del framework, sin `google/apiclient`: la
+superficie usada es mínima (token, files, permissions) y el SDK oficial está
+construido alrededor de credenciales que viven en disco o en el entorno —
+justo lo contrario de la premisa de este módulo. Una Service Account no usa el
+baile interactivo de OAuth: se arma un JWT que afirma *"soy `<client_email>`,
+quiero `<scope>`"*, se firma con RS256 usando la llave RSA de la cuenta y se
+canjea por un token de vida corta, cacheado por fila de credencial.
+
+Dos detalles que cuestan horas de diagnóstico si faltan:
+
+- **`iat` se retrasa 10 segundos.** Google rechaza una aserción emitida en su
+  futuro, y un contenedor con el reloj unos segundos adelantado fallaría **todas**
+  las subidas con un opaco `invalid_grant`.
+- **`normalizePrivateKey()`** repara las dos formas en que una llave sobrevive
+  mal a un copiar-pegar: la secuencia literal `\n` como únicos saltos de línea, y
+  la normalización a CRLF. OpenSSL no acepta ninguna de las dos, y decirle a un
+  administrador que su llave válida es inválida es peor que arreglarlo en la
+  frontera.
+
+**El scope es `drive.file`, no `drive`.** El token solo puede tocar objetos que
+esta aplicación creó. Un token filtrado de la caché no puede enumerar, leer ni
+destruir el resto del Drive de la organización — esa es la diferencia entre un
+incidente y una catástrofe.
+
+**Diagnóstico síncrono que verifica TRES cosas, no una.** Emitir un token prueba
+que la llave firma y la cuenta existe, y nada más. Los dos fallos que de verdad
+rompen este módulo en producción son un ID de carpeta raíz inexistente y una
+carpeta que existe pero **nunca se compartió** con la Service Account; ambos
+emiten token felizmente y fallan en la primera subida, horas después, con un 404
+o un 403 que nadie conecta con la pantalla de configuración. Por eso el
+`testConnection()` además lee la carpeta y exige `canAddChildren`:
+
+| Escenario | Resultado |
+|---|---|
+| Carpeta correcta y escribible | ✅ éxito |
+| Carpeta visible pero sin permiso de Editor | ❌ *"puede ver la carpeta pero no escribir en ella. Compártela con esa dirección…"* |
+| El ID apunta a un archivo, no a una carpeta | ❌ *"no corresponde a una carpeta de Drive, sino a un archivo"* |
+| Carpeta en la papelera de Drive | ❌ *"está en la papelera… Restáurala"* |
+| Google rechaza la llave | ❌ *"Google rechazó las credenciales (HTTP 400): Invalid JWT Signature."* |
+| Faltan datos obligatorios | ❌ nombra exactamente qué falta |
+
+Nunca lanza: devuelve un array de diagnóstico para todo desenlace, y el
+controlador lo traduce a **HTTP 422** con las palabras textuales de Google. 422 y
+no 500 a propósito: la petición estaba bien formada y la aplicación hizo justo lo
+que se le pidió; lo que falló es la configuración bajo prueba, y un ID mal
+tecleado no es un incidente de plataforma.
+
+### 63.4 Protección de recursos en la nube
+
+`GoogleDriveService::hardenPermissions()` corre después de **cada** subida y
+también bajo demanda desde el botón *Revisar permisos en Drive*:
+
+- **Revoca** todo permiso de tipo `anyone` (el "cualquiera con el enlace") y de
+  tipo `domain` (visible para todo un dominio de Workspace). Son las dos formas
+  que hacen legible un archivo a quien simplemente recorre la estructura de
+  carpetas — la fuga exacta que el módulo debía impedir.
+- **Conserva** la propiedad de la cuenta de servicio y los permisos explícitos
+  por usuario.
+- **Otorga** lectura a cada dirección de `authorized_emails`, con
+  `sendNotificationEmail=false` (un POS subiendo cien facturas no debe disparar
+  cien correos al contador).
+- **No aborta la subida** si una revocación falla: los bytes ya están en Drive y
+  reventar aquí dejaría un objeto huérfano sin fila en la biblioteca. El fallo se
+  registra y **la visibilidad reportada refleja la realidad** — un archivo cuyo
+  permiso público no pudo quitarse NO se reporta como privado. Exagerar la
+  privacidad de un objeto es peor que admitir que el endurecimiento fue parcial.
+
+Verificado con un Google simulado: partiendo de 4 permisos (owner + `anyone` +
+`domain` + un usuario), quedan 3 — se revocaron `anyone` y `domain`, sobrevivió
+el propietario y se añadió el lector corporativo autorizado.
+
+**Distribución en Drive:** `<raíz>/<Categoría>/<AAAA-MM>`. Navegar la carpeta
+cruda en una llamada de soporte sigue siendo comprensible, y ninguna carpeta
+acumula las decenas de miles de hijos que ponen de rodillas al propio listado de
+Drive. `ensureFolder()` consulta antes de crear y filtra `trashed = false`: una
+carpeta que alguien mandó a la papelera todavía responde a una búsqueda por
+nombre, y subir dentro de ella escondería en silencio cada archivo nuevo.
+
+**Compensación de huérfanos:** si la escritura del índice local falla con los
+bytes ya en Drive, el objeto se manda a la papelera de Drive. Si eso también
+falla, queda una traza `error` con el `drive_file_id` — que es lo que un humano
+necesita para limpiar a mano.
+
+### 63.5 Enlaces de compartición y motor de vista previa
+
+`media_share_links` guarda el **SHA-256** del token, nunca el token. El valor en
+claro existe exactamente una vez, en la respuesta que crea el enlace — mismo
+contrato que una API Key, y por la misma razón. La UI lo dice y mantiene el
+recuadro abierto hasta que el operador lo descarta.
+
+- **Toda vigencia es obligatoria.** No hay opción de "nunca expira", y su
+  ausencia es la decisión de seguridad: un enlace eterno es indistinguible de un
+  archivo público, que es justo lo que este módulo se niega a crear.
+- Tope opcional de accesos, incrementado con un `UPDATE … download_count + 1`
+  **atómico**: dos redenciones simultáneas de un enlace limitado a una descarga
+  no pueden leer ambas `download_count = 0` y servir ambas el archivo.
+- `resolve()` devuelve `null` para todo fallo sin distinguirlos, y el endpoint
+  público responde **el mismo 404** siempre. Diferenciar "expiró" de "nunca
+  existió" confirma la existencia de un recurso a quien solo estaba adivinando.
+- Archivar o eliminar un archivo **revoca todos sus enlaces abiertos**. Sin eso,
+  quien retiró de circulación un documento comprometedor dejaría sirviéndolo cada
+  URL que ya había repartido — el archivado sería teatro.
+- Un enlace revocado **nunca se borra**: es la evidencia de que una compartición
+  existió y de cuánto estuvo expuesta.
+
+**Motor de vista previa.** El backend decide *cómo* debe renderizarse cada
+archivo y lo envía como `preview_kind` en cada fila; el frontend lo traduce a
+píxeles en `lib/mediaPreview.js`. Que la decisión sea del servidor es lo que hace
+que la rejilla, la lista, la modal de detalle y la vista compartida muestren el
+mismo archivo igual — seis componentes adivinando desde un MIME es como una hoja
+de cálculo acaba verde en una vista y gris en otra.
+
+Los bytes son privados, así que **no se pueden apuntar con un `<img src>`**: esa
+petición no llevaría cabecera `Authorization` y volvería 401. Se piden como blob
+por el cliente autenticado y se entregan como *object URL*, que el efecto
+**revoca al desmontar** — sin eso, recorrer una biblioteca de unos cientos de
+imágenes las filtra todas durante la vida de la pestaña. Solo las imágenes se
+descargan en la rejilla; un PDF se embebe únicamente en la modal, donde se paga
+por un archivo a la vez, y dentro de un `<iframe sandbox="">` porque esos bytes
+vinieron de una subida de usuario.
+
+### 63.6 Auditoría forense
+
+`media_audit_logs` es **append-only por contrato y por esquema**: la aplicación
+inserta y lee, nunca actualiza ni borra, y la tabla **no tiene `updated_at`** —
+una fila modificable no es evidencia. No hay endpoint de escritura: la traza la
+produce `MediaAuditLogger` como efecto de acciones reales.
+
+**Por qué no reutiliza `audit_logs`.** La tabla global registra mutaciones de
+dominio con un dueño polimórfico. Esta responde preguntas que aquella no puede:
+qué archivo, **bajo qué nombre en ese momento**, por **qué identidad de operador
+en ese momento**, y desde qué dirección. El nombre y el actor se
+**fotografían** (`resource_name`, `user_name`, `user_email`) precisamente porque
+el archivo puede renombrarse después y el usuario puede eliminarse después; la
+evidencia debe sobrevivir a ambos. Las claves foráneas se conservan además, para
+los `join` mientras las filas existan.
+
+18 acciones catalogadas, con las críticas marcadas por el backend
+(`CRITICAL_ACTIONS`): `upload`, `upload_rejected`, `update_metadata`,
+`download`, `preview`, `share_link_created`, `share_link_revoked`,
+`share_link_accessed`, `delete`, `restore`, `status_change`,
+`permissions_updated`, los cuatro de tipos de archivo y los dos de credenciales.
+
+Tres decisiones que hacen útil la traza:
+
+- **`upload_rejected` se escribe antes de lanzar la excepción.** Intentar subir
+  un archivo prohibido es exactamente el evento que una traza forense debe
+  mostrar, y es el único que jamás produce una fila en `media_files` de la que
+  colgar. Por eso existe `recordDetached()`.
+- **`download` y `preview` son acciones distintas.** Abrir una miniatura y
+  llevarse una copia de la nómina no son el mismo evento; una traza que los
+  confunde no puede responder quién sacó datos del sistema.
+- **`update_metadata` guarda un diff antes/después** solo de los campos que de
+  verdad cambiaron. Una traza que dice "metadatos actualizados" sin decir qué se
+  movió no responde ninguna de las preguntas que se le harán.
+- **Auditar nunca rompe la operación.** Un logger capaz de abortar una acción de
+  negocio al fallar convierte un disco lleno en una caída total. Un fallo de
+  escritura va al log de aplicación y el llamador continúa.
+
+Las redenciones de enlace no tienen usuario autenticado por diseño —ese es el
+punto de un enlace compartido— así que `recordAnonymous()` las identifica por IP
+y user agent, y nombra el enlace que autorizó el acceso.
+
+### 63.7 API REST y niveles de acceso
+
+Tres familias con tres niveles, y la diferencia no es de comodidad sino de qué
+puede romper cada una:
+
+| Familia | Acceso | Razón |
+|---|---|---|
+| Biblioteca (lectura, `content`) | Cualquier usuario operativo | Un cajero necesita ver el logo o la ficha de un producto |
+| Biblioteca (escritura) y enlaces | `admin`, `manager` | Subir, renombrar, archivar y sobre todo **compartir** mueve información fuera del sistema |
+| Tipos permitidos, credenciales, auditoría | **Solo `admin`** | Definen qué entra al servidor, la identidad ante Google y la evidencia forense |
+
+```
+GET    /api/media/files                                   listado paginado
+POST   /api/media/files                                   subida        [throttle 30/min]
+GET    /api/media/files/{id}                              detalle completo
+PUT    /api/media/files/{id}                              metadatos editables
+PATCH  /api/media/files/{id}/toggle-status                archivar / reactivar
+DELETE /api/media/files/{id}                              eliminar (soft + papelera Drive)
+GET    /api/media/files/{id}/content[?download=1]         bytes autenticados
+POST   /api/media/files/{id}/reapply-permissions          re-endurecer en Drive
+GET|POST      /api/media/files/{id}/share-links           enlaces
+DELETE        /api/media/files/{id}/share-links/{link}    revocar
+GET|POST|PUT|PATCH|DELETE /api/media/file-types[...]      CRUD lista blanca   [admin]
+GET|POST|DELETE           /api/media/drive/credentials    credenciales        [admin]
+POST                      /api/media/drive/test-connection diagnóstico  [admin, throttle 10/min]
+GET    /api/media/audit, /api/media/audit/catalogs        visor forense       [admin]
+GET    /api/media/shared/{token}                          PÚBLICO  [throttle 30/min]
+GET    /api/media/shared/{token}/content                  PÚBLICO  [throttle 30/min]
+```
+
+**Los códigos de estado son el contrato** en la subida:
+
+- **422** — tipo rechazado. La petición estaba bien formada; el archivo no lo
+  permite la política vigente. Devuelve el código de razón para que la UI
+  distinga "no registrado" (pide a un administrador) de "desactivado" (hay una
+  decisión en vigor) de "muy grande" (lo arregla el usuario).
+- **503** — Drive sin configurar. Nada de la petición está mal y reintentarla sin
+  cambios funcionará en cuanto un administrador termine la configuración.
+- **502** — falló Google. El POS es aquí una pasarela hacia Drive y el upstream
+  se negó; se pasan las palabras textuales del proveedor.
+
+Las dos rutas públicas van **deliberadamente fuera** de `auth:sanctum` con
+throttle propio y agresivo: un token de 256 bits no se adivina por fuerza bruta,
+pero un enlace filtrado sí puede volverse un canal de exfiltración masiva. El
+endpoint público responde con el mínimo que necesita una vista previa (nombre,
+tipo, tamaño, `preview_kind`) y **jamás** con el usuario que subió, el ID
+interno, el ID de Drive ni la descripción.
+
+Las respuestas de bytes llevan `X-Content-Type-Options: nosniff` —sin él un
+navegador puede olfatear como HTML un archivo servido como `text/plain` y
+ejecutar script en el origen de esta aplicación— y `Cache-Control: private,
+no-store`.
+
+### 63.8 Interfaz
+
+- **`pages/admin/MediaLibraryPage`** — rejilla/lista estilo WordPress con
+  búsqueda con *debounce* de 350 ms (escribir "factura" sin freno dispara siete
+  peticiones, seis obsoletas al responder y la última puede perder la carrera),
+  filtros por categoría y estatus, y modo de vista recordado en `localStorage`.
+  Cada tarjeta lleva **insignia de candado**: no es adorno, es la garantía del
+  módulo declarada sobre el objeto mismo.
+- **`components/media/MediaUploadDialog`** — arrastrar y soltar. **No pre-filtra
+  por extensión**: el `accept` es una ayuda, pero el veredicto es del servidor en
+  cada subida. Un filtro cliente sería una segunda fuente de verdad que se
+  desincroniza en cuanto un administrador desactiva un tipo. Los rechazos se
+  pintan **dentro** del diálogo, no como toast que se desvanece.
+- **`components/media/MediaDetailModal`** — modal de metadatos avanzados. La
+  columna derecha separa lo **editable** (nombre, alt text, descripción, estatus:
+  cómo usa la organización el archivo) de los **hechos inmutables** (extensión,
+  MIME, tamaño, checksum SHA-256, dimensiones, ID de Drive: qué son los bytes).
+  El checksum se muestra porque un valor que ya no coincide es como se atrapa un
+  archivo sustituido.
+- **`components/media/MediaShareDialog`** — emisión y revocación. No ofrece en
+  ninguna parte hacer público el archivo en Drive ni un enlace sin caducidad.
+- **`components/settings/AllowedFileTypesPanel`** — pestaña *Tipos de Archivo* de
+  Configuración, con interruptor optimista que revierte si el servidor se niega.
+- **`components/settings/GoogleDrivePanel`** — pestaña *Google Drive*. El JSON es
+  de **solo escritura**: el textarea siempre carga vacío. La franja de estado
+  dice **qué falta** en lugar de un sí/no, porque el fallo común es una fila a
+  medio configurar. El resultado del diagnóstico se desglosa en sus cuatro pasos:
+  un aprobado/reprobado no diría cuál rompió, y cada uno tiene arreglo distinto.
+- **`pages/admin/MediaAuditPage`** — visor forense de solo lectura, con filtros
+  por acción, ventana de fechas y "solo eventos críticos". El detalle muestra el
+  `metadata` **en crudo**: una investigación necesita el diff y el motivo de
+  rechazo tal como se guardaron, no una prosa que los resuma. El operador se lee
+  de las columnas fotografiadas y no de la relación, porque un usuario eliminado
+  hace seis meses sigue teniendo que aparecer con nombre.
+
+### 63.9 Configuración
+
+`config/media.php` gobierna el COMPORTAMIENTO; la base gobierna lo PERMITIDO
+(`allowed_file_types`) y la IDENTIDAD (`drive_credentials`). La separación
+importa: un operador debe poder habilitar una extensión o rotar una cuenta sin
+un despliegue, y **no** debe poder elevar los techos duros desde el navegador.
+
+| Variable | Defecto | Qué controla |
+|---|---|---|
+| `MEDIA_MAX_UPLOAD_KB` | `25600` | Techo absoluto de la plataforma (25 MB) |
+| `MEDIA_DRIVE_TIMEOUT` | `20` | Segundos de red por llamada a Drive |
+| `MEDIA_DRIVE_CONNECT_TIMEOUT` | `8` | Segundos para establecer conexión |
+| `MEDIA_DRIVE_UPLOAD_TIMEOUT` | `120` | Segundos para subidas y descargas |
+
+Los timeouts son el punto: un VPS con la salida a `googleapis.com` filtrada
+**descarta** los paquetes, y sin cota explícita el socket espera el defecto de
+PHP mientras el operador mira un spinner un minuto para no recibir nada. Unos
+segundos terminando en un error legible es estrictamente mejor.
+
+### 63.10 Puesta en marcha
+
+1. Google Cloud Console → crear Service Account → habilitar **Google Drive API**
+   → descargar la llave JSON.
+2. En Google Drive: crear la carpeta raíz de la biblioteca y **compartirla con el
+   `client_email` de la Service Account con permiso de _Editor_**. Sin este paso
+   el token se emite pero ninguna subida funciona — y es lo que detecta el
+   diagnóstico.
+3. POS → *Configuración → Google Drive* → pegar el JSON, poner el ID de la
+   carpeta (el tramo tras `/folders/` en la URL) y las cuentas autorizadas de
+   lectura → **Probar conexión** → Guardar.
+4. `php artisan migrate` (5 migraciones) y `php artisan db:seed` siembran las
+   13 políticas base de tipos de archivo, con `svg` y `zip` desactivadas.
+5. Revisar *Configuración → Tipos de Archivo* y ajustar la política al negocio.
+
+### 63.11 Archivos del módulo
+
+**Backend**
+- `config/media.php`
+- `database/migrations/2026_09_01_00000{1..5}_*` — `allowed_file_types`,
+  `drive_credentials`, `media_files`, `media_share_links`, `media_audit_logs`
+- `database/seeders/AllowedFileTypeSeeder.php`
+- `app/Models/` — `AllowedFileType`, `DriveCredential`, `MediaFile`,
+  `MediaShareLink`, `MediaAuditLog`
+- `app/Services/Media/` — `GoogleDriveClient` (REST + JWT RS256),
+  `GoogleDriveService` (endurecimiento, carpetas, diagnóstico),
+  `FileTypeValidator`, `MediaLibraryService`, `ShareLinkService`,
+  `MediaAuditLogger`
+- `app/Exceptions/Media/` — `DisallowedFileTypeException`,
+  `DriveCredentialsMissingException`, `GoogleDriveException`
+- `app/Http/Controllers/Media/` — `MediaLibraryController`,
+  `AllowedFileTypeController`, `DriveCredentialController`,
+  `MediaShareLinkController`, `MediaAuditLogController`,
+  `PublicMediaShareController`
+- `app/Http/Requests/Media/` — 7 form requests
+
+**Frontend**
+- `api/media.js`, `lib/mediaPreview.js`
+- `components/media/` — `MediaPreviewTile`, `MediaUploadDialog`,
+  `MediaDetailModal`, `MediaShareDialog`
+- `components/settings/` — `AllowedFileTypesPanel`, `GoogleDrivePanel`
+- `pages/admin/` — `MediaLibraryPage`, `MediaAuditPage`
+- Rutas `/admin/medios` y `/admin/medios/auditoria`, entradas de sidebar y
+  pestañas de Configuración
+
+### 63.12 Verificación ejecutada
+
+- **Migraciones** — las 5 aplican limpias sobre PostgreSQL 16.
+- **Validador (9 casos)** — PNG y PDF legítimos aceptados; `.exe` no registrado,
+  `.svg` desactivado, PNG renombrado a `.pdf`, archivo sin extensión y archivo
+  sobre el límite rechazados, cada uno con su código; el interruptor de corte
+  aplica sin caché; el techo de plataforma clampa 999999 KB → 25600 KB.
+- **Cifrado** — la columna `private_key` en PostgreSQL no contiene `BEGIN PRIVATE
+  KEY`; el modelo la descifra; la serialización JSON del modelo no expone ninguna
+  de las tres columnas secretas.
+- **JWT** — firma RS256 verificada con la mitad pública de la llave, tal como
+  haría Google; `iat` retrasado 10 s; scope `drive.file`.
+- **Endurecimiento de permisos** — de 4 permisos iniciales se revocan `anyone` y
+  `domain`, sobrevive el propietario y se añade el lector autorizado.
+- **Diagnóstico (6 escenarios)** — cada uno con su mensaje accionable distinto.
+- **Enlaces** — token guardado solo como SHA-256; resolución correcta; token
+  falso → `null`; agotamiento por tope; revocación; cierre al archivar.
+- **Auditoría** — sin columna `updated_at`; actor anónimo etiquetado en las
+  redenciones; acciones críticas marcadas.
+- **API extremo a extremo** — subida 201 con la secuencia de llamadas a Google en
+  el orden diseñado (token → carpeta categoría → carpeta mes → upload → permisos
+  → grant → re-lectura); `.exe` → 422 `ERR_MEDIA_TYPE_NOT_REGISTERED`; listado
+  con proyección de columnas (sin `description`); enlace compartido abierto **sin
+  sesión** y token inválido → 404 genérico.
+- **Frontend** — `npm run build` exitoso; sin advertencias de dependencias de
+  hooks en los archivos del módulo.
