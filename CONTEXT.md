@@ -8266,8 +8266,16 @@ Correcciones:
 - El grupo de vista cambia `ml-auto` por `sm:ml-auto`: apilado en teléfono, un
   margen automático lo alejaba de los filtros a los que pertenece.
 
-`JobsMonitorPage` arrastra la misma clase muerta pero **sin icono dentro**, así
-que ahí no produce defecto visible y se deja como está.
+**El mismo campo en el Monitor de Jobs** (pestaña *Histórico Forense*) arrastraba
+la clase muerta sin icono dentro, así que no producía solape — pero tampoco tenía
+afordancia de búsqueda alguna, y por eso se leía distinto a todo otro buscador
+del sistema. Se unificó con la misma composición `.search-field`, con lo que ya
+no queda ningún uso de `p-input-icon-left` en el proyecto.
+
+Al meter la lupa dentro del campo aparecían **dos lupas idénticas en la misma
+fila**, porque el botón *Aplicar* usaba `pi-search`. Ese botón pasa a `pi-filter`:
+aplica el conjunto completo de filtros —estatus, job, rango de fechas y texto—,
+así que un embudo lo describe con más honestidad de lo que lo hacía una lupa.
 
 ### 66.2 Dos entradas del menú seleccionadas a la vez
 
