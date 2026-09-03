@@ -8339,3 +8339,105 @@ sobre la aplicación real:
   `placeholder` en ambos dropdowns, anchos y alineación del grupo de vista
 - `frontend/src/components/layout/Sidebar.jsx` — `end` derivado por prefijo y
   efecto de scroll diferido con dependencias completas
+
+---
+
+## 67. MODAL DE REPARTO DEL DÍA, VALIDACIÓN DE CAJA ABIERTA Y AJUSTES DE TIPOGRAFÍA EN CONTROLES [🟢 COMPLETADO Y OPERATIVO]
+
+### 67.1 `text-sm` no hacía nada sobre los controles de PrimeReact
+
+Las utilidades de Tailwind viven en `@layer` y el tema de PrimeReact se importa
+**sin capa**, así que su `.p-inputtext { font-size: 1rem }` le ganaba a cada
+`className="text-sm"` escrito sobre un input, un dropdown o un calendario. Esas
+clases estaban **silenciosamente sin efecto**: los controles se pintaban a 16 px
+mientras las etiquetas a su alrededor iban a 14 px.
+
+Cada selector de la corrección lleva la utilidad como **segunda clase**, que es
+lo que lo pone por encima de la regla del tema. Como PrimeReact solo reenvía
+`className` a la raíz del componente, en los controles compuestos el tamaño se
+empuja hasta el elemento que realmente pinta el texto
+(`.p-dropdown-label`, `.p-calendar .p-inputtext`, etc.).
+
+**Acotado desde 641 px hacia arriba a propósito.** Por debajo de ese ancho el
+propio `index.css` fuerza los controles de vuelta a 16 px, porque iOS hace zoom
+al viewport cuando enfoca un campo más pequeño. Estas reglas son **más
+específicas** que esa guarda, así que dejarlas sin acotar la habría anulado y
+reintroducido el salto de zoom en cada toque sobre un campo. Verificado: 14 px
+en escritorio, 16 px a 390 px de ancho.
+
+### 67.2 Validación de caja abierta antes de consultar
+
+Las dos modales del header reportan cifras del día en curso, y **un día que
+nadie ha iniciado no tiene nada que reportar**: sus ceros se leerían como un cero
+real y no como "el turno no ha comenzado".
+
+Se agregó `GET /api/cash-registers/status`, y la decisión de diseño importante
+es **por qué no reutiliza `active()`**. Ese endpoint responde otra pregunta —
+"¿el llamante tiene caja abierta?"— porque el POS lo usa para decidir si ese
+cajero puede cobrar. Las modales del header muestran cifras **del negocio**, así
+que acotarlas a la caja propia del llamante habría dejado fuera justo a quien más
+las abre: **un administrador que supervisa el piso nunca abre un cajón propio**.
+Gatear por la caja propia habría sido una regresión sobre el comportamiento
+actual.
+
+El endpoint no exige rol: no expone dinero, solo si el turno arrancó. Devuelve
+además `has_own_register`, que la UI usa para **redactar el aviso**: a quien no
+tiene caja propia se le dice que abra una y se le entrega el atajo al POS; a un
+supervisor se le dice que el turno no ha iniciado, porque una instrucción que no
+puede ejecutar sería solo ruido en su pantalla.
+
+`useOpenRegisterStatus` permanece **inerte hasta que una modal se abre**, de modo
+que el topbar no cuesta una petición extra en cada navegación. Un fallo de red
+**no** se interpreta como "cerrada": devolver "abre caja primero" cuando el
+problema real fue una petición caída mandaría al operador a abrir un cajón que ya
+tiene abierto. `null` significa desconocido y la modal muestra un fallo de carga.
+
+`RegisterClosedNotice` es compartido por ambas modales para que no puedan
+divergir contando dos cosas distintas sobre la misma condición.
+
+Verificado: con la caja cerrada, **no se emite ninguna petición** a
+`/sales/daily-summary` ni a `/analytics/current-day` — la validación ocurre antes
+de consultar, no después.
+
+### 67.3 Nueva modal "Reparto del Día"
+
+Icono propio en el topbar (una dona partida en dos, que se lee distinto a la
+cartera contigua) → modal con el ingreso neto del día como base, el reparto a los
+porcentajes **configurados** (no fijos a 70/30, que es un ajuste global), la
+separación entre lo ya liquidado en arqueo y lo que sigue en cajas abiertas, y un
+botón que lleva al Panel Financiero.
+
+**Deliberadamente delgada.** El Panel Financiero ya desglosa el día caja por
+caja, por método y por arqueo; repetir cualquiera de eso aquí la convertiría en
+una segunda versión más pequeña de una pantalla que ya existe, y en un segundo
+lugar que mantener sincronizado. Responde una sola pregunta y delega el resto.
+
+El disparador **solo se renderiza para admin y manager**: la modal lee
+`/analytics/current-day`, que la API restringe a esos roles, y ofrecerle el botón
+a un cajero sería ofrecer un control cuyo único desenlace posible es un 403.
+
+### 67.4 La fila combinada del Resumen del Día, partida en dos
+
+Los egresos de caja chica y el conteo de órdenes son cifras sin relación, y
+compartir una sola superficie teñida hacía que el conteo pareciera parte del
+egreso. Ahora son dos tarjetas con separación: **mismas etiquetas, mismos
+valores, mismos colores de texto** — lo único que cambia es el contenedor. La
+tarjeta de órdenes toma fondo `slate-50` porque su texto ya era slate; dejarla en
+rosa habría conservado exactamente la confusión que el cambio venía a quitar.
+La etiqueta pasa de "Ordenes" a "Ordenes del día".
+
+### Archivos
+**Backend**
+- `app/Http/Controllers/Finance/CashRegisterController.php` — `status()`
+- `routes/api.php` — `GET /api/cash-registers/status`
+
+**Frontend (nuevos)**
+- `src/hooks/useOpenRegisterStatus.js`
+- `src/components/layout/RegisterClosedNotice.jsx`
+- `src/components/layout/DaySplitModal.jsx`
+
+**Frontend (modificados)**
+- `src/components/layout/AppHeader.jsx` — icono nuevo, validación de caja en el
+  Resumen del Día y fila partida en dos columnas
+- `src/index.css` — `text-sm` efectivo sobre controles de PrimeReact, acotado
+  desde 641 px para no anular la guarda anti-zoom de iOS

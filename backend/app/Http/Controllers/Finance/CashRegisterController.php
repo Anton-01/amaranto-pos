@@ -25,6 +25,46 @@ class CashRegisterController extends Controller
         ]);
     }
 
+    /**
+     * GET /api/cash-registers/status
+     *
+     * Whether the BUSINESS currently has a drawer open, for the header modals
+     * that refuse to report a day nobody has started.
+     *
+     * WHY THIS IS NOT `active()`. That endpoint answers a different question —
+     * "does the caller have a drawer open" — because the POS uses it to decide
+     * whether this cashier may ring up a sale. The header modals report
+     * business-wide figures, so scoping them to the caller's own register would
+     * lock out precisely the person most likely to open them: an administrator
+     * supervising a floor never opens a drawer of their own.
+     *
+     * Available to every authenticated user: it exposes no money, only whether
+     * the shift has started.
+     */
+    public function status(Request $request): JsonResponse
+    {
+        $open = CashRegister::with('user:id,name')
+            ->whereNull('closed_at')
+            ->orderBy('opened_at')
+            ->get();
+
+        $own = $open->firstWhere('user_id', $request->user()->id);
+
+        return response()->json([
+            'status' => 'success',
+            'data' => [
+                'has_open_register' => $open->isNotEmpty(),
+                'open_count' => $open->count(),
+                // The caller's own drawer, when they have one. The UI uses it to
+                // word the notice: somebody with no register of their own is
+                // told to open one, not that the business is closed.
+                'has_own_register' => $own !== null,
+                'first_opened_at' => $open->first()?->opened_at,
+                'operators' => $open->pluck('user.name')->filter()->values(),
+            ],
+        ]);
+    }
+
     public function open(Request $request): JsonResponse
     {
         $request->validate([
