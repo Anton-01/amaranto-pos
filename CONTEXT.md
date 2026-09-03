@@ -8083,3 +8083,147 @@ chica y compra de stock del día:
    enum `stock_movement_type`, fallando con `22P02`. Ambas ramas se castean
    explícitamente a `text`, lo que las hace union-compatibles de verdad y no por
    accidente.
+
+---
+
+## 65. UNIFICACIÓN TIPOGRÁFICA DEL CORREO DE CIERRE DE CAJA [🟢 CORREGIDO]
+
+Corrección de maquetación en `mail/cash-register-closing-report.blade.php` — el
+correo que sale por el botón **Enviar por Correo** y que hace las veces de
+constancia formal del turno (sección 60).
+
+### 65.1 El defecto
+
+El membrete fiscal mezclaba **dos familias tipográficas**. El RFC y el folio
+llevaban `font-family:'Courier New',monospace` en línea, mientras el nombre del
+negocio, la dirección y el teléfono a su alrededor caían en la pila sans-serif
+del `<body>`. El resultado: los **dos identificadores más formales del
+documento** —justo los que un contador busca primero— eran los dos que parecían
+pegados desde otro archivo.
+
+A eso se sumaba que la línea de dirección era la única del bloque **sin
+etiqueta**: el RFC decía "RFC:", el teléfono decía "Tel:", y la dirección
+aparecía suelta, rompiendo el paralelismo del membrete.
+
+### 65.2 Una sola declaración para las tres líneas meta
+
+La causa de fondo del defecto no era la elección de `Courier New`, sino que
+**cada línea del membrete traía su propio estilo escrito a mano**. Con cinco
+copias independientes, que una divergiera era cuestión de tiempo.
+
+Ahora el bloque construye sus estilos desde variables Blade declaradas una vez
+al abrir la sección:
+
+```php
+$sansStack = "'Inter','Segoe UI',Helvetica,Arial,sans-serif";
+$metaBase  = "font-size:12px;color:#475569;line-height:1.5;font-family:{$sansStack};";
+$metaLine  = "margin:0 0 2px 0;{$metaBase}";
+$metaLabel = "font-weight:600;font-family:{$sansStack};";
+$metaValue = "font-weight:400;font-family:{$sansStack};";
+```
+
+**RFC, Dirección y Tel se renderizan de la misma `$metaLine` y la misma
+`$metaLabel`.** No pueden divergir sin que alguien edite esa única declaración,
+que es lo que convierte la corrección en permanente en lugar de puntual.
+Verificado sobre el HTML renderizado: las tres líneas producen cadenas de estilo
+**byte a byte idénticas**.
+
+La pila reproduce carácter por carácter la del `<body>` en
+`mail/layouts/corporate.blade.php`, así que el membrete es la misma tipografía
+que el reporte que lleva debajo.
+
+Se interpolan con `{!! !!}` y no con `{{ }}`: el escapado de Blade convertiría
+las comillas simples de `'Segoe UI'` en `&#039;` dentro del atributo `style`, y
+aunque un navegador las decodifica, los saneadores de los clientes de correo no
+son igual de predecibles. El valor es una constante del propio template, no
+entrada de usuario.
+
+### 65.3 Por qué cada elemento repite la fuente en línea
+
+La herencia desde `<body>` **no es confiable en correo**:
+
+- **Outlook de escritorio** renderiza con el motor de Word, que reinicia la
+  fuente en elementos de bloque; un `<p>` que confía en heredar cae a Times New
+  Roman.
+- **Gmail** reescribe el documento antes de mostrarlo y descarta reglas que no
+  puede resolver.
+
+Son exactamente los clientes en los que se lee este reporte, así que la pila
+viaja **sobre el elemento**. Se aplicó a los 5 elementos del encabezado y,
+además, a los 15 elementos de texto del cuerpo del mismo correo —ver 65.4.
+
+### 65.4 El efecto secundario que había que evitar
+
+Poner la pila en línea **solo en el encabezado** habría creado una
+inconsistencia nueva en Outlook: el bloque `<!--[if mso]>` del layout declaraba
+`td { font-family: Arial, sans-serif; }`, así que el encabezado habría
+renderizado en Segoe UI mientras el cuerpo heredaba Arial. Se habría cambiado
+"todo Arial con dos roturas monoespaciadas" por "tarjeta en Segoe UI dentro de
+un marco en Arial".
+
+Dos ajustes lo cierran:
+
+1. Los 15 elementos de texto del cuerpo del reporte llevan también la pila en
+   línea, de modo que la tarjeta entera es una sola tipografía en cualquier
+   cliente.
+2. La regla `mso` del layout pasa de `Arial, sans-serif` a
+   `'Segoe UI', Helvetica, Arial, sans-serif`, espejando la pila del `<body>`.
+   Se omite `'Inter'` porque es una webfont que Outlook no puede cargar, y Arial
+   permanece al final de la cadena como el respaldo que siempre fue.
+
+El punto 2 toca el layout compartido por los 7 correos del sistema, y el efecto
+es **reducir** divergencia, no añadirla: en Outlook esos correos pasan de Arial
+a Segoe UI, que es justo lo que ya renderizan en todos los demás clientes por la
+declaración del `<body>`.
+
+### 65.5 Etiqueta "Dirección:"
+
+La línea de dirección antepone ahora `<span style="{!! $metaLabel !!}">Dirección:</span>`,
+la misma etiqueta en negrita que usan RFC y Tel. Al compartir `$metaLabel` y
+`$metaLine`, **la jerarquía y el color (#475569) son idénticos por
+construcción**, no por coincidencia. La ciudad se sigue concatenando tras la
+calle en la misma línea.
+
+Se escribe con acento pese a que el resto de este template usa español sin
+acentuar: el layout declara `<meta charset="UTF-8">` y la plantilla hermana
+`cash-register-closing.blade.php` ya usa acentos, así que no había razón técnica
+para la grafía incorrecta.
+
+### 65.6 El folio conserva su énfasis sin cambiar de familia
+
+El folio mantiene `font-weight:700`, el color más oscuro `#475569` y el
+`letter-spacing:0.5px` que lo hacía legible. **La legibilidad de un código
+alfanumérico viene del tracking y del peso, no de cambiar a monoespaciada** —
+así que se conserva todo lo que aportaba y se elimina lo único que rompía el
+bloque.
+
+### 65.7 Verificación ejecutada
+
+Renderizando la vista con datos fiscales completos y capturando el resultado en
+Chromium:
+
+- **Cero** ocurrencias de `monospace`, `Courier`, `Consolas`, `Menlo`, `<code>`
+  o `<pre>` en el HTML de salida.
+- Los 5 elementos de texto del encabezado y los 15 del cuerpo declaran su
+  `font-family`; **ningún** elemento con `font-size` queda sin familia.
+- Una sola familia tipográfica en todo el documento (29 ocurrencias de la pila).
+- Las comillas simples llegan intactas: sin `&#039;` en la salida.
+- RFC / Dirección / Tel: **1 solo estilo de línea y 1 solo estilo de etiqueta**
+  distintos entre las tres, es decir, idénticos.
+- `Dirección:` presente, acentuada y en UTF-8 válido.
+- Las 4 plantillas del sistema con datos de prueba completos siguen renderizando
+  y todas recogen la regla `mso` alineada. (Las 2 restantes fallaron por datos
+  de prueba incompletos del script — `$reasonLabel` y `$timezone` los aporta su
+  Mailable, no la vista.)
+
+**Fuera de alcance, deliberadamente:** la contraseña temporal de
+`mail/user-welcome.blade.php` conserva su `Courier New`. Ahí la monoespaciada es
+correcta y buscada: desambigua `0/O` y `1/l` en una credencial que el usuario
+debe teclear.
+
+### Archivos Modificados
+- `backend/resources/views/mail/cash-register-closing-report.blade.php` — pila
+  sans unificada vía variables Blade, etiqueta "Dirección:", folio sin
+  monoespaciada, fuente en línea en los 20 elementos de texto
+- `backend/resources/views/mail/layouts/corporate.blade.php` — regla `mso`
+  alineada con la pila del `<body>`
