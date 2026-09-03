@@ -482,6 +482,13 @@ Route::middleware(['auth:sanctum', 'user.active'])->group(function () {
 
     Route::prefix('cash-registers')->group(function () {
         Route::get('/active', [CashRegisterController::class, 'active']);
+
+        /*
+         * Estado de turno del NEGOCIO (no de la caja propia): lo consultan las
+         * modales del header antes de reportar cifras del dia. Sin freno de rol
+         * a proposito — no expone dinero, solo si el turno ya arranco.
+         */
+        Route::get('/status', [CashRegisterController::class, 'status']);
         Route::post('/open', [CashRegisterController::class, 'open']);
         Route::get('/current', [CashRegisterClosingController::class, 'current']);
         Route::post('/close', [CashRegisterClosingController::class, 'store']);

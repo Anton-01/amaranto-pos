@@ -31,6 +31,68 @@ body {
   padding-right: 2.75rem; /* espacio para el icono de mostrar/ocultar */
 }
 
+/* Search field with a leading icon.
+   --------------------------------------------------------------------------
+   PrimeReact 10 REMOVED `p-input-icon-left`, and its replacement (IconField)
+   ships no rules in the lara-light-indigo build this project imports — both
+   grep to zero occurrences in the vendor stylesheets. Either one therefore
+   leaves the wrapper completely unstyled: the <i> renders as an ordinary
+   inline sibling ahead of the field and the glyph lands on top of the
+   placeholder text.
+
+   The affordance is rebuilt here rather than with Tailwind utilities at the
+   call site because the theme's own `.p-inputtext` padding is unlayered and
+   would beat a layered `pl-9`. These rules sit outside `@layer` for the same
+   reason as the block below, and win on source order. */
+.search-field {
+  position: relative;
+  display: block;
+}
+
+.search-field > .p-inputtext {
+  width: 100%;
+  padding-left: 2.25rem;
+}
+
+.search-field > .search-field-icon {
+  position: absolute;
+  left: 0.75rem;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 0.875rem;
+  color: #94a3b8;
+  /* The icon is decoration: clicks must reach the field underneath it. */
+  pointer-events: none;
+}
+
+/* `text-sm` on a PrimeReact control.
+   --------------------------------------------------------------------------
+   Tailwind's utilities live in `@layer`, and the PrimeReact theme is imported
+   WITHOUT a layer, so the theme's own `.p-inputtext { font-size: 1rem }` beat
+   every `className="text-sm"` written on an input, a dropdown or a calendar.
+   Those classes were silently doing nothing: the controls rendered at 16px
+   while the labels around them were 14px.
+
+   Each selector below carries the utility class as a second class, which is
+   what puts it above the theme rule it has to override. PrimeReact only
+   forwards `className` to the component ROOT, so for the composed controls the
+   size has to be pushed down onto the element that actually paints the text.
+
+   SCOPED FROM 641px UP ON PURPOSE. Below that width `index.css` deliberately
+   forces every control back to 16px, because iOS zooms the viewport in when a
+   focused field is smaller than that. These rules are more specific than that
+   guard, so leaving them unscoped would defeat it and reintroduce the zoom
+   jump on every tap into a field. */
+@media (min-width: 641px) {
+  .p-inputtext.text-sm,
+  .p-dropdown.text-sm .p-dropdown-label,
+  .p-calendar.text-sm .p-inputtext,
+  .p-multiselect.text-sm .p-multiselect-label,
+  .p-inputnumber.text-sm .p-inputnumber-input {
+    font-size: 0.875rem;
+  }
+}
+
 /* InputSwitch — Emerald activo / Slate inactivo */
 .p-inputswitch .p-inputswitch-slider {
   transition: background-color 0.2s ease, box-shadow 0.2s ease;

@@ -8227,3 +8227,217 @@ debe teclear.
   monoespaciada, fuente en línea en los 20 elementos de texto
 - `backend/resources/views/mail/layouts/corporate.blade.php` — regla `mso`
   alineada con la pila del `<body>`
+
+---
+
+## 66. CORRECCIÓN DE TRES DEFECTOS DE INTERFAZ: BARRA DE FILTROS, DOBLE SELECCIÓN EN EL MENÚ Y SCROLL AL ITEM ACTIVO [🟢 CORREGIDO]
+
+### 66.1 La barra de filtros de la Biblioteca de Medios se veía rota
+
+Dos causas independientes en el mismo bloque:
+
+**El icono de búsqueda encima del placeholder.** El campo usaba
+`<span className="p-input-icon-left">`, y **esa clase ya no existe**: PrimeReact
+la eliminó en la versión 10, y su reemplazo (`IconField`) tampoco tiene reglas
+en el build `lara-light-indigo` que este proyecto importa — ambas dan **cero
+ocurrencias** en las hojas de estilo del vendor. Sin ninguna regla, el envoltorio
+queda sin estilar: el `<i>` se renderiza como un hermano en línea delante del
+campo y el glifo cae sobre el texto del placeholder.
+
+**Los dos dropdowns en blanco.** PrimeReact resuelve la etiqueta del estado
+cerrado como `selectedOption || placeholder || emptyMessage || &nbsp;`, y **no
+considera selección a una opción de valor `null`**. Como los filtros arrancan en
+`null` y nunca se les pasó `placeholder`, la cadena caía hasta `&nbsp;` y ambos
+controles se pintaban como cajas vacías.
+
+Correcciones:
+
+- La clase `.search-field` se define en `index.css`, **no** como utilidades
+  Tailwind en el sitio de uso: el `padding` de `.p-inputtext` del tema va sin
+  capa y le ganaría a un `pl-9` de Tailwind, que sí está en `@layer`. Es el mismo
+  razonamiento que ya documenta el bloque *MOBILE-FIRST FOUNDATION* de ese
+  archivo. El icono lleva `pointer-events: none` para que el clic llegue al campo.
+- Ambos dropdowns reciben un `placeholder` que repite su opción "todas"
+  literalmente, de modo que el control se lee igual tanto con el valor nulo
+  inicial como al elegir esa opción de la lista.
+- El de categoría pasa de `w-56` a `w-64` y el buscador de `max-w-xs` a
+  `max-w-sm`: a los anchos anteriores sus propias etiquetas se recortaban a
+  media palabra, lo que en sí ya se lee como un defecto.
+- El grupo de vista cambia `ml-auto` por `sm:ml-auto`: apilado en teléfono, un
+  margen automático lo alejaba de los filtros a los que pertenece.
+
+**El mismo campo en el Monitor de Jobs** (pestaña *Histórico Forense*) arrastraba
+la clase muerta sin icono dentro, así que no producía solape — pero tampoco tenía
+afordancia de búsqueda alguna, y por eso se leía distinto a todo otro buscador
+del sistema. Se unificó con la misma composición `.search-field`, con lo que ya
+no queda ningún uso de `p-input-icon-left` en el proyecto.
+
+Al meter la lupa dentro del campo aparecían **dos lupas idénticas en la misma
+fila**, porque el botón *Aplicar* usaba `pi-search`. Ese botón pasa a `pi-filter`:
+aplica el conjunto completo de filtros —estatus, job, rango de fechas y texto—,
+así que un embudo lo describe con más honestidad de lo que lo hacía una lupa.
+
+### 66.2 Dos entradas del menú seleccionadas a la vez
+
+Un `NavLink` resalta en su propia ruta **y en todo lo anidado debajo**. Como
+`/admin/medios` es prefijo de `/admin/medios/auditoria`, "Biblioteca de Medios"
+seguía encendida mientras el usuario estaba en "Auditoría de Medios".
+
+La solución **no** es poner `end` en todas las entradas: `/products` posee
+legítimamente `/products/create` y `/products/:id/edit`, que son rutas pero no
+entradas de menú, y con `end` dejaría de resaltarse mientras se edita un
+producto.
+
+El conjunto de rutas que exigen coincidencia exacta se **deriva** de `navGroups`:
+una entrada la exige si otra entrada empieza con su ruta más `/`. Al ser
+derivado, agregar mañana un destino anidado marca a su padre automáticamente y
+el defecto no puede reaparecer.
+
+### 66.3 El scroll al item activo no ocurría al recargar
+
+El efecto que centra la entrada activa ya existía, pero **dependía solo de
+`pathname`** y medía durante el propio efecto, es decir **antes del primer
+pintado**. En una carga en frío, en ese instante `user` todavía no llegó de
+`AuthContext`, así que `isAdmin` es `false`, las entradas `adminOnly` no están
+renderizadas y el menú **aún no desborda**. La guarda
+`scrollHeight <= clientHeight` leía "no hay nada que corregir" y salía — y como
+el efecto no observaba nada más, nunca tenía una segunda oportunidad cuando las
+entradas aparecían.
+
+Dos cambios lo cierran:
+
+- La medición se difiere un frame con `requestAnimationFrame`, de modo que la
+  guarda evalúa el menú que el usuario está viendo de verdad.
+- Las dependencias pasan a `[pathname, isAdmin, collapsed]`. Las dos nuevas
+  cambian la altura del menú: la primera agrega entradas cuando resuelve la
+  sesión, la segunda intercambia la columna con etiquetas por el riel de iconos.
+
+Se conserva lo que ya estaba bien: no se toca nada si la entrada ya es visible
+(para no arrancar el menú bajo el cursor en un clic normal), y el desplazamiento
+de la ventana se captura y restaura para que **solo se mueva la barra lateral**.
+
+### 66.4 Verificación ejecutada
+
+Se sirvió el `dist` construido contra una API simulada y se condujo Chromium
+sobre la aplicación real:
+
+- **Icono**: `position: absolute`, `padding-left: 36px`, borde derecho del icono
+  en 319 px contra inicio del texto en 329 px → 10 px de aire, sin solape, y
+  centrado vertical dentro de 2 px.
+- **Dropdowns**: renderizan `"Todas las categorías"` y `"Todos"` en lugar de
+  cajas vacías, ya sin recorte.
+- **Selección del menú**: exactamente **una** entrada con `aria-current="page"`
+  en `/admin/medios` y en `/admin/medios/auditoria`; y `/products/create` sigue
+  resaltando "Productos", que es el caso que la corrección no debía romper.
+- **Scroll**: entrando en frío a `/admin/papelera`, el `nav` termina en
+  `scrollTop: 434` con la entrada activa visible y `window.scrollY` en `0` — la
+  página detrás no se movió.
+
+### Archivos Modificados
+- `frontend/src/index.css` — reglas `.search-field` / `.search-field-icon`
+- `frontend/src/pages/admin/MediaLibraryPage.jsx` — campo de búsqueda,
+  `placeholder` en ambos dropdowns, anchos y alineación del grupo de vista
+- `frontend/src/components/layout/Sidebar.jsx` — `end` derivado por prefijo y
+  efecto de scroll diferido con dependencias completas
+
+---
+
+## 67. MODAL DE REPARTO DEL DÍA, VALIDACIÓN DE CAJA ABIERTA Y AJUSTES DE TIPOGRAFÍA EN CONTROLES [🟢 COMPLETADO Y OPERATIVO]
+
+### 67.1 `text-sm` no hacía nada sobre los controles de PrimeReact
+
+Las utilidades de Tailwind viven en `@layer` y el tema de PrimeReact se importa
+**sin capa**, así que su `.p-inputtext { font-size: 1rem }` le ganaba a cada
+`className="text-sm"` escrito sobre un input, un dropdown o un calendario. Esas
+clases estaban **silenciosamente sin efecto**: los controles se pintaban a 16 px
+mientras las etiquetas a su alrededor iban a 14 px.
+
+Cada selector de la corrección lleva la utilidad como **segunda clase**, que es
+lo que lo pone por encima de la regla del tema. Como PrimeReact solo reenvía
+`className` a la raíz del componente, en los controles compuestos el tamaño se
+empuja hasta el elemento que realmente pinta el texto
+(`.p-dropdown-label`, `.p-calendar .p-inputtext`, etc.).
+
+**Acotado desde 641 px hacia arriba a propósito.** Por debajo de ese ancho el
+propio `index.css` fuerza los controles de vuelta a 16 px, porque iOS hace zoom
+al viewport cuando enfoca un campo más pequeño. Estas reglas son **más
+específicas** que esa guarda, así que dejarlas sin acotar la habría anulado y
+reintroducido el salto de zoom en cada toque sobre un campo. Verificado: 14 px
+en escritorio, 16 px a 390 px de ancho.
+
+### 67.2 Validación de caja abierta antes de consultar
+
+Las dos modales del header reportan cifras del día en curso, y **un día que
+nadie ha iniciado no tiene nada que reportar**: sus ceros se leerían como un cero
+real y no como "el turno no ha comenzado".
+
+Se agregó `GET /api/cash-registers/status`, y la decisión de diseño importante
+es **por qué no reutiliza `active()`**. Ese endpoint responde otra pregunta —
+"¿el llamante tiene caja abierta?"— porque el POS lo usa para decidir si ese
+cajero puede cobrar. Las modales del header muestran cifras **del negocio**, así
+que acotarlas a la caja propia del llamante habría dejado fuera justo a quien más
+las abre: **un administrador que supervisa el piso nunca abre un cajón propio**.
+Gatear por la caja propia habría sido una regresión sobre el comportamiento
+actual.
+
+El endpoint no exige rol: no expone dinero, solo si el turno arrancó. Devuelve
+además `has_own_register`, que la UI usa para **redactar el aviso**: a quien no
+tiene caja propia se le dice que abra una y se le entrega el atajo al POS; a un
+supervisor se le dice que el turno no ha iniciado, porque una instrucción que no
+puede ejecutar sería solo ruido en su pantalla.
+
+`useOpenRegisterStatus` permanece **inerte hasta que una modal se abre**, de modo
+que el topbar no cuesta una petición extra en cada navegación. Un fallo de red
+**no** se interpreta como "cerrada": devolver "abre caja primero" cuando el
+problema real fue una petición caída mandaría al operador a abrir un cajón que ya
+tiene abierto. `null` significa desconocido y la modal muestra un fallo de carga.
+
+`RegisterClosedNotice` es compartido por ambas modales para que no puedan
+divergir contando dos cosas distintas sobre la misma condición.
+
+Verificado: con la caja cerrada, **no se emite ninguna petición** a
+`/sales/daily-summary` ni a `/analytics/current-day` — la validación ocurre antes
+de consultar, no después.
+
+### 67.3 Nueva modal "Reparto del Día"
+
+Icono propio en el topbar (una dona partida en dos, que se lee distinto a la
+cartera contigua) → modal con el ingreso neto del día como base, el reparto a los
+porcentajes **configurados** (no fijos a 70/30, que es un ajuste global), la
+separación entre lo ya liquidado en arqueo y lo que sigue en cajas abiertas, y un
+botón que lleva al Panel Financiero.
+
+**Deliberadamente delgada.** El Panel Financiero ya desglosa el día caja por
+caja, por método y por arqueo; repetir cualquiera de eso aquí la convertiría en
+una segunda versión más pequeña de una pantalla que ya existe, y en un segundo
+lugar que mantener sincronizado. Responde una sola pregunta y delega el resto.
+
+El disparador **solo se renderiza para admin y manager**: la modal lee
+`/analytics/current-day`, que la API restringe a esos roles, y ofrecerle el botón
+a un cajero sería ofrecer un control cuyo único desenlace posible es un 403.
+
+### 67.4 La fila combinada del Resumen del Día, partida en dos
+
+Los egresos de caja chica y el conteo de órdenes son cifras sin relación, y
+compartir una sola superficie teñida hacía que el conteo pareciera parte del
+egreso. Ahora son dos tarjetas con separación: **mismas etiquetas, mismos
+valores, mismos colores de texto** — lo único que cambia es el contenedor. La
+tarjeta de órdenes toma fondo `slate-50` porque su texto ya era slate; dejarla en
+rosa habría conservado exactamente la confusión que el cambio venía a quitar.
+La etiqueta pasa de "Ordenes" a "Ordenes del día".
+
+### Archivos
+**Backend**
+- `app/Http/Controllers/Finance/CashRegisterController.php` — `status()`
+- `routes/api.php` — `GET /api/cash-registers/status`
+
+**Frontend (nuevos)**
+- `src/hooks/useOpenRegisterStatus.js`
+- `src/components/layout/RegisterClosedNotice.jsx`
+- `src/components/layout/DaySplitModal.jsx`
+
+**Frontend (modificados)**
+- `src/components/layout/AppHeader.jsx` — icono nuevo, validación de caja en el
+  Resumen del Día y fila partida en dos columnas
+- `src/index.css` — `text-sm` efectivo sobre controles de PrimeReact, acotado
+  desde 641 px para no anular la guarda anti-zoom de iOS

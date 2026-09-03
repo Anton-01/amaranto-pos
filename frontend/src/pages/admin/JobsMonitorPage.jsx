@@ -416,16 +416,29 @@ export default function JobsMonitorPage() {
                 className="col-span-2 w-full text-sm md:w-60"
                 pt={{ root: { className: 'w-full md:w-60' } }}
               />
-              <span className="col-span-2 p-input-icon-left w-full md:w-auto">
+              {/* Same `.search-field` composition as the media library: the
+                  `p-input-icon-left` this carried was removed in PrimeReact 10
+                  and had no rules left, so the wrapper styled nothing. Here it
+                  merely did no harm — there was no icon inside it to misplace —
+                  but the field also had no search affordance at all, which is
+                  what made it read differently from every other search box in
+                  the system. */}
+              <div className="search-field col-span-2 w-full md:w-60">
+                <i className="pi pi-search search-field-icon" />
                 <InputText
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && fetchHistory(0)}
                   placeholder="Buscar job o error…"
-                  className="w-full text-sm md:w-60"
+                  className="text-sm"
                 />
-              </span>
-              <Button label="Aplicar" icon="pi pi-search" size="small" onClick={() => fetchHistory(0)} className="w-full md:w-auto" />
+              </div>
+              {/* `pi-filter`, not `pi-search`: with the magnifier now living
+                  inside the field, repeating it on the button put two identical
+                  glyphs in one row. The button applies the whole filter set —
+                  status, job, date range and text — so a funnel describes it
+                  more honestly than a magnifier did. */}
+              <Button label="Aplicar" icon="pi pi-filter" size="small" onClick={() => fetchHistory(0)} className="w-full md:w-auto" />
               <Button
                 label="Limpiar"
                 icon="pi pi-times"

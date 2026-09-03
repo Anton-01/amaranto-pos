@@ -5,6 +5,10 @@ import { DataTable } from 'primereact/datatable';
 import { Column } from 'primereact/column';
 import UserProfileDropdown from './UserProfileDropdown';
 import NotificationBell from '../notifications/NotificationBell';
+import DaySplitModal from './DaySplitModal';
+import RegisterClosedNotice from './RegisterClosedNotice';
+import useOpenRegisterStatus from '../../hooks/useOpenRegisterStatus';
+import { useAuth } from '../../context/AuthContext';
 import useOnlineStatus from '../../hooks/useOnlineStatus';
 import useRefreshOnVisible from '../../hooks/useRefreshOnVisible';
 import { cachedGet, isStale } from '../../api/readCache';
@@ -56,6 +60,18 @@ export default function AppHeader({ collapsed, onToggleSidebar, onOpenMobileNav 
   const [showSalesModal, setShowSalesModal] = useState(false);
   const [dailySummary, setDailySummary] = useState(null);
   const [summaryLoading, setSummaryLoading] = useState(false);
+  const [showSplitModal, setShowSplitModal] = useState(false);
+
+  const { user } = useAuth();
+  /*
+   * The split modal reads /analytics/current-day, which the API restricts to
+   * admin and manager. Rendering its trigger for a cashier would offer a button
+   * whose only possible outcome is a 403.
+   */
+  const canSeeFinance = user?.roles?.some((role) => role === 'admin' || role === 'manager');
+
+  // Checked while the summary modal is open; see openSalesModal below.
+  const { status: registerStatus, checking: checkingRegister } = useOpenRegisterStatus(showSalesModal);
 
   const currentPage = pageNames[location.pathname] || '';
 
@@ -94,18 +110,30 @@ export default function AppHeader({ collapsed, onToggleSidebar, onOpenMobileNav 
     if (isStale(QUICK_STATS_KEY, QUICK_STATS_TTL)) fetchQuickStats({ force: true });
   });
 
-  const openSalesModal = async () => {
-    setShowSalesModal(true);
+  const hasOpenRegister = registerStatus?.has_open_register === true;
+
+  /*
+   * Opening the modal no longer fetches: it only shows it. The figures are
+   * requested by the effect below, and only once the register check has come
+   * back positive — a day nobody has started has nothing to summarize, and its
+   * zeros would read as a real zero rather than as "the shift has not begun".
+   */
+  const openSalesModal = () => setShowSalesModal(true);
+
+  useEffect(() => {
+    if (!showSalesModal || !hasOpenRegister) return;
+
+    let cancelled = false;
     setSummaryLoading(true);
-    try {
-      const res = await api.get('/sales/daily-summary');
-      setDailySummary(res.data.data);
-    } catch {
-      setDailySummary(null);
-    } finally {
-      setSummaryLoading(false);
-    }
-  };
+
+    api
+      .get('/sales/daily-summary')
+      .then((res) => { if (!cancelled) setDailySummary(res.data.data); })
+      .catch(() => { if (!cancelled) setDailySummary(null); })
+      .finally(() => { if (!cancelled) setSummaryLoading(false); });
+
+    return () => { cancelled = true; };
+  }, [showSalesModal, hasOpenRegister]);
 
   return (
     <>
@@ -172,10 +200,28 @@ export default function AppHeader({ collapsed, onToggleSidebar, onOpenMobileNav 
         </div>
 
         <div className="flex shrink-0 items-center gap-1 sm:gap-2">
+          {canSeeFinance && (
+            <button
+              onClick={() => setShowSplitModal(true)}
+              className="flex h-10 w-10 cursor-pointer items-center justify-center rounded-lg text-slate-500 transition-colors hover:bg-blue-50 hover:text-blue-600 sm:h-9 sm:w-9"
+              title="Reparto del dia"
+              aria-label="Reparto del dia"
+            >
+              {/* A pie split into two slices: the glyph states what the modal
+                  is about before it is opened, and reads differently from the
+                  wallet next to it. */}
+              <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.75} stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 6a7.5 7.5 0 1 0 7.5 7.5h-7.5V6Z" />
+                <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 10.5H21A7.5 7.5 0 0 0 13.5 3v7.5Z" />
+              </svg>
+            </button>
+          )}
+
           <button
             onClick={openSalesModal}
             className="flex h-10 w-10 cursor-pointer items-center justify-center rounded-lg text-slate-500 transition-colors hover:bg-indigo-50 hover:text-indigo-600 sm:h-9 sm:w-9"
             title="Resumen del dia"
+            aria-label="Resumen del dia"
           >
             <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.75} stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" d="M21 12a2.25 2.25 0 0 0-2.25-2.25H15a3 3 0 1 1-6 0H5.25A2.25 2.25 0 0 0 3 12m18 0v6a2.25 2.25 0 0 1-2.25 2.25H5.25A2.25 2.25 0 0 1 3 18v-6m18 0V9M3 12V9m18 0a2.25 2.25 0 0 0-2.25-2.25H5.25A2.25 2.25 0 0 0 3 9m18 0V6a2.25 2.25 0 0 0-2.25-2.25H5.25A2.25 2.25 0 0 0 3 6v3" />
@@ -216,10 +262,16 @@ export default function AppHeader({ collapsed, onToggleSidebar, onOpenMobileNav 
             </div>
           </div>
 
-          {summaryLoading ? (
+          {checkingRegister || (hasOpenRegister && summaryLoading) ? (
             <div className="flex h-40 items-center justify-center">
-              <div className="h-6 w-6 animate-spin rounded-full border-3 border-indigo-600 border-t-transparent" />
+              <div className="h-6 w-6 animate-spin rounded-full border-[3px] border-indigo-600 border-t-transparent" />
             </div>
+          ) : registerStatus === null ? (
+            <p className="py-8 text-center text-sm text-slate-400">
+              No se pudo verificar el estado de la caja. Intenta de nuevo.
+            </p>
+          ) : !hasOpenRegister ? (
+            <RegisterClosedNotice status={registerStatus} onNavigate={() => setShowSalesModal(false)} />
           ) : dailySummary ? (
             <div className="space-y-4">
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -250,14 +302,18 @@ export default function AppHeader({ collapsed, onToggleSidebar, onOpenMobileNav 
                 </div>
               </div>
 
-              <div className="flex items-center justify-between gap-3 rounded-xl bg-rose-50 p-3 sm:p-4">
-                <div>
+              {/* Two cards instead of one row: an outflow and a sale count are
+                  unrelated figures, and sharing a single tinted surface made
+                  the count look like part of the expense. Same labels, same
+                  values, same colours — only the container is split. */}
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div className="min-w-0 rounded-xl bg-rose-50 p-3 sm:p-4">
                   <p className="text-[11px] font-medium text-rose-600">Egresos Caja Chica</p>
-                  <p className="mt-0.5 text-lg font-bold text-rose-900">-{fmt(dailySummary.petty_cash_total)}</p>
+                  <p className="mt-0.5 truncate text-lg font-bold text-rose-900">-{fmt(dailySummary.petty_cash_total)}</p>
                 </div>
-                <div className="text-right">
-                  <p className="text-[11px] font-medium text-slate-500">Ordenes</p>
-                  <p className="mt-0.5 text-lg font-bold text-slate-900">{dailySummary.order_count}</p>
+                <div className="min-w-0 rounded-xl bg-slate-50 p-3 sm:p-4">
+                  <p className="text-[11px] font-medium text-slate-500">Ordenes del día</p>
+                  <p className="mt-0.5 truncate text-lg font-bold text-slate-900">{dailySummary.order_count}</p>
                 </div>
               </div>
 
@@ -305,6 +361,8 @@ export default function AppHeader({ collapsed, onToggleSidebar, onOpenMobileNav 
           )}
         </div>
       </Dialog>
+
+      <DaySplitModal visible={showSplitModal} onHide={() => setShowSplitModal(false)} />
     </>
   );
 }
