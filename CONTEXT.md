@@ -7808,3 +7808,278 @@ segundos terminando en un error legible es estrictamente mejor.
   sesión** y token inválido → 404 genérico.
 - **Frontend** — `npm run build` exitoso; sin advertencias de dependencias de
   hooks en los archivos del módulo.
+
+---
+
+## 64. PANEL FINANCIERO: DÍA CORRIENTE, FILTROS AVANZADOS Y EXPORTACIÓN ESTRICTA .XLSX + ACUSE MASIVO DE NOTIFICACIONES [🟢 COMPLETADO Y OPERATIVO]
+
+Cuatro mejoras de alta prioridad sobre dos módulos ya operativos. Ninguna
+inventa un dominio nuevo: todas atacan un hueco concreto entre lo que el sistema
+ya sabe y lo que el operador podía ver.
+
+### 64.1 Desglose del día corriente — el dinero vive en DOS estados
+
+**El problema.** Hasta que corre el cierre automático de las 21:00, el dinero
+del día está en dos estados distintos: el que ya se liquidó en un arqueo
+inmutable, y el que sigue vivo dentro de un cajón que alguien tiene abierto. Un
+panel que lee solo `cash_register_closings` sub-reporta el negocio durante todo
+el día y luego pega un salto en la noche; un panel que lee solo `orders` no
+puede mostrar el arqueo — la comparación esperado-contra-declarado, que es la
+razón de existir de un cierre. **Las dos lecturas son parciales**, así que
+`App\Services\CurrentDayBreakdownService` devuelve ambas y etiqueta cuál es cuál.
+
+`GET /api/analytics/current-day` entrega, por cada caja del día:
+
+- Operador, hora de apertura y de cierre, fondo inicial.
+- Ventas de esa caja: bruto, neto, IVA, descuentos, número de órdenes.
+- Reparto 70/30 **de esa caja**, calculado sobre su neto.
+- Distribución por método de pago **de esa caja**.
+- Su arqueo cuando existe: esperado, declarado, diferencia y el desglose por
+  método tal como lo congeló el ledger inmutable.
+
+Y en el encabezado, el total del día partido en `settled_net` (ya arqueado) e
+`in_progress_net` (cajas abiertas). Su suma es el neto; mostrarlos juntos en una
+sola cifra es lo que hace que un panel parezca decir que el negocio se desplomó
+a cualquier hora antes de los cierres.
+
+**Qué registros entran en "hoy".** La unión de dos conjuntos: cajas que
+vendieron hoy, y cajas cuyo cierre se realizó hoy. El segundo importa porque un
+cajón abierto a las 22:00 de ayer y cerrado a la 01:00 de hoy tiene su arqueo
+fechado hoy — dejarlo fuera haría que los cierres listados aquí no cuadraran con
+la pantalla de historial de cierres para la misma fecha.
+
+**Por qué las cifras se recalculan y NO se leen de `payment_breakdown`.** El
+desglose almacenado es un ledger inmutable de efectivo ESPERADO contra
+DECLARADO, y trabaja sobre totales brutos porque eso es lo que una persona
+cuenta en un cajón. La segmentación 70/30 trabaja sobre el subtotal neto, que el
+desglose no carga. Derivar el reparto del bruto inflaría cada cifra por la tasa
+de IVA. Así que los agregados de venta vienen de `orders` y el arqueo viene del
+cierre — cada uno de la fuente que realmente tiene la verdad.
+
+**Los totales se suman de las filas, no se vuelven a consultar.** Una segunda
+consulta abriría la puerta a que el encabezado del panel discrepe de las filas
+que tiene debajo, que es lo más corrosivo que una pantalla financiera puede
+hacerle a la confianza de quien la lee. Verificado: la suma de filas iguala el
+encabezado, y `settled + in_progress = neto`.
+
+**Sin caché, deliberadamente.** Es la vista de apertura del panel y responde
+"dónde está el dinero AHORA". Una respuesta cacheada le mostraría al cajero un
+total anterior a la venta que acaba de cobrar, y lo siguiente que haría es dejar
+de confiar en la pantalla.
+
+### 64.2 Selectores de periodo y filtros avanzados — una sola fuente de criterios
+
+**Presets**: *Última semana* (7 días **incluyendo** hoy: `-6` más hoy; usar `-7`
+convertiría calladamente cada "semana" en una ventana de ocho días), *Mes en
+curso* y *Año actual*. Cada preset devuelve un rango fresco en cada evaluación,
+porque "mes en curso" significa otra cosa mañana. El calendario de rango
+personalizado sigue disponible y el preset activo se resalta comparando el rango
+vigente contra lo que ese preset produciría hoy.
+
+**Bloque de Filtros Avanzados colapsable**: método de pago, operador y caja
+específica. Los catálogos vienen de `GET /api/analytics/catalogs`, que solo
+lista operadores que **realmente han tenido un cajón** — ofrecer un filtro que
+nunca puede devolver una fila es ruido, no una función.
+
+**`App\Support\Finance\FinanceFilters` es la pieza central.** El panel muestra
+cuatro cosas construidas con cuatro consultas distintas — la gráfica por método,
+el resumen 70/30, la tendencia y el libro exportado — y el operador espera que
+las cuatro describan **la misma rebanada del negocio**. En el momento en que un
+endpoint olvida honrar `cash_register_id`, la exportación deja de coincidir con
+la gráfica desde la que se exportó, y quien la audita no tiene forma de saber
+cuál de las dos miente. Resolver los criterios una vez y entregar el mismo
+objeto a cada consulta convierte esa clase de bug en imposible, no en
+improbable. Verificado: con el mismo filtro, `financial-summary`,
+`sales-by-payment` y `daily-trend` devuelven exactamente el mismo neto.
+
+**Rango invertido**: un `date_from` posterior al `date_to` es un dedazo en el
+date picker, no un periodo vacío. Se intercambian los extremos; devolver cero
+filas parecería que el negocio no vendió nada.
+
+**El límite honesto, declarado en voz alta.** Un método de pago es una propiedad
+de una VENTA. Los retiros de caja chica y las compras de stock no tienen método
+de pago — son dinero **saliendo** del negocio, no entrando. Cuando el operador
+filtra por "Efectivo", las deducciones no pueden filtrarse igual, y el
+**remanente del fondo de inversión deja de ser un número coherente**: el
+numerador está filtrado y el denominador no. El sistema no finge lo contrario:
+`deductionsAreComparable()` reporta el hecho, la API lo expone en
+`metadata.filters.deductions_comparable`, la UI pinta un aviso ámbar y **la hoja
+de Excel lleva el mismo aviso impreso**. Un panel financiero que muestra un
+número sin significado sin decirlo es peor que uno que no muestra nada.
+
+### 64.3 Exportación ESTRICTA a .xlsx — cuatro hojas, sin ninguna rama CSV
+
+`GET /api/analytics/export` → `App\Services\FinanceExportService` sobre
+**PhpSpreadsheet** (`Writer\Xlsx`). **No existe rama CSV en ninguna parte** del
+servicio ni del controlador que lo llama.
+
+**Por qué el formato ES el requisito.** Un CSV no puede cargar lo que este
+reporte necesita: una sola hoja donde la auditoría necesita cuatro, ningún
+formato numérico (una columna de pesos llega como float pelón que Excel puede
+reinterpretar según el locale), ninguna fórmula (los totales no se pueden
+re-verificar), y ninguna forma de distinguir un encabezado de un dato.
+
+**Cuatro hojas, porque una auditoría es una cadena:**
+
+| Hoja | Contenido |
+|---|---|
+| **Resumen** | Ingresos, IVA, descuentos, segmentación 70/30, deducciones y remanente |
+| **Órdenes** | Folio, fecha/hora local, operador, método, mesa, subtotal, IVA, total |
+| **Cierres de Caja** | Arqueo por caja **con el desglose por método indentado debajo** |
+| **Deducciones** | Caja chica y compras de stock unificadas; la merma va listada pero marcada como informativa |
+
+Quien revisa el remanente puede caminar de la cifra de portada hasta los
+comprobantes individuales sin salir del archivo.
+
+Detalles que hacen auditable el libro y no solo legible:
+
+- **Totales con `=SUM()` reales**, no números precocinados: el auditor hace clic
+  y ve a Excel re-derivarlo de las filas de arriba. Esa es exactamente la
+  comprobación que el archivo existe para sobrevivir.
+- **Formato `#,##0.00 [$MXN]`** en cada celda de dinero, para que Excel nunca
+  adivine.
+- **Paneles congelados** en cada hoja de detalle, encabezados combinados,
+  zebrado, y el faltante de caja en rojo — la única cifra sobre la que alguien
+  tiene que actuar es la única que recibe color.
+- **La merma va en ámbar y en cursiva** porque NO deduce del fondo: evitar que
+  un lector la sume de un vistazo.
+- **Timestamps en la zona del negocio**: PostgreSQL entrega `timestamptz` y se
+  convierte con `Timezone::app()`, para que una venta de las 20:30 no aparezca
+  como las 02:30 del día siguiente.
+- El desglose por método bajo cada cierre es la *"distribución exacta"* que el
+  reporte existe para dar: sin él la hoja dice que un cajón quedó corto $200 y
+  no puede decir en qué tender.
+
+Se sirve con `streamDownload` y `disconnectWorksheets()` tras escribir:
+PhpSpreadsheet mantiene cada celda en memoria y una exportación amplia son
+decenas de MB que el worker conservaría hasta el final de la petición. Throttle
+propio de 20/min: es la ruta más cara del módulo.
+
+### 64.4 "Marcar todas como leídas" en el centro de notificaciones
+
+`POST /api/notifications/read-all`.
+
+- **Una sola sentencia, no un ciclo de saves.** Una bandeja desatendida una
+  semana tiene cientos de filas; hidratar cada una para escribir un timestamp
+  serían cientos de viajes por un clic. Es un `UPDATE` con `WHERE`, que además
+  lo hace atómico: una notificación que llega a media operación está dentro o
+  fuera de la ventana, nunca a medio marcar.
+- **Por qué saltarse el guard del modelo es seguro aquí.** `SystemNotification`
+  bloquea toda mutación salvo `read_at`, y ese guard vive en un evento de
+  Eloquent que un update por query builder no dispara. El guard existe para
+  proteger el payload inmutable — `type`, `data`, `created_at` — y esta
+  sentencia no toca ninguno: escribe la única columna que el propio guard
+  permite. La invariante se sostiene por construcción, no por el evento.
+  Verificado: tras el marcado masivo el `type` y el `data` siguen intactos y el
+  guard sigue rechazando cualquier otra mutación.
+- **El alcance es el llamante y nada más.** `user_id` sale de la sesión
+  autenticada, nunca del cuerpo de la petición; no hay parámetro que pueda
+  ampliarlo. Verificado: marcar la bandeja del admin dejó intactas las 3
+  notificaciones de la cajera.
+- Idempotente: un segundo clic responde 200 con `marked: 0`.
+
+**En la campana**: el enlace solo se renderiza cuando hay algo que limpiar — una
+acción permanentemente visible que la mayor parte del tiempo no hace nada
+entrena al usuario a ignorarla. El badge se limpia en el **mismo tick** del
+clic, antes de que resuelva la petición: la bandeja está abierta y el usuario la
+está mirando, así que un contador que se queda un viaje de red se lee como "el
+botón no hizo nada" e invita a un segundo clic. Se guarda un snapshot previo
+para revertir si el servidor rechaza — una actualización optimista sin camino de
+rollback es como una UI acaba afirmando que una mutación funcionó cuando el
+servidor la negó. La caché compartida (`readCache`) se reescribe también, para
+que ninguna otra vista quede con un badge viejo.
+
+### 64.5 Corrección incidental: la gráfica apilada renderizaba barras vacías
+
+Al reconstruir el panel salió a la luz un bug preexistente. La gráfica de
+*Ventas por Método de Pago* apilaba tres barras con `dataKey` fijo —
+`"efectivo"`, `"tarjeta"`, `"transferencia"` — pero los slugs sembrados son
+`cash`, `card` y `transfer`. **Ninguna de las tres barras encontraba dato**, y
+un cuarto método de pago dado de alta por el negocio jamás habría aparecido.
+
+Las series ahora se **derivan del payload**: el endpoint aplana los slugs sobre
+cada fila (además del mapa `methods` anidado que ya devolvía), el componente
+recorre lo que llegó y asigna color desde un mapa que reconoce ambas grafías
+(inglesa sembrada y española generada por el panel de administración), con una
+paleta rotatoria para cualquier otra. Un negocio que renombre sus tenders, o
+agregue un cuarto, obtiene una gráfica correcta sin tocar código.
+
+### 64.6 Endpoints
+
+```
+GET /api/analytics/current-day[?date=YYYY-MM-DD]   desglose del día en curso
+GET /api/analytics/catalogs                        opciones de filtros avanzados
+GET /api/analytics/sales-by-payment                + filtros avanzados
+GET /api/analytics/financial-summary               + filtros avanzados
+GET /api/analytics/daily-trend                     + filtros avanzados
+GET /api/analytics/export                          libro .xlsx  [throttle 20/min]
+POST /api/notifications/read-all                   acuse masivo
+```
+
+Los cinco de analytics siguen bajo `role:admin,manager`. Parámetros de filtro
+comunes: `date_from`, `date_to`, `payment_method_id`, `user_id`,
+`cash_register_id`.
+
+### 64.7 Archivos
+
+**Backend (nuevos)**
+- `app/Support/Finance/FinanceFilters.php` — resolutor único de criterios
+- `app/Services/CurrentDayBreakdownService.php`
+- `app/Services/FinanceExportService.php`
+
+**Backend (modificados)**
+- `app/Http/Controllers/Finance/AnalyticsController.php` — `currentDay()`,
+  `catalogs()`, `export()` y filtros compartidos en los tres endpoints previos
+- `app/Http/Controllers/Notifications/SystemNotificationController.php` —
+  `markAllRead()`
+- `routes/api.php`
+
+**Frontend (nuevos)**
+- `components/finance/CurrentDayBreakdown.jsx`
+- `components/finance/FinancePeriodFilters.jsx`
+- `components/finance/financePeriods.js` — presets y `toQueryParams`, separados
+  para que el archivo de componente exporte solo un componente (react-refresh)
+
+**Frontend (modificados)**
+- `pages/finance/FinanceDashboardPage.jsx`
+- `components/notifications/NotificationBell.jsx`
+
+### 64.8 Verificación ejecutada
+
+Sobre PostgreSQL 16 real, con un escenario de dos cajas (una cerrada por la
+mañana con arqueo manual, una abierta por la tarde con otra operadora), caja
+chica y compra de stock del día:
+
+- **Desglose del día** — bruto $4,640 / neto $4,000 / IVA $640 sobre 5 órdenes;
+  reparto 70/30 = $2,800 / $1,200; liquidado $2,450 + en curso $1,550 = neto.
+  Arqueo de la caja cerrada: esperado $3,592 = fondo $1,000 + ventas $2,842 −
+  caja chica $250; desglose por método cuadrado a cero. La suma de las filas
+  iguala el encabezado y las cajas abiertas se ordenan primero.
+- **Filtros** — sin filtros $4,000; solo Efectivo $1,850; solo la cajera $1,550;
+  solo la caja abierta $1,550. Los tres endpoints devuelven idéntico neto bajo
+  el mismo filtro. `deductions_comparable` se apaga exactamente con método de
+  pago y con caja, y permanece encendido con operador (que sí llega a la caja
+  chica). Rango invertido normalizado en lugar de devolver vacío.
+- **Exportación** — HTTP 200, `Content-Type` OOXML, **firma de bytes `PK`**
+  (contenedor ZIP), releída con `IOFactory` que detecta el lector `Xlsx`; cuatro
+  hojas presentes; `=SUM(F4:F8)` viva en la fila de totales; formato
+  `#,##0.00 [$MXN]`; panel congelado en `A4`; celdas combinadas de encabezado.
+- **Acuse masivo** — 7 marcadas, contador a 0, las 3 de otra usuaria intactas,
+  segundo clic idempotente, `type`/`data` conservados y el guard de
+  inmutabilidad sigue rechazando cualquier otra mutación.
+- **Frontend** — `npm run build` exitoso; sin advertencias de dependencias de
+  hooks, variables sin usar ni exportaciones mixtas en los archivos del módulo.
+
+### 64.9 Dos bugs corregidos durante la implementación
+
+1. **`sortBy()` con comparadores de dos argumentos.** El orden de las cajas usaba
+   `sortBy([fn($a,$b) => ...])`, pero `sortBy` invoca el callable como
+   `($item, $key)` para **extraer un valor**, no para comparar: el segundo
+   argumento recibía el índice de la colección y el orden no se aplicaba. Se
+   cambió a la forma `[['is_closed','asc'], ['opened_at','desc']]`.
+2. **`UNION` entre un literal y un enum de PostgreSQL.** La hoja de deducciones
+   une caja chica con movimientos de stock; Postgres unifica las ramas columna
+   por columna e intentaba coercionar el literal `'petty_cash'` **dentro** del
+   enum `stock_movement_type`, fallando con `22P02`. Ambas ramas se castean
+   explícitamente a `text`, lo que las hace union-compatibles de verdad y no por
+   accidente.

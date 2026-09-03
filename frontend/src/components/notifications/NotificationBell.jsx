@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { OverlayPanel } from 'primereact/overlaypanel';
 import api from '../../api/axios';
-import { cachedGet, isStale } from '../../api/readCache';
+import { cachedGet, isStale, mutate } from '../../api/readCache';
+import { toast } from 'sonner';
 import useRefreshOnVisible from '../../hooks/useRefreshOnVisible';
 import NotificationDetailModal from './NotificationDetailModal';
 import { typeMeta } from './notificationTypes';
@@ -39,6 +40,7 @@ export default function NotificationBell() {
   const [unreadCount, setUnreadCount] = useState(0);
   const [typeFilter, setTypeFilter] = useState(null);
   const [detail, setDetail] = useState(null);
+  const [markingAll, setMarkingAll] = useState(false);
   const panelRef = useRef(null);
 
   /**
@@ -84,6 +86,57 @@ export default function NotificationBell() {
     () => [...new Set([...unread, ...recent].map(n => n.type))],
     [unread, recent]
   );
+
+  /**
+   * Marks the whole tray as read.
+   *
+   * The badge clears on the SAME tick the click happens, before the request
+   * resolves: the tray is already open and the user is looking at it, so a
+   * counter that lingers for a round trip reads as "the button did nothing"
+   * and invites a second click. The local state and the shared read cache are
+   * both rewritten, so every other view holding this key sees the same truth
+   * instead of a stale badge.
+   *
+   * The pre-click snapshot is kept so a failed request can put the tray back
+   * exactly as it was. An optimistic update without a rollback path is how a
+   * UI ends up claiming a mutation succeeded when the server refused it.
+   */
+  const markAllRead = async () => {
+    if (markingAll || unreadCount === 0) return;
+
+    const snapshot = { unread, recent, unreadCount };
+    setMarkingAll(true);
+
+    const readNow = new Date().toISOString();
+    const cleared = unread.map((n) => ({ ...n, read_at: n.read_at ?? readNow }));
+
+    setUnread([]);
+    setRecent([...cleared, ...recent]);
+    setUnreadCount(0);
+    mutate(CACHE_KEY, { unread: [], recent: [...cleared, ...recent], unread_count: 0 });
+
+    try {
+      const res = await api.post('/notifications/read-all');
+      toast.success(res.data.metadata?.message ?? 'Notificaciones marcadas como leidas.');
+      // Re-read rather than trusting the optimistic shape: the server decides
+      // which rows the tray keeps showing once they are read.
+      fetchNotifications({ force: true });
+    } catch (err) {
+      setUnread(snapshot.unread);
+      setRecent(snapshot.recent);
+      setUnreadCount(snapshot.unreadCount);
+      mutate(CACHE_KEY, {
+        unread: snapshot.unread,
+        recent: snapshot.recent,
+        unread_count: snapshot.unreadCount,
+      });
+      toast.error('No se pudieron marcar como leidas', {
+        description: err.response?.data?.message || 'Intenta de nuevo.',
+      });
+    } finally {
+      setMarkingAll(false);
+    }
+  };
 
   const openDetail = async (notification) => {
     setDetail(notification);
@@ -136,6 +189,21 @@ export default function NotificationBell() {
               </span>
             )}
           </div>
+
+          {/* Only rendered when there is something to clear: a permanently
+              visible action that does nothing most of the time trains the user
+              to ignore it. */}
+          {unreadCount > 0 && (
+            <button
+              type="button"
+              onClick={markAllRead}
+              disabled={markingAll}
+              className="mt-2 flex cursor-pointer items-center gap-1.5 text-[11px] font-semibold text-indigo-600 transition-colors hover:text-indigo-800 disabled:cursor-wait disabled:text-slate-400"
+            >
+              <i className={`pi ${markingAll ? 'pi-spin pi-spinner' : 'pi-check-circle'} text-[11px]`} />
+              {markingAll ? 'Marcando...' : 'Marcar todas como leidas'}
+            </button>
+          )}
 
           {presentTypes.length > 1 && (
             <div className="mt-2 flex flex-wrap gap-1.5">

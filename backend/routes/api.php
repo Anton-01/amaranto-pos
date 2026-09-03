@@ -200,6 +200,15 @@ Route::middleware(['auth:sanctum', 'user.active'])->group(function () {
     // Notificaciones estructuradas por tag (campana del header)
     Route::prefix('notifications')->group(function () {
         Route::get('/', [SystemNotificationController::class, 'index']);
+
+        /*
+         * Acuse masivo. Va ANTES de `{notification}/read` no por precedencia
+         * —los segmentos no colisionan— sino porque leerlo primero deja claro
+         * que existe: es la accion que el usuario busca cuando la bandeja se
+         * le acumulo. El alcance es SIEMPRE el usuario autenticado; no hay
+         * parametro que pueda ampliarlo.
+         */
+        Route::post('/read-all', [SystemNotificationController::class, 'markAllRead']);
         Route::post('/{notification}/read', [SystemNotificationController::class, 'markRead']);
     });
 
@@ -425,9 +434,29 @@ Route::middleware(['auth:sanctum', 'user.active'])->group(function () {
     });
 
     Route::middleware('role:admin,manager')->prefix('analytics')->group(function () {
+        /*
+         * Vista de apertura del panel: el flujo de dinero del dia EN CURSO,
+         * caja por caja. Deliberadamente sin filtros y sin cache — responde
+         * "donde esta el dinero AHORA", y una respuesta cacheada le mostraria
+         * al cajero un total anterior a la venta que acaba de cobrar.
+         */
+        Route::get('/current-day', [AnalyticsController::class, 'currentDay']);
+
+        // Opciones del bloque de Filtros Avanzados (metodos, operadores, cajas).
+        Route::get('/catalogs', [AnalyticsController::class, 'catalogs']);
+
         Route::get('/sales-by-payment', [AnalyticsController::class, 'salesByPaymentMethod']);
         Route::get('/financial-summary', [AnalyticsController::class, 'financialSummary']);
         Route::get('/daily-trend', [AnalyticsController::class, 'dailyTrend']);
+
+        /*
+         * Libro de auditoria financiera en .XLSX ESTRICTO (PhpSpreadsheet).
+         * Freno propio: cada peticion arma cuatro hojas en memoria a partir de
+         * todas las ordenes del periodo, asi que es la ruta mas cara del
+         * modulo y no debe compartir cupo con las lecturas ligeras.
+         */
+        Route::get('/export', [AnalyticsController::class, 'export'])
+            ->middleware('throttle:20,1');
     });
 
     Route::prefix('profile')->group(function () {
