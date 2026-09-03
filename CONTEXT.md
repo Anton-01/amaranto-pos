@@ -8227,3 +8227,107 @@ debe teclear.
   monoespaciada, fuente en línea en los 20 elementos de texto
 - `backend/resources/views/mail/layouts/corporate.blade.php` — regla `mso`
   alineada con la pila del `<body>`
+
+---
+
+## 66. CORRECCIÓN DE TRES DEFECTOS DE INTERFAZ: BARRA DE FILTROS, DOBLE SELECCIÓN EN EL MENÚ Y SCROLL AL ITEM ACTIVO [🟢 CORREGIDO]
+
+### 66.1 La barra de filtros de la Biblioteca de Medios se veía rota
+
+Dos causas independientes en el mismo bloque:
+
+**El icono de búsqueda encima del placeholder.** El campo usaba
+`<span className="p-input-icon-left">`, y **esa clase ya no existe**: PrimeReact
+la eliminó en la versión 10, y su reemplazo (`IconField`) tampoco tiene reglas
+en el build `lara-light-indigo` que este proyecto importa — ambas dan **cero
+ocurrencias** en las hojas de estilo del vendor. Sin ninguna regla, el envoltorio
+queda sin estilar: el `<i>` se renderiza como un hermano en línea delante del
+campo y el glifo cae sobre el texto del placeholder.
+
+**Los dos dropdowns en blanco.** PrimeReact resuelve la etiqueta del estado
+cerrado como `selectedOption || placeholder || emptyMessage || &nbsp;`, y **no
+considera selección a una opción de valor `null`**. Como los filtros arrancan en
+`null` y nunca se les pasó `placeholder`, la cadena caía hasta `&nbsp;` y ambos
+controles se pintaban como cajas vacías.
+
+Correcciones:
+
+- La clase `.search-field` se define en `index.css`, **no** como utilidades
+  Tailwind en el sitio de uso: el `padding` de `.p-inputtext` del tema va sin
+  capa y le ganaría a un `pl-9` de Tailwind, que sí está en `@layer`. Es el mismo
+  razonamiento que ya documenta el bloque *MOBILE-FIRST FOUNDATION* de ese
+  archivo. El icono lleva `pointer-events: none` para que el clic llegue al campo.
+- Ambos dropdowns reciben un `placeholder` que repite su opción "todas"
+  literalmente, de modo que el control se lee igual tanto con el valor nulo
+  inicial como al elegir esa opción de la lista.
+- El de categoría pasa de `w-56` a `w-64` y el buscador de `max-w-xs` a
+  `max-w-sm`: a los anchos anteriores sus propias etiquetas se recortaban a
+  media palabra, lo que en sí ya se lee como un defecto.
+- El grupo de vista cambia `ml-auto` por `sm:ml-auto`: apilado en teléfono, un
+  margen automático lo alejaba de los filtros a los que pertenece.
+
+`JobsMonitorPage` arrastra la misma clase muerta pero **sin icono dentro**, así
+que ahí no produce defecto visible y se deja como está.
+
+### 66.2 Dos entradas del menú seleccionadas a la vez
+
+Un `NavLink` resalta en su propia ruta **y en todo lo anidado debajo**. Como
+`/admin/medios` es prefijo de `/admin/medios/auditoria`, "Biblioteca de Medios"
+seguía encendida mientras el usuario estaba en "Auditoría de Medios".
+
+La solución **no** es poner `end` en todas las entradas: `/products` posee
+legítimamente `/products/create` y `/products/:id/edit`, que son rutas pero no
+entradas de menú, y con `end` dejaría de resaltarse mientras se edita un
+producto.
+
+El conjunto de rutas que exigen coincidencia exacta se **deriva** de `navGroups`:
+una entrada la exige si otra entrada empieza con su ruta más `/`. Al ser
+derivado, agregar mañana un destino anidado marca a su padre automáticamente y
+el defecto no puede reaparecer.
+
+### 66.3 El scroll al item activo no ocurría al recargar
+
+El efecto que centra la entrada activa ya existía, pero **dependía solo de
+`pathname`** y medía durante el propio efecto, es decir **antes del primer
+pintado**. En una carga en frío, en ese instante `user` todavía no llegó de
+`AuthContext`, así que `isAdmin` es `false`, las entradas `adminOnly` no están
+renderizadas y el menú **aún no desborda**. La guarda
+`scrollHeight <= clientHeight` leía "no hay nada que corregir" y salía — y como
+el efecto no observaba nada más, nunca tenía una segunda oportunidad cuando las
+entradas aparecían.
+
+Dos cambios lo cierran:
+
+- La medición se difiere un frame con `requestAnimationFrame`, de modo que la
+  guarda evalúa el menú que el usuario está viendo de verdad.
+- Las dependencias pasan a `[pathname, isAdmin, collapsed]`. Las dos nuevas
+  cambian la altura del menú: la primera agrega entradas cuando resuelve la
+  sesión, la segunda intercambia la columna con etiquetas por el riel de iconos.
+
+Se conserva lo que ya estaba bien: no se toca nada si la entrada ya es visible
+(para no arrancar el menú bajo el cursor en un clic normal), y el desplazamiento
+de la ventana se captura y restaura para que **solo se mueva la barra lateral**.
+
+### 66.4 Verificación ejecutada
+
+Se sirvió el `dist` construido contra una API simulada y se condujo Chromium
+sobre la aplicación real:
+
+- **Icono**: `position: absolute`, `padding-left: 36px`, borde derecho del icono
+  en 319 px contra inicio del texto en 329 px → 10 px de aire, sin solape, y
+  centrado vertical dentro de 2 px.
+- **Dropdowns**: renderizan `"Todas las categorías"` y `"Todos"` en lugar de
+  cajas vacías, ya sin recorte.
+- **Selección del menú**: exactamente **una** entrada con `aria-current="page"`
+  en `/admin/medios` y en `/admin/medios/auditoria`; y `/products/create` sigue
+  resaltando "Productos", que es el caso que la corrección no debía romper.
+- **Scroll**: entrando en frío a `/admin/papelera`, el `nav` termina en
+  `scrollTop: 434` con la entrada activa visible y `window.scrollY` en `0` — la
+  página detrás no se movió.
+
+### Archivos Modificados
+- `frontend/src/index.css` — reglas `.search-field` / `.search-field-icon`
+- `frontend/src/pages/admin/MediaLibraryPage.jsx` — campo de búsqueda,
+  `placeholder` en ambos dropdowns, anchos y alineación del grupo de vista
+- `frontend/src/components/layout/Sidebar.jsx` — `end` derivado por prefijo y
+  efecto de scroll diferido con dependencias completas

@@ -49,6 +49,30 @@ const navGroups = [
   },
 ];
 
+/**
+ * Entries whose path is a prefix of another entry's, and therefore have to be
+ * matched EXACTLY.
+ *
+ * A NavLink highlights on its own path and on everything nested beneath it. So
+ * "Biblioteca de Medios" (/admin/medios) stayed lit while the user was on
+ * "Auditoria de Medios" (/admin/medios/auditoria), and the menu showed two
+ * selected entries at once.
+ *
+ * The set is DERIVED from navGroups rather than hand-flagged, which is what
+ * keeps it correct: adding a nested destination in the future marks its parent
+ * automatically, and no entry is made exact that does not need to be. That
+ * distinction matters — /products legitimately owns /products/create and
+ * /products/:id/edit, which are routes but not menu entries, so it keeps
+ * partial matching and stays highlighted while a product is being edited.
+ */
+const exactMatchPaths = (() => {
+  const paths = navGroups.flatMap((group) => group.items.map((item) => item.path));
+
+  return new Set(
+    paths.filter((path) => paths.some((other) => other !== path && other.startsWith(`${path}/`)))
+  );
+})();
+
 export default function Sidebar({ collapsed, onToggle, mobileOpen = false, onCloseMobile }) {
   const { user } = useAuth();
   const { pathname } = useLocation();
@@ -70,11 +94,12 @@ export default function Sidebar({ collapsed, onToggle, mobileOpen = false, onClo
    * wrong. `navRef` scopes the query to this nav so no other `aria-current` on
    * the page can be picked up.
    *
-   * The effect runs after every navigation, but the two guards make it a no-op
-   * in the ordinary case: nothing happens if the list does not overflow, and
-   * nothing happens if the entry is already fully inside the visible band.
-   * Scrolling only when it is actually off-screen is what keeps a normal click
-   * from yanking the menu under the cursor.
+   * The effect runs after every navigation and whenever the menu's height can
+   * have changed, but the two guards make it a no-op in the ordinary case:
+   * nothing happens if the list does not overflow, and nothing happens if the
+   * entry is already fully inside the visible band. Scrolling only when it is
+   * actually off-screen is what keeps a normal click from yanking the menu
+   * under the cursor.
    *
    * `behavior: 'auto'` (never 'smooth') is deliberate: the correction has to
    * be finished by the first frame the user sees, so it reads as the position
@@ -84,29 +109,52 @@ export default function Sidebar({ collapsed, onToggle, mobileOpen = false, onClo
    */
   useEffect(() => {
     const nav = navRef.current;
-    if (!nav) return;
-
-    const active = nav.querySelector('a[aria-current="page"]');
-    if (!active) return;
-
-    // Nothing to correct when every entry already fits.
-    if (nav.scrollHeight <= nav.clientHeight) return;
-
-    const navBox = nav.getBoundingClientRect();
-    const linkBox = active.getBoundingClientRect();
-    const isFullyVisible = linkBox.top >= navBox.top && linkBox.bottom <= navBox.bottom;
-    if (isFullyVisible) return;
+    if (!nav) return undefined;
 
     /*
-     * scrollIntoView walks up every scrollable ancestor, so on a short window
-     * it can drag the document along with the nav. The sidebar is fixed and
-     * the page behind it must not move, so the window offset is captured and
-     * restored — the visible effect is confined to the menu.
+     * Deferred one frame instead of measuring during the effect.
+     *
+     * THIS IS WHY THE CORRECTION SILENTLY DID NOTHING ON A REFRESH. Effects run
+     * before the browser has painted, and on a cold load the menu is still
+     * short at that instant: `user` has not arrived from AuthContext yet, so
+     * `isAdmin` is false, the adminOnly entries are not rendered and the list
+     * does not overflow. The `scrollHeight <= clientHeight` guard below then
+     * read "nothing to correct" and returned — and because the effect only
+     * watched `pathname`, it never got a second chance once the entries
+     * appeared. Measuring after paint, with `isAdmin` in the dependency list,
+     * is what makes the guard read the menu the user is actually looking at.
      */
-    const { scrollX, scrollY } = window;
-    active.scrollIntoView({ behavior: 'auto', block: 'center' });
-    window.scrollTo(scrollX, scrollY);
-  }, [pathname]);
+    const frame = requestAnimationFrame(() => {
+      const active = nav.querySelector('a[aria-current="page"]');
+      if (!active) return;
+
+      // Nothing to correct when every entry already fits.
+      if (nav.scrollHeight <= nav.clientHeight) return;
+
+      const navBox = nav.getBoundingClientRect();
+      const linkBox = active.getBoundingClientRect();
+      const isFullyVisible = linkBox.top >= navBox.top && linkBox.bottom <= navBox.bottom;
+      if (isFullyVisible) return;
+
+      /*
+       * scrollIntoView walks up every scrollable ancestor, so on a short window
+       * it can drag the document along with the nav. The sidebar is fixed and
+       * the page behind it must not move, so the window offset is captured and
+       * restored — the visible effect is confined to the menu.
+       */
+      const { scrollX, scrollY } = window;
+      active.scrollIntoView({ behavior: 'auto', block: 'center' });
+      window.scrollTo(scrollX, scrollY);
+    });
+
+    return () => cancelAnimationFrame(frame);
+    /*
+     * `isAdmin` and `collapsed` both change the menu's height — the first adds
+     * entries when the session resolves, the second swaps the labelled column
+     * for the icon rail — so a position measured before either settles is
+     * measured against a list that no longer exists.
+     */
+  }, [pathname, isAdmin, collapsed]);
 
   // Los items adminOnly no se renderizan para manager/vendor; el backend
   // ademas protege sus endpoints con middleware role:admin.
@@ -183,6 +231,9 @@ export default function Sidebar({ collapsed, onToggle, mobileOpen = false, onClo
                 <li key={item.path}>
                   <NavLink
                     to={item.path}
+                    // Exact match only for entries that are a prefix of another;
+                    // see exactMatchPaths above.
+                    end={exactMatchPaths.has(item.path)}
                     title={collapsed ? item.label : undefined}
                     /*
                      * PREFETCH POR INTENCION (Fase 11).

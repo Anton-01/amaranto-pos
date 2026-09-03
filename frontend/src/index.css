@@ -31,6 +31,40 @@ body {
   padding-right: 2.75rem; /* espacio para el icono de mostrar/ocultar */
 }
 
+/* Search field with a leading icon.
+   --------------------------------------------------------------------------
+   PrimeReact 10 REMOVED `p-input-icon-left`, and its replacement (IconField)
+   ships no rules in the lara-light-indigo build this project imports — both
+   grep to zero occurrences in the vendor stylesheets. Either one therefore
+   leaves the wrapper completely unstyled: the <i> renders as an ordinary
+   inline sibling ahead of the field and the glyph lands on top of the
+   placeholder text.
+
+   The affordance is rebuilt here rather than with Tailwind utilities at the
+   call site because the theme's own `.p-inputtext` padding is unlayered and
+   would beat a layered `pl-9`. These rules sit outside `@layer` for the same
+   reason as the block below, and win on source order. */
+.search-field {
+  position: relative;
+  display: block;
+}
+
+.search-field > .p-inputtext {
+  width: 100%;
+  padding-left: 2.25rem;
+}
+
+.search-field > .search-field-icon {
+  position: absolute;
+  left: 0.75rem;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 0.875rem;
+  color: #94a3b8;
+  /* The icon is decoration: clicks must reach the field underneath it. */
+  pointer-events: none;
+}
+
 /* InputSwitch — Emerald activo / Slate inactivo */
 .p-inputswitch .p-inputswitch-slider {
   transition: background-color 0.2s ease, box-shadow 0.2s ease;

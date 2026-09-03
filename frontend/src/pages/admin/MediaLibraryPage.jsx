@@ -228,29 +228,48 @@ export default function MediaLibraryPage() {
         </div>
 
         {/* Filter bar */}
-        <div className="flex flex-col gap-2 rounded-xl border border-slate-200 bg-white p-3 sm:flex-row sm:items-center">
-          <span className="p-input-icon-left w-full sm:max-w-xs">
-            <i className="pi pi-search" />
+        <div className="flex flex-col gap-2 rounded-xl border border-slate-200 bg-white p-3 sm:flex-row sm:flex-wrap sm:items-center">
+          {/* `.search-field` (index.css) replaces PrimeReact's removed
+              `p-input-icon-left`; see the rule for why it cannot live here as
+              a Tailwind utility. */}
+          {/* max-w-sm, not max-w-xs: the placeholder is the only hint of what the
+              field searches on, and at 20rem it was clipped mid-word. */}
+          <div className="search-field w-full sm:max-w-sm">
+            <i className="pi pi-search search-field-icon" />
             <InputText
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Buscar por nombre o texto alternativo…"
-              className="w-full"
             />
-          </span>
+          </div>
+          {/*
+            Both dropdowns carry a `placeholder` that repeats their "all" option
+            verbatim. PrimeReact resolves the closed-state label as
+            `selectedOption || placeholder || emptyMessage || &nbsp;`, and it does
+            not treat a null-valued option as a selection — so without a
+            placeholder these two rendered as blank boxes, which is what made the
+            row look broken.
+          */}
           <Dropdown
             value={category}
             options={categoryOptions}
             onChange={(e) => { setCategory(e.value); setPage(0); }}
-            className="w-full sm:w-56"
+            placeholder="Todas las categorías"
+            // Wide enough for its own placeholder: at w-56 the default label
+            // truncated to "Todas las categor…", which reads as a bug.
+            className="w-full sm:w-64"
           />
           <Dropdown
             value={status}
             options={statusOptions}
             onChange={(e) => { setStatus(e.value); setPage(0); }}
+            placeholder="Todos"
             className="w-full sm:w-40"
           />
-          <div className="ml-auto flex shrink-0 gap-1 rounded-lg bg-slate-100 p-1">
+          {/* `sm:ml-auto`, not `ml-auto`: while the row is stacked on a phone an
+              `auto` margin would push the toggle away from the filters it
+              belongs to. */}
+          <div className="flex shrink-0 gap-1 self-start rounded-lg bg-slate-100 p-1 sm:ml-auto sm:self-auto">
             <button
               type="button"
               onClick={() => changeView('grid')}
