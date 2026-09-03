@@ -26,6 +26,12 @@ use App\Http\Controllers\Finance\CashRegisterClosingController;
 use App\Http\Controllers\Finance\CashRegisterController;
 use App\Http\Controllers\Finance\PettyCashController;
 use App\Http\Controllers\Logistics\StockMovementController;
+use App\Http\Controllers\Media\AllowedFileTypeController;
+use App\Http\Controllers\Media\DriveCredentialController;
+use App\Http\Controllers\Media\MediaAuditLogController;
+use App\Http\Controllers\Media\MediaLibraryController;
+use App\Http\Controllers\Media\MediaShareLinkController;
+use App\Http\Controllers\Media\PublicMediaShareController;
 use App\Http\Controllers\Notifications\SystemNotificationController;
 use App\Http\Controllers\Profile\NotificationPreferenceController;
 use App\Http\Controllers\Profile\ProfileController;
@@ -37,6 +43,31 @@ use App\Http\Controllers\Sales\SalesExportController;
 use App\Http\Controllers\Sales\TicketConfigController;
 use App\Models\GlobalSetting;
 use Illuminate\Support\Facades\Route;
+
+/*
+|--------------------------------------------------------------------------
+| Enlaces Compartidos de Medios — UNICA ruta publica del modulo
+|--------------------------------------------------------------------------
+|
+| Deliberadamente FUERA de `auth:sanctum`: un enlace de comparticion existe
+| para que alguien sin cuenta en el POS abra un recurso. La autorizacion no la
+| da una sesion sino el token, que este controlador valida contra la base en
+| CADA peticion (vigencia, revocacion y tope de descargas).
+|
+| El throttling es propio y agresivo. Un token de 256 bits no se adivina por
+| fuerza bruta, pero un enlace filtrado si puede convertirse en un canal de
+| exfiltracion masiva; el limite acota el dano de un enlace comprometido antes
+| de que expire.
+|
+| Gracias a estas rutas el archivo en Drive JAMAS necesita el permiso "anyone
+| with the link": los bytes los sirve el POS, y por eso se pueden caducar,
+| contar y revocar.
+|
+*/
+Route::prefix('media/shared')->middleware('throttle:30,1')->group(function () {
+    Route::get('/{token}', [PublicMediaShareController::class, 'show']);
+    Route::get('/{token}/content', [PublicMediaShareController::class, 'download']);
+});
 
 Route::prefix('auth')->group(function () {
     Route::post('/login', [AuthController::class, 'login']);
@@ -169,6 +200,15 @@ Route::middleware(['auth:sanctum', 'user.active'])->group(function () {
     // Notificaciones estructuradas por tag (campana del header)
     Route::prefix('notifications')->group(function () {
         Route::get('/', [SystemNotificationController::class, 'index']);
+
+        /*
+         * Acuse masivo. Va ANTES de `{notification}/read` no por precedencia
+         * —los segmentos no colisionan— sino porque leerlo primero deja claro
+         * que existe: es la accion que el usuario busca cuando la bandeja se
+         * le acumulo. El alcance es SIEMPRE el usuario autenticado; no hay
+         * parametro que pueda ampliarlo.
+         */
+        Route::post('/read-all', [SystemNotificationController::class, 'markAllRead']);
         Route::post('/{notification}/read', [SystemNotificationController::class, 'markRead']);
     });
 
@@ -304,10 +344,119 @@ Route::middleware(['auth:sanctum', 'user.active'])->group(function () {
         Route::delete('/{cache_configuration}', [CacheConfigurationController::class, 'destroy']);
     });
 
+    /*
+    |--------------------------------------------------------------------------
+    | Modulo de Medios Enterprise
+    |--------------------------------------------------------------------------
+    |
+    | Tres familias con tres niveles de acceso, y la diferencia entre ellas no
+    | es de comodidad sino de que puede romper cada una:
+    |
+    |  - Biblioteca (lectura): cualquier usuario operativo. Un cajero necesita
+    |    ver el logo o la ficha tecnica de un producto.
+    |  - Biblioteca (escritura) y enlaces: admin y manager. Subir, renombrar,
+    |    archivar y sobre todo COMPARTIR mueve informacion fuera del sistema.
+    |  - Tipos permitidos, credenciales y auditoria: SOLO admin. La primera
+    |    define que entra al servidor, la segunda guarda la identidad contra
+    |    Google, y la tercera es la evidencia forense del modulo.
+    |
+    */
+    Route::prefix('media')->group(function () {
+
+        // Lectura de la biblioteca y de los bytes. `content` exige sesion: los
+        // archivos son privados y el POS es quien decide quien los ve.
+        Route::get('/files', [MediaLibraryController::class, 'index']);
+        Route::get('/files/{mediaFile}', [MediaLibraryController::class, 'show']);
+        Route::get('/files/{mediaFile}/content', [MediaLibraryController::class, 'content']);
+
+        Route::middleware('role:admin,manager')->group(function () {
+            /*
+             * La subida sale del cupo global de 100 req/min: cada peticion
+             * cuesta una escritura en Drive y varias llamadas de permisos, y
+             * un formulario en bucle saturaria la cuota de la API de Google
+             * mucho antes que la del servidor.
+             */
+            Route::post('/files', [MediaLibraryController::class, 'store'])
+                ->middleware('throttle:30,1');
+
+            Route::put('/files/{mediaFile}', [MediaLibraryController::class, 'update']);
+            Route::patch('/files/{mediaFile}/toggle-status', [MediaLibraryController::class, 'toggleStatus']);
+            Route::delete('/files/{mediaFile}', [MediaLibraryController::class, 'destroy']);
+
+            // Reaplica el contrato de privacidad sobre un archivo que alguien
+            // pudo haber compartido a mano desde la interfaz de Drive.
+            Route::post('/files/{mediaFile}/reapply-permissions', [MediaLibraryController::class, 'reapplyPermissions']);
+
+            Route::get('/files/{mediaFile}/share-links', [MediaShareLinkController::class, 'index']);
+            Route::post('/files/{mediaFile}/share-links', [MediaShareLinkController::class, 'store']);
+            Route::delete('/files/{mediaFile}/share-links/{shareLink}', [MediaShareLinkController::class, 'destroy']);
+        });
+
+        /*
+         * Catalogo dinamico de tipos permitidos. Solo admin: esta tabla ES la
+         * politica de subida del sistema, y habilitar una extension equivocada
+         * abre una via de entrada al servidor sin pasar por un despliegue.
+         */
+        Route::middleware('role:admin')->prefix('file-types')->group(function () {
+            Route::get('/', [AllowedFileTypeController::class, 'index']);
+            Route::get('/catalogs', [AllowedFileTypeController::class, 'catalogs']);
+            Route::post('/', [AllowedFileTypeController::class, 'store']);
+            Route::put('/{allowed_file_type}', [AllowedFileTypeController::class, 'update']);
+            Route::patch('/{allowed_file_type}/toggle-status', [AllowedFileTypeController::class, 'toggleStatus']);
+            Route::delete('/{allowed_file_type}', [AllowedFileTypeController::class, 'destroy']);
+        });
+
+        /*
+         * Credenciales de Google Drive. Solo admin, por la misma razon que el
+         * modulo de correo: estas filas guardan la identidad con la que el POS
+         * se presenta ante un tercero.
+         */
+        Route::middleware('role:admin')->prefix('drive')->group(function () {
+            Route::get('/credentials', [DriveCredentialController::class, 'show']);
+            Route::post('/credentials', [DriveCredentialController::class, 'store']);
+            Route::delete('/credentials', [DriveCredentialController::class, 'destroy']);
+
+            /*
+             * Diagnostico sincrono. Con freno propio: cada clic dispara una
+             * emision de token y una lectura de carpeta contra Google, y la
+             * cuota de esa API es un recurso compartido de la organizacion.
+             */
+            Route::post('/test-connection', [DriveCredentialController::class, 'testConnection'])
+                ->middleware('throttle:10,1');
+        });
+
+        // Visor forense. Solo lectura por diseno: la traza la escribe el
+        // servicio como efecto de acciones reales, nunca un endpoint.
+        Route::middleware('role:admin')->prefix('audit')->group(function () {
+            Route::get('/', [MediaAuditLogController::class, 'index']);
+            Route::get('/catalogs', [MediaAuditLogController::class, 'catalogs']);
+        });
+    });
+
     Route::middleware('role:admin,manager')->prefix('analytics')->group(function () {
+        /*
+         * Vista de apertura del panel: el flujo de dinero del dia EN CURSO,
+         * caja por caja. Deliberadamente sin filtros y sin cache — responde
+         * "donde esta el dinero AHORA", y una respuesta cacheada le mostraria
+         * al cajero un total anterior a la venta que acaba de cobrar.
+         */
+        Route::get('/current-day', [AnalyticsController::class, 'currentDay']);
+
+        // Opciones del bloque de Filtros Avanzados (metodos, operadores, cajas).
+        Route::get('/catalogs', [AnalyticsController::class, 'catalogs']);
+
         Route::get('/sales-by-payment', [AnalyticsController::class, 'salesByPaymentMethod']);
         Route::get('/financial-summary', [AnalyticsController::class, 'financialSummary']);
         Route::get('/daily-trend', [AnalyticsController::class, 'dailyTrend']);
+
+        /*
+         * Libro de auditoria financiera en .XLSX ESTRICTO (PhpSpreadsheet).
+         * Freno propio: cada peticion arma cuatro hojas en memoria a partir de
+         * todas las ordenes del periodo, asi que es la ruta mas cara del
+         * modulo y no debe compartir cupo con las lecturas ligeras.
+         */
+        Route::get('/export', [AnalyticsController::class, 'export'])
+            ->middleware('throttle:20,1');
     });
 
     Route::prefix('profile')->group(function () {

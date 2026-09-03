@@ -8,7 +8,19 @@
 <!--[if mso]>
 <style type="text/css">
   table { border-collapse: collapse; }
-  td { font-family: Arial, sans-serif; }
+  /*
+   * Outlook's Word engine ignores the <body> font and falls back to Times New
+   * Roman on any element that does not declare one, so this rule is what keeps
+   * the layout chrome readable there.
+   *
+   * It mirrors the <body> stack below instead of naming bare Arial: with the
+   * two out of sync, a template that sets its own font inline (as the cash
+   * closing report does, for email-client reliability) rendered its card in
+   * Segoe UI while the header badge and footer around it stayed in Arial.
+   * 'Inter' is dropped because it is a webfont Outlook cannot load, and Arial
+   * stays at the end of the chain as the fallback it always was.
+   */
+  td { font-family: 'Segoe UI', Helvetica, Arial, sans-serif; }
 </style>
 <![endif]-->
 </head>

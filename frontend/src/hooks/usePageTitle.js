@@ -23,6 +23,8 @@ const PAGE_TITLES = {
   '/admin/papelera': 'Papelera Global',
   '/admin/cierres': 'Cierres de Caja',
   '/admin/cash-closings-audit': 'Auditoria de Cierres',
+  '/admin/medios': 'Biblioteca de Medios',
+  '/admin/medios/auditoria': 'Auditoria de Medios',
   '/profile': 'Mi Perfil',
   '/profile/notifications': 'Preferencias de Notificaciones',
   '/login': 'Iniciar Sesion',

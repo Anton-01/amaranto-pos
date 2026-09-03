@@ -16,6 +16,13 @@ class DatabaseSeeder extends Seeder
 {
     public function run(): void
     {
+        /*
+         * Catalogo base de tipos de archivo permitidos del Modulo de Medios.
+         * Se siembra primero porque es la politica de subida del sistema: sin
+         * el, la biblioteca arranca sin poder aceptar ni una imagen.
+         */
+        $this->call(AllowedFileTypeSeeder::class);
+
         $admin = Role::create(['name' => 'admin']);
         Role::create(['name' => 'manager']);
         Role::create(['name' => 'vendor']);

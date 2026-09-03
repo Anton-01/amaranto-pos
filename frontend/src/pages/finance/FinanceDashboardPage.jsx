@@ -1,5 +1,4 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Calendar } from 'primereact/calendar';
 import { Tag } from 'primereact/tag';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Cell,
@@ -7,79 +6,173 @@ import {
 import { toast } from 'sonner';
 import api from '../../api/axios';
 import AppLayout from '../../components/layout/AppLayout';
-import { addDays, parseLocalYmd, toLocalYmd } from '../../lib/dates';
+import CurrentDayBreakdown from '../../components/finance/CurrentDayBreakdown';
+import FinancePeriodFilters from '../../components/finance/FinancePeriodFilters';
+import { PERIOD_PRESETS, toQueryParams } from '../../components/finance/financePeriods';
+import { parseLocalYmd } from '../../lib/dates';
 
+/*
+ * Conventional colours for the tenders every installation has, keyed by BOTH
+ * the seeded English slugs and the Spanish ones the admin panel generates when
+ * somebody adds a method by hand ("Efectivo" -> "efectivo"). Anything outside
+ * this map falls back to the rotating palette below.
+ *
+ * The chart used to hard-code `efectivo`/`tarjeta`/`transferencia` as its three
+ * bar keys, which meant it rendered nothing at all on a database seeded with
+ * `cash`/`card`/`transfer` — and rendered nothing for a fourth method however
+ * it was named. The series are now derived from the data.
+ */
 const paymentColors = {
+  cash: '#22c55e',
   efectivo: '#22c55e',
+  card: '#6366f1',
   tarjeta: '#6366f1',
+  transfer: '#f59e0b',
   transferencia: '#f59e0b',
 };
 
-const paymentLabels = {
-  efectivo: 'Efectivo',
-  tarjeta: 'Tarjeta',
-  transferencia: 'Transferencia',
-};
+/** Deterministic fallback palette for methods the map above does not name. */
+const fallbackPalette = ['#8b5cf6', '#ec4899', '#14b8a6', '#f97316', '#0ea5e9', '#84cc16'];
 
-const reasonLabels = {
-  expired: 'Caducado',
-  damaged_spilled: 'Dañado/Derramado',
-  internal_consumption: 'Consumo Interno',
-  theft_loss: 'Robo/Extravío',
-};
+function colorFor(slug, index) {
+  return paymentColors[slug] ?? fallbackPalette[index % fallbackPalette.length];
+}
 
 function fmt(n) {
   return parseFloat(n || 0).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-function CustomTooltip({ active, payload, label }) {
+function CustomTooltip({ active, payload, label, labels = {} }) {
   if (!active || !payload?.length) return null;
+
+  const total = payload.reduce((sum, p) => sum + (p.value || 0), 0);
+
   return (
-    <div className="rounded-lg border border-slate-200 bg-white p-3 shadow-lg text-xs">
+    <div className="rounded-lg border border-slate-200 bg-white p-3 text-xs shadow-lg">
       <p className="mb-1 font-semibold text-slate-700">{label}</p>
       {payload.map((p, i) => (
         <div key={i} className="flex items-center gap-2">
           <span className="h-2 w-2 rounded-full" style={{ backgroundColor: p.color }} />
-          <span className="text-slate-600">{paymentLabels[p.dataKey] || p.name}:</span>
+          <span className="text-slate-600">{labels[p.dataKey] || p.name}:</span>
           <span className="font-medium text-slate-900">${fmt(p.value)}</span>
         </div>
       ))}
+      {payload.length > 1 && (
+        <div className="mt-1 border-t border-slate-100 pt-1 font-semibold text-slate-800">
+          Total: ${fmt(total)}
+        </div>
+      )}
     </div>
   );
 }
 
 export default function FinanceDashboardPage() {
-  const today = new Date();
+  /*
+   * One filter object drives every request on this page. Holding the period
+   * and the advanced criteria together is what guarantees the chart, the
+   * summary and the exported workbook describe the same slice — the same
+   * reason the backend resolves them through a single FinanceFilters object.
+   */
+  const [filters, setFilters] = useState(() => ({
+    range: PERIOD_PRESETS[0].range(),
+    payment_method_id: null,
+    user_id: null,
+    cash_register_id: null,
+  }));
 
-  const [dateRange, setDateRange] = useState([addDays(today, -6), today]);
   const [salesData, setSalesData] = useState([]);
   const [summary, setSummary] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [exporting, setExporting] = useState(false);
+  const [deductionsComparable, setDeductionsComparable] = useState(true);
 
   const fetchData = useCallback(async () => {
-    if (!dateRange[0] || !dateRange[1]) return;
+    if (!filters.range?.[0] || !filters.range?.[1]) return;
+
     setLoading(true);
-    // Local calendar days: this page used to carry its own copy of the
-    // formatter, which is how the rule drifts. It now shares lib/dates with
-    // the rest of the app.
-    const from = toLocalYmd(dateRange[0]);
-    const to = toLocalYmd(dateRange[1]);
+    const params = toQueryParams(filters);
 
     try {
       const [salesRes, summaryRes] = await Promise.all([
-        api.get('/analytics/sales-by-payment', { params: { date_from: from, date_to: to + ' 23:59:59' } }),
-        api.get('/analytics/financial-summary', { params: { date_from: from, date_to: to + ' 23:59:59' } }),
+        api.get('/analytics/sales-by-payment', { params }),
+        api.get('/analytics/financial-summary', { params }),
       ]);
       setSalesData(salesRes.data.data);
       setSummary(summaryRes.data.data);
+      // The server decides whether the remainder is comparable under the
+      // active filters; the page only relays the verdict.
+      setDeductionsComparable(summaryRes.data.metadata?.filters?.deductions_comparable ?? true);
     } catch {
       toast.error('Error al cargar datos financieros.');
     } finally {
       setLoading(false);
     }
-  }, [dateRange]);
+  }, [filters]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
+
+  /**
+   * Downloads the .xlsx audit workbook for the criteria currently on screen.
+   *
+   * The request goes through the authenticated axios client as a blob rather
+   * than through a plain link: the endpoint requires a Bearer token, and a
+   * `window.open` would issue an unauthenticated request that comes back 401.
+   * The object URL is revoked right after the click so the workbook does not
+   * stay pinned in memory for the life of the tab.
+   */
+  const handleExport = async () => {
+    setExporting(true);
+    try {
+      const response = await api.get('/analytics/export', {
+        params: toQueryParams(filters),
+        responseType: 'blob',
+      });
+
+      const url = URL.createObjectURL(response.data);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+
+      // Honour the filename the server chose; it encodes the exported period.
+      const disposition = response.headers['content-disposition'] ?? '';
+      const match = disposition.match(/filename="?([^";]+)/);
+      anchor.download = match ? match[1] : 'reporte-financiero.xlsx';
+
+      anchor.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+
+      toast.success('Reporte generado', { description: 'El archivo .xlsx se descargó con el detalle completo.' });
+    } catch {
+      toast.error('No se pudo generar el reporte', {
+        description: 'Revisa el periodo seleccionado e intenta de nuevo.',
+      });
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  /*
+   * Series actually present in the payload, in a stable order. Deriving them
+   * means a business that renames its tenders, or adds a fourth, gets a correct
+   * chart with no code change — and the stack stops silently rendering empty
+   * when the slugs do not match a hard-coded list.
+   */
+  const paymentSeries = (() => {
+    const seen = new Map();
+
+    for (const day of salesData) {
+      for (const [slug, info] of Object.entries(day.methods ?? {})) {
+        if (!seen.has(slug)) seen.set(slug, info.name ?? slug);
+      }
+    }
+
+    return [...seen.entries()].map(([slug, name], index) => ({
+      slug,
+      name,
+      color: colorFor(slug, index),
+    }));
+  })();
+
+  const paymentLabels = Object.fromEntries(paymentSeries.map((s) => [s.slug, s.name]));
 
   const splitData = summary ? [
     {
@@ -103,27 +196,23 @@ export default function FinanceDashboardPage() {
 
   return (
     <AppLayout>
-      <div className="mb-5 flex flex-col gap-3 sm:mb-6 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:gap-4">
-        <div>
-          <h1 className="text-xl font-bold sm:text-2xl text-slate-900">Panel Financiero</h1>
-          <p className="text-sm text-slate-500">Analisis de ingresos netos con segmentacion 70/30.</p>
-        </div>
-        <div className="flex w-full items-center gap-2 sm:w-auto">
-          <Calendar
-            value={dateRange}
-            onChange={(e) => setDateRange(e.value)}
-            selectionMode="range"
-            readOnlyInput
-            dateFormat="dd/mm/yy"
-            placeholder="Seleccionar periodo"
-            className="w-full text-sm sm:w-auto"
-            pt={{
-              root: { className: 'w-full sm:w-auto' },
-              input: { root: { className: 'w-full rounded-lg border-slate-200 px-3 py-2 text-sm sm:w-56' } },
-            }}
-          />
-        </div>
+      <div className="mb-5 sm:mb-6">
+        <h1 className="text-xl font-bold sm:text-2xl text-slate-900">Panel Financiero</h1>
+        <p className="text-sm text-slate-500">Analisis de ingresos netos con segmentacion 70/30.</p>
       </div>
+
+      {/* Opening view: today's money, before any period selection applies.
+          It answers "where is the money right now", which is the only question
+          that cannot wait for a date range to be chosen. */}
+      <CurrentDayBreakdown />
+
+      <FinancePeriodFilters
+        value={filters}
+        onChange={setFilters}
+        onExport={handleExport}
+        exporting={exporting}
+        deductionsComparable={deductionsComparable}
+      />
 
       {loading ? (
         <div className="flex h-64 items-center justify-center">
@@ -192,14 +281,22 @@ export default function FinanceDashboardPage() {
                       }}
                     />
                     <YAxis tick={{ fontSize: 11, fill: '#64748b' }} tickFormatter={(v) => `$${v.toLocaleString()}`} />
-                    <Tooltip content={<CustomTooltip />} />
+                    <Tooltip content={<CustomTooltip labels={paymentLabels} />} />
                     <Legend
                       formatter={(value) => paymentLabels[value] || value}
                       wrapperStyle={{ fontSize: '12px' }}
                     />
-                    <Bar dataKey="efectivo" stackId="a" fill={paymentColors.efectivo} radius={[0, 0, 0, 0]} />
-                    <Bar dataKey="tarjeta" stackId="a" fill={paymentColors.tarjeta} radius={[0, 0, 0, 0]} />
-                    <Bar dataKey="transferencia" stackId="a" fill={paymentColors.transferencia} radius={[4, 4, 0, 0]} />
+                    {paymentSeries.map((series, index) => (
+                      <Bar
+                        key={series.slug}
+                        dataKey={series.slug}
+                        stackId="a"
+                        fill={series.color}
+                        // Only the topmost segment gets rounded corners, so the
+                        // stack reads as one bar rather than a pile of pills.
+                        radius={index === paymentSeries.length - 1 ? [4, 4, 0, 0] : [0, 0, 0, 0]}
+                      />
+                    ))}
                   </BarChart>
                 </ResponsiveContainer>
               ) : (

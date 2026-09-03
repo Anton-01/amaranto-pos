@@ -28,6 +28,8 @@ import TablesFloorPlanPage from './pages/dining/TablesFloorPlanPage';
 import TablesPage from './pages/admin/TablesPage';
 import CashClosingsAuditPage from './pages/admin/CashClosingsAuditPage';
 import JobsMonitorPage from './pages/admin/JobsMonitorPage';
+import MediaLibraryPage from './pages/admin/MediaLibraryPage';
+import MediaAuditPage from './pages/admin/MediaAuditPage';
 
 function ProtectedRoute({ children }) {
   const { user, loading } = useAuth();
@@ -138,6 +140,8 @@ export default function App() {
           <Route path="/admin/cierres" element={<ProtectedRoute><CashRegisterClosingsPage /></ProtectedRoute>} />
           <Route path="/admin/cash-closings-audit" element={<ProtectedRoute><CashClosingsAuditPage /></ProtectedRoute>} />
           <Route path="/admin/jobs-monitor" element={<ProtectedRoute><JobsMonitorPage /></ProtectedRoute>} />
+          <Route path="/admin/medios" element={<ProtectedRoute><MediaLibraryPage /></ProtectedRoute>} />
+          <Route path="/admin/medios/auditoria" element={<ProtectedRoute><MediaAuditPage /></ProtectedRoute>} />
           <Route path="/admin/notificaciones/plantillas" element={<ProtectedRoute><MailTemplatesPage /></ProtectedRoute>} />
           <Route path="*" element={<Navigate to="/login" replace />} />
         </Routes>

@@ -11,6 +11,8 @@ import PrinterSetupPanel from '../../components/settings/PrinterSetupPanel';
 import EmailNotificationsPanel from '../../components/settings/EmailNotificationsPanel';
 import CacheSettingsPanel from '../../components/settings/CacheSettingsPanel';
 import CancellationPasswordPanel from '../../components/settings/CancellationPasswordPanel';
+import AllowedFileTypesPanel from '../../components/settings/AllowedFileTypesPanel';
+import GoogleDrivePanel from '../../components/settings/GoogleDrivePanel';
 import useCronosAgent from '../../hooks/useCronosAgent';
 import { useAuth } from '../../context/AuthContext';
 
@@ -248,6 +250,25 @@ export default function SystemSettingsPage() {
           {isAdmin && (
             <TabPanel header="Caché de Módulos" pt={{ headerAction: { className: 'text-sm' } }}>
               <CacheSettingsPanel />
+            </TabPanel>
+          )}
+
+          {/*
+            Los dos paneles del Modulo de Medios son admin-only, como el de
+            correo: el primero define QUE puede entrar al servidor y el
+            segundo guarda la identidad del POS ante Google. Sus endpoints
+            exigen rol admin, asi que a un manager no se le pinta una pestana
+            cuyas peticiones volverian 403.
+          */}
+          {isAdmin && (
+            <TabPanel header="Tipos de Archivo" pt={{ headerAction: { className: 'text-sm' } }}>
+              <AllowedFileTypesPanel />
+            </TabPanel>
+          )}
+
+          {isAdmin && (
+            <TabPanel header="Google Drive" pt={{ headerAction: { className: 'text-sm' } }}>
+              <GoogleDrivePanel />
             </TabPanel>
           )}
 
