@@ -44,9 +44,26 @@ return [
     | credential path under our own control — which is the whole point of
     | storing the service account in the database.
     |
-    | `drive.file` and NOT `drive`: the token may only touch files this
-    | application created. A leaked token cannot enumerate the rest of the
-    | organization's Drive.
+    | SCOPE. The module used to request `drive.file`, which grants per-file
+    | access ONLY to objects the application itself created (or that a human
+    | explicitly opened with it through Google's own picker). That scope cannot
+    | see a folder that a person created in their own Drive and then SHARED
+    | with the service account: Drive does not answer 403 for an object outside
+    | the token's universe, it answers `404 File not found` — which reads as a
+    | wrong folder id and sends the administrator hunting for the wrong bug,
+    | even though the Editor grant is right there in the Drive UI.
+    |
+    | Since the whole setup procedure of this module is "create the root folder
+    | in Drive and share it with the service account", `drive` is the scope that
+    | matches how the module is actually deployed. The blast radius stays small
+    | for a different reason than before: a service account is a fresh identity
+    | that owns nothing and is a member of nothing, so `drive` reaches exactly
+    | the objects somebody deliberately shared with that address — the library
+    | root and its descendants — and nothing else in the organization.
+    |
+    | An installation whose root folder is created BY the application can pin
+    | the narrower scope back with MEDIA_DRIVE_SCOPE, at the cost of losing
+    | externally shared folders.
     |
     */
 
@@ -54,7 +71,11 @@ return [
         'token_endpoint' => 'https://oauth2.googleapis.com/token',
         'api_base' => 'https://www.googleapis.com/drive/v3',
         'upload_base' => 'https://www.googleapis.com/upload/drive/v3',
-        'scope' => 'https://www.googleapis.com/auth/drive.file',
+        'scope' => env('MEDIA_DRIVE_SCOPE', 'https://www.googleapis.com/auth/drive'),
+
+        // Narrow scope kept addressable by name so the diagnostic can tell an
+        // administrator which scope is in force and what it implies.
+        'narrow_scope' => 'https://www.googleapis.com/auth/drive.file',
 
         // JWT assertion lifetime requested from Google, in seconds. Google
         // caps this at one hour.

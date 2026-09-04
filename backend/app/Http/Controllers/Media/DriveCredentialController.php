@@ -48,9 +48,13 @@ class DriveCredentialController extends Controller
                     'ID de la carpeta raíz en Drive',
                 ],
                 // Echoed so the panel can tell the administrator exactly which
-                // Drive permission the service account needs, and why it is
-                // narrow: this scope cannot see files the POS did not create.
+                // Drive permission the service account is asking Google for.
+                // It is the setting that decides whether a root folder shared
+                // from somebody else's Drive is visible at all, and a 404 on
+                // the connection test is unreadable without knowing it.
                 'scope' => config('media.drive.scope'),
+                'supports_external_shared_folders' => config('media.drive.scope')
+                    !== config('media.drive.narrow_scope'),
             ],
         ]);
     }
