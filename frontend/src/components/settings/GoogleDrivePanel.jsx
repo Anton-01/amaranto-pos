@@ -235,8 +235,11 @@ export default function GoogleDrivePanel() {
             placeholder="1AbC2dEfGh3IjKlMnOp"
           />
           <p className="mt-1 text-[11px] text-slate-400">
-            El tramo que sigue a <code>/folders/</code> en la URL de Drive. Comparte esa carpeta con la
-            cuenta de servicio con permiso de <strong>Editor</strong>.
+            El tramo que sigue a <code>/folders/</code> en la URL de Drive. La carpeta debe vivir dentro de
+            una <strong>Unidad compartida</strong> y la cuenta de servicio debe ser miembro de esa unidad
+            como <strong>Administrador de contenido</strong>. Una carpeta de &quot;Mi unidad&quot;, aunque
+            esté compartida como Editor, hace que Google rechace toda subida con
+            <code> 403 storageQuotaExceeded</code>: la cuenta de servicio no tiene almacenamiento propio.
           </p>
           {fieldErrors.root_folder_id && (
             <p className="mt-1 text-xs text-rose-600">{fieldErrors.root_folder_id}</p>
@@ -262,7 +265,7 @@ export default function GoogleDrivePanel() {
       </div>
 
       {/* Health check result, itemized. A bare pass/fail would not say WHICH
-          of the four steps broke, and each one has a different fix. */}
+          of the five steps broke, and each one has a different fix. */}
       {testResult && (
         <div
           className={`rounded-lg border p-3 ${
@@ -277,6 +280,11 @@ export default function GoogleDrivePanel() {
             {checkRow('Token emitido por Google', testResult.checks?.token_minted)}
             {checkRow('Carpeta raíz alcanzable', testResult.checks?.root_folder_reachable)}
             {checkRow('Carpeta raíz con permiso de escritura', testResult.checks?.root_folder_writable)}
+            {/* The row that a passing connection used to hide: a My Drive
+                folder satisfies every check above and still cannot receive a
+                single byte, because the bytes would be billed to a service
+                account that owns no quota. */}
+            {checkRow('Carpeta raíz dentro de una Unidad compartida', testResult.checks?.root_folder_in_shared_drive)}
           </div>
           <p className={`mt-2 text-xs ${testResult.success ? 'text-emerald-800' : 'text-rose-800'}`}>
             {testResult.message}

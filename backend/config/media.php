@@ -85,6 +85,36 @@ return [
         // request never departs with a token that expires mid-flight.
         'token_leeway' => 300,
 
+        /*
+         * Shared drive requirement.
+         *
+         * A Google service account is an identity with NO storage quota of its
+         * own — not a small one, none — and Drive bills every new object to
+         * whoever owns it. Inside an ordinary "My Drive" folder the owner of an
+         * uploaded file is the service account itself, so Drive answers
+         * `403 [storageQuotaExceeded]` on the first upload of real bytes,
+         * however correctly the folder was shared and whatever parameters the
+         * request carries. Inside a Shared Drive the DRIVE owns its contents
+         * and the organization's quota pays for them, and the same upload
+         * succeeds.
+         *
+         * The trap is that a My Drive root folder passes every cheap check:
+         * it is reachable, it reports `canAddChildren`, and the module can even
+         * create its category subfolders inside it, because a folder costs zero
+         * bytes. The failure surfaces only on the first file an operator
+         * uploads. So the connection test asserts the root folder carries a
+         * `driveId` — present exclusively for objects inside a shared drive —
+         * and refuses to report a connection as healthy without it.
+         *
+         * The flag exists so an installation that has PROVEN uploads work some
+         * other way (a service account with domain-wide delegation
+         * impersonating a real user, for instance) can keep operating. It is
+         * not a way to make a red panel go green: turning it off does not grant
+         * any quota, it only postpones the same 403 to the operator's first
+         * upload.
+         */
+        'require_shared_drive' => (bool) env('MEDIA_DRIVE_REQUIRE_SHARED_DRIVE', true),
+
         // Bounded network time. A blocked egress port must fail in seconds
         // with a readable message, not hang until PHP's default timeout.
         'timeout' => (int) env('MEDIA_DRIVE_TIMEOUT', 20),

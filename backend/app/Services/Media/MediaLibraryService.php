@@ -161,6 +161,11 @@ class MediaLibraryService
             'size_bytes' => $media->size_bytes,
             'checksum' => $checksum,
             'drive_folder_id' => $stored['drive_folder_id'],
+            // Null means the object landed in a My Drive folder, which is the
+            // storage model that eventually fails with a quota 403. Recording
+            // it makes the audit trail able to answer "when did this start"
+            // instead of only "it is failing now".
+            'shared_drive_id' => $stored['shared_drive_id'] ?? null,
             'visibility' => $media->visibility,
             'permissions_after_upload' => count($stored['permissions']),
         ], $actor);
