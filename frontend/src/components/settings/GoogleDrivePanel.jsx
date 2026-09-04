@@ -24,7 +24,12 @@ import { formatDateTime } from '../../lib/mediaPreview';
  */
 export default function GoogleDrivePanel() {
   const [credential, setCredential] = useState(null);
-  const [meta, setMeta] = useState({ is_configured: false, missing: [], scope: '' });
+  const [meta, setMeta] = useState({
+    is_configured: false,
+    missing: [],
+    scope: '',
+    supports_external_shared_folders: false,
+  });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
@@ -179,8 +184,12 @@ export default function GoogleDrivePanel() {
         <p className="text-xs leading-relaxed text-sky-900">
           Las credenciales se guardan <strong>cifradas</strong> en la base de datos con la llave de la
           aplicación, y nunca vuelven al navegador. El alcance solicitado a Google es{' '}
-          <code className="font-mono text-[10px]">{meta.scope}</code>: el token solo puede tocar los
-          archivos que este POS creó, no el resto del Drive de la organización.
+          <code className="font-mono text-[10px]">{meta.scope}</code>
+          {meta.supports_external_shared_folders
+            ? ': la cuenta de servicio alcanza únicamente lo que alguien le compartió expresamente a '
+              + 'su correo — la carpeta raíz de la biblioteca y lo que cuelga de ella.'
+            : ': el token solo puede tocar los archivos que este POS creó, así que NO podrá ver una '
+              + 'carpeta raíz creada por una persona y compartida con la cuenta de servicio.'}
         </p>
       </div>
 

@@ -230,6 +230,13 @@ class GoogleDriveService
      * setup screen. So the check also reads the folder and asserts
      * `canAddChildren`.
      *
+     * The folder read is the step that most often fails with Google's least
+     * helpful answer. Drive does not distinguish "this id does not exist" from
+     * "this id is outside your token's reach": both are `404 File not found`.
+     * That is why a 404 here is not repeated verbatim but expanded into the
+     * checklist of causes — sharing grant, id shape, OAuth scope — together
+     * with the folders the account can actually see.
+     *
      * It never throws: it returns a diagnostic array for every outcome, so the
      * controller can answer 422 with the provider's own words instead of
      * turning a misconfiguration into a 500.
@@ -312,8 +319,15 @@ class GoogleDriveService
 
             $checks['root_folder_writable'] = true;
         } catch (GoogleDriveException $e) {
-            return $this->testFailure($checks, $e->getMessage(), $e->context['stage'] ?? 'drive', $startedAt, $e->statusCode);
+            return $this->reportDriveFailure($credential, $checks, $e, $startedAt);
         } catch (Throwable $e) {
+            Log::error('Fallo inesperado al probar la conexión con Google Drive.', [
+                'client_email' => $credential->client_email,
+                'root_folder_id' => $credential->root_folder_id,
+                'exception' => $e::class,
+                'error' => $e->getMessage(),
+            ]);
+
             return $this->testFailure($checks, $e->getMessage(), 'unexpected', $startedAt);
         }
 
@@ -323,6 +337,120 @@ class GoogleDriveService
             'error' => null,
             'elapsed_ms' => (int) ((microtime(true) - $startedAt) * 1000),
         ];
+    }
+
+    /**
+     * Turns a Drive failure raised during the health check into a diagnosis an
+     * administrator can act on, and leaves a full record of it in the log.
+     *
+     * The two statuses worth translating are the ones that arrive with the
+     * root folder configured and the token already minted, because Google's own
+     * wording actively misleads there:
+     *
+     * - 404 "File not found" does NOT mean the id does not exist. Drive reports
+     *   every object outside the token's reach as absent, so a folder shared
+     *   with the service account an hour ago still reads as 404 when the OAuth
+     *   scope cannot see externally shared objects, or when the grant landed on
+     *   a different address than the one signing these requests.
+     * - 403 means the folder IS visible but this account may not write into it.
+     *
+     * @param  array<string, mixed>  $checks
+     * @return array{success: bool, checks: array<string, mixed>, error: array<string, mixed>, elapsed_ms: int}
+     */
+    private function reportDriveFailure(
+        DriveCredential $credential,
+        array $checks,
+        GoogleDriveException $e,
+        float $startedAt,
+    ): array {
+        // The client stamps a stage only on the token and signing paths; a
+        // failure that got past a minted token is by construction the folder
+        // read, which is the whole rest of this check.
+        $stage = $e->context['stage'] ?? ($checks['token_minted'] === true ? 'root_folder' : 'drive');
+
+        $message = $e->getMessage();
+        $visibleFolders = [];
+
+        if ($stage === 'root_folder' && $e->statusCode === 404) {
+            $visibleFolders = $this->client->listAccessibleFolders($credential);
+            $message = $this->explainUnreachableRootFolder($credential, $e, $visibleFolders);
+        }
+
+        if ($stage === 'root_folder' && $e->statusCode === 403) {
+            $message = 'Google Drive negó el acceso (403) a la carpeta raíz "'.$credential->root_folder_id.'". '
+                .'La cuenta de servicio ('.$credential->client_email.') alcanza la carpeta pero no tiene el '
+                .'permiso que la operación necesita. Compártela con esa dirección con rol de Editor. '
+                .'Respuesta de Google: '.$e->getMessage();
+        }
+
+        Log::error('Prueba de conexión con Google Drive fallida.', [
+            'stage' => $stage,
+            'status_code' => $e->statusCode,
+            // Google's reason code separates a genuinely wrong id from an
+            // unreachable one; both surface as HTTP 404.
+            'google_reason' => $e->context['reason'] ?? null,
+            'google_message' => $e->getMessage(),
+            'client_email' => $credential->client_email,
+            'root_folder_id' => $credential->root_folder_id,
+            // Recorded on every failure because it is the single setting that
+            // decides whether an externally shared folder is visible at all,
+            // and it is invisible from the panel.
+            'oauth_scope' => config('media.drive.scope'),
+            'shared_drive_params' => 'supportsAllDrives=true, includeItemsFromAllDrives=true, corpora=allDrives',
+            'folders_visible_to_service_account' => $visibleFolders,
+            'drive_path' => $e->context['path'] ?? null,
+        ]);
+
+        return $this->testFailure($checks, $message, $stage, $startedAt, $e->statusCode);
+    }
+
+    /**
+     * The 404 message, written as the checklist the administrator has to walk.
+     *
+     * Ordered by how often each cause is the real one, and it names the account
+     * and the scope in force because neither is visible from the settings
+     * panel — an operator cannot check a sharing grant against an address they
+     * have not been told.
+     *
+     * @param  array<int, array{id: string, name: string}>  $visibleFolders
+     */
+    private function explainUnreachableRootFolder(
+        DriveCredential $credential,
+        GoogleDriveException $e,
+        array $visibleFolders,
+    ): string {
+        $scope = (string) config('media.drive.scope');
+        $narrowScope = (string) config('media.drive.narrow_scope');
+
+        $message = 'Google Drive respondió 404 (File not found) al leer la carpeta raíz "'
+            .$credential->root_folder_id.'". Drive reporta como inexistente cualquier objeto que el token '
+            .'no alcanza, así que un 404 aquí casi nunca significa que el ID esté mal escrito. Revisa, en '
+            .'este orden: '
+            .'1) que la carpeta esté compartida con '.$credential->client_email.' con permiso de Editor '
+            .'(compartir la carpeta padre no alcanza si la carpeta se movió después de compartirse); '
+            .'2) que el ID sea el tramo que sigue a /folders/ en la URL de la carpeta, sin parámetros ni '
+            .'"?usp=sharing"; '
+            .'3) que la carpeta no haya sido eliminada o movida a otra unidad por su propietario.';
+
+        if ($scope === $narrowScope) {
+            $message .= ' AVISO: el alcance OAuth en uso es '.$narrowScope.', que solo alcanza archivos '
+                .'creados por esta aplicación y NUNCA verá una carpeta compartida desde fuera, por más '
+                .'permisos de Editor que tenga la cuenta. Para una carpeta compartida externamente el '
+                .'alcance debe ser https://www.googleapis.com/auth/drive (variable MEDIA_DRIVE_SCOPE).';
+        }
+
+        if ($visibleFolders === []) {
+            $message .= ' La cuenta de servicio no ve NINGUNA carpeta en Drive en este momento, lo que '
+                .'apunta a que el paso de compartir nunca llegó a aplicarse sobre esta cuenta.';
+        } else {
+            $names = collect($visibleFolders)
+                ->map(fn (array $folder) => $folder['name'].' ('.$folder['id'].')')
+                ->implode(', ');
+
+            $message .= ' Carpetas que esta cuenta SÍ alcanza: '.$names.'.';
+        }
+
+        return $message.' Respuesta literal de Google: '.$e->getMessage();
     }
 
     /**

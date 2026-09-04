@@ -7486,10 +7486,34 @@ Dos detalles que cuestan horas de diagnóstico si faltan:
   administrador que su llave válida es inválida es peor que arreglarlo en la
   frontera.
 
-**El scope es `drive.file`, no `drive`.** El token solo puede tocar objetos que
-esta aplicación creó. Un token filtrado de la caché no puede enumerar, leer ni
-destruir el resto del Drive de la organización — esa es la diferencia entre un
-incidente y una catástrofe.
+**El scope pasó de `drive.file` a `drive`, y esa fue la causa raíz del 404.**
+`drive.file` concede acceso *por archivo* únicamente a los objetos que esta
+aplicación creó. La carpeta raíz de la biblioteca no la crea el POS: la crea una
+persona en su propio Drive y la **comparte** con el correo de la Service
+Account. Bajo `drive.file` esa carpeta sencillamente no forma parte del universo
+del token — y Drive **no responde 403 para lo que está fuera del universo del
+token, responde `404 File not found`**. De ahí el fallo que parecía imposible:
+el permiso de Editor está puesto y visible en la UI de Drive, y la API insiste
+en que la carpeta no existe. Ningún parámetro de la petición lo arregla, porque
+el problema no está en la petición sino en lo que el token puede ver.
+
+El alcance vive ahora en `MEDIA_DRIVE_SCOPE` con defecto
+`https://www.googleapis.com/auth/drive`. El radio de daño sigue siendo estrecho,
+por una razón distinta a la anterior: una Service Account es una identidad nueva
+que no posee nada ni pertenece a nada, así que `drive` alcanza exactamente lo que
+alguien compartió a propósito con esa dirección —la carpeta raíz y su
+descendencia— y nada más de la organización. Una instalación cuya carpeta raíz
+la cree la propia aplicación puede volver al alcance estrecho poniendo
+`MEDIA_DRIVE_SCOPE=https://www.googleapis.com/auth/drive.file`, a cambio de
+perder las carpetas compartidas desde fuera.
+
+**Los parámetros de unidades compartidas ya estaban, y no eran el problema.**
+Toda llamada lleva `supportsAllDrives=true`; toda **búsqueda** lleva además
+`includeItemsFromAllDrives=true` y `corpora=allDrives`, los tres juntos porque
+Drive solo honra `corpora=allDrives` cuando los otros dos están presentes, y
+omitir cualquiera de ellos reduce la búsqueda a la unidad privada de la cuenta de
+servicio en silencio. `ensureFolder()` los centraliza en `searchScopeParams()`
+para que ninguna consulta futura pueda quedarse a medias.
 
 **Diagnóstico síncrono que verifica TRES cosas, no una.** Emitir un token prueba
 que la llave firma y la cuenta existe, y nada más. Los dos fallos que de verdad
@@ -7502,6 +7526,7 @@ o un 403 que nadie conecta con la pantalla de configuración. Por eso el
 | Escenario | Resultado |
 |---|---|
 | Carpeta correcta y escribible | ✅ éxito |
+| Carpeta inalcanzable (404) | ❌ checklist ordenada: compartición con el `client_email`, forma del ID, carpeta movida o eliminada; más el alcance OAuth en uso y **la lista de carpetas que esa cuenta sí alcanza** |
 | Carpeta visible pero sin permiso de Editor | ❌ *"puede ver la carpeta pero no escribir en ella. Compártela con esa dirección…"* |
 | El ID apunta a un archivo, no a una carpeta | ❌ *"no corresponde a una carpeta de Drive, sino a un archivo"* |
 | Carpeta en la papelera de Drive | ❌ *"está en la papelera… Restáurala"* |
@@ -7513,6 +7538,24 @@ controlador lo traduce a **HTTP 422** con las palabras textuales de Google. 422 
 no 500 a propósito: la petición estaba bien formada y la aplicación hizo justo lo
 que se le pidió; lo que falló es la configuración bajo prueba, y un ID mal
 tecleado no es un incidente de plataforma.
+
+**El 404 es la única respuesta de Google que el módulo NO repite tal cual.** Es
+la respuesta que Drive da tanto a un ID inventado como a un objeto que existe
+pero está fuera del alcance del token, y esas dos situaciones se arreglan de
+formas opuestas. `reportDriveFailure()` la expande en la checklist ordenada por
+frecuencia real, nombra el `client_email` que firma las peticiones —el
+administrador no puede verificar una compartición contra una dirección que nadie
+le dijo— y añade, consultando Drive, **las carpetas que esa cuenta sí alcanza**:
+una lista vacía dice que la compartición nunca llegó a aplicarse; una lista que
+no contiene el ID configurado dice que el ID es de otra carpeta. Si el alcance
+en vigor es el estrecho, el mensaje lo señala explícitamente como causa.
+
+**El log dejó de ser un `warning` sin contexto.** Tanto el diagnóstico como la
+subida registran ahora, en `error`: código HTTP, el `reason` de Google, el
+`client_email`, el `root_folder_id`, **el alcance OAuth en vigor** y los
+parámetros de unidades compartidas enviados. El alcance es invisible desde el
+panel y es justamente el dato que decide si una carpeta externa se ve; sin él en
+la línea de log, el 404 se vuelve a investigar desde cero cada vez.
 
 ### 63.4 Protección de recursos en la nube
 
@@ -7728,6 +7771,7 @@ un despliegue, y **no** debe poder elevar los techos duros desde el navegador.
 | Variable | Defecto | Qué controla |
 |---|---|---|
 | `MEDIA_MAX_UPLOAD_KB` | `25600` | Techo absoluto de la plataforma (25 MB) |
+| `MEDIA_DRIVE_SCOPE` | `…/auth/drive` | Alcance OAuth pedido a Google. El defecto es el que permite usar una carpeta raíz compartida desde otro Drive; `…/auth/drive.file` la vuelve invisible |
 | `MEDIA_DRIVE_TIMEOUT` | `20` | Segundos de red por llamada a Drive |
 | `MEDIA_DRIVE_CONNECT_TIMEOUT` | `8` | Segundos para establecer conexión |
 | `MEDIA_DRIVE_UPLOAD_TIMEOUT` | `120` | Segundos para subidas y descargas |
@@ -7744,7 +7788,9 @@ segundos terminando en un error legible es estrictamente mejor.
 2. En Google Drive: crear la carpeta raíz de la biblioteca y **compartirla con el
    `client_email` de la Service Account con permiso de _Editor_**. Sin este paso
    el token se emite pero ninguna subida funciona — y es lo que detecta el
-   diagnóstico.
+   diagnóstico. Compartir la carpeta **padre** no basta si la carpeta raíz se
+   movió después de compartirse, y compartirla con una dirección distinta a la
+   del JSON cargado produce el mismo 404 que no haberla compartido.
 3. POS → *Configuración → Google Drive* → pegar el JSON, poner el ID de la
    carpeta (el tramo tras `/folders/` en la URL) y las cuentas autorizadas de
    lectura → **Probar conexión** → Guardar.
@@ -7793,7 +7839,8 @@ segundos terminando en un error legible es estrictamente mejor.
   KEY`; el modelo la descifra; la serialización JSON del modelo no expone ninguna
   de las tres columnas secretas.
 - **JWT** — firma RS256 verificada con la mitad pública de la llave, tal como
-  haría Google; `iat` retrasado 10 s; scope `drive.file`.
+  haría Google; `iat` retrasado 10 s; el scope viaja en la aserción tal como lo
+  resuelve `config('media.drive.scope')`.
 - **Endurecimiento de permisos** — de 4 permisos iniciales se revocan `anyone` y
   `domain`, sobrevive el propietario y se añade el lector autorizado.
 - **Diagnóstico (6 escenarios)** — cada uno con su mensaje accionable distinto.
@@ -7808,6 +7855,17 @@ segundos terminando en un error legible es estrictamente mejor.
   sesión** y token inválido → 404 genérico.
 - **Frontend** — `npm run build` exitoso; sin advertencias de dependencias de
   hooks en los archivos del módulo.
+
+**Ajuste del 404 en carpetas compartidas.** Verificado por análisis estático:
+`php -l` limpio en los cinco archivos PHP tocados (`config/media.php`,
+`GoogleDriveClient`, `GoogleDriveService`, `MediaLibraryService`,
+`DriveCredentialController`) y el panel `GoogleDrivePanel.jsx` parsea sin errores.
+**Pendiente de verificar contra Google**: el viaje real a la API exige la Service
+Account y la carpeta compartida, así que la confirmación definitiva es pulsar
+*Configuración → Google Drive → Probar conexión* con las credenciales reales. Si
+el 404 persistiera tras el cambio de alcance, el mensaje ahora nombra la causa
+concreta y el log lleva alcance, `client_email`, `reason` de Google y la lista de
+carpetas alcanzables.
 
 ---
 

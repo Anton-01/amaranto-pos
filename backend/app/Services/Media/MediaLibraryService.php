@@ -79,13 +79,43 @@ class MediaLibraryService
         $checksum = hash('sha256', $contents);
         $storageName = $this->buildStorageName($file, $policy);
 
-        $stored = $this->drive->upload(
-            $credential,
-            $contents,
-            $storageName,
-            $policy->mime_type,
-            $policy->category,
-        );
+        try {
+            $stored = $this->drive->upload(
+                $credential,
+                $contents,
+                $storageName,
+                $policy->mime_type,
+                $policy->category,
+            );
+        } catch (GoogleDriveException $e) {
+            /*
+             * The upload is where a half-configured connection finally bites,
+             * often hours after the setup screen was last opened. Google's own
+             * text alone ("File not found") is not enough to act on, because a
+             * root folder that is unreachable — not shared with this address,
+             * or outside the OAuth scope's reach — is reported exactly like a
+             * folder id that was never valid. The identity, the folder and the
+             * scope in force are recorded together so the log line answers the
+             * question instead of starting the investigation.
+             */
+            Log::error('Google Drive rechazó una subida de la biblioteca de medios.', [
+                'status_code' => $e->statusCode,
+                'google_reason' => $e->context['reason'] ?? null,
+                'google_message' => $e->getMessage(),
+                'client_email' => $credential->client_email,
+                'root_folder_id' => $credential->root_folder_id,
+                'oauth_scope' => config('media.drive.scope'),
+                'category' => $policy->category,
+                'storage_name' => $storageName,
+                'hint' => $e->statusCode === 404
+                    ? 'Un 404 con la carpeta raíz configurada suele significar que la carpeta no está '
+                        .'compartida con la cuenta de servicio, o que el alcance OAuth no alcanza carpetas '
+                        .'compartidas desde fuera. Usa Configuración → Google Drive → Probar conexión.'
+                    : null,
+            ]);
+
+            throw $e;
+        }
 
         $dimensions = $this->resolveDimensions($file, $policy);
 

@@ -27,10 +27,19 @@ use Throwable;
  * short-lived access token. The token is cached, keyed by credential row, so a
  * burst of uploads costs one token exchange rather than one per file.
  *
- * SCOPE. `drive.file` and not `drive`: the token may only touch objects this
- * application created. A token leaked from the cache cannot enumerate, read or
- * destroy the rest of the organization's Drive — which is the difference
- * between an incident and a catastrophe.
+ * SCOPE. Requested from `config('media.drive.scope')`. It defaults to `drive`
+ * and no longer to `drive.file`, because `drive.file` grants per-file access
+ * only to objects this application created: a root folder a person created in
+ * their own Drive and then shared with the service account is simply not part
+ * of that token's universe, and Drive reports objects outside the universe as
+ * `404 File not found` rather than 403 — the misconfiguration that looks like
+ * a mistyped folder id. See config/media.php for the trade-off.
+ *
+ * SHARED DRIVES. Every call carries `supportsAllDrives=true`, and every search
+ * additionally carries `includeItemsFromAllDrives=true` with `corpora=allDrives`.
+ * Without them Drive silently confines the request to the service account's own
+ * My Drive, so a root folder living in a shared drive — or shared into the
+ * account from outside — reads as absent instead of as unreachable.
  */
 class GoogleDriveClient
 {
@@ -199,11 +208,9 @@ class GoogleDriveClient
         $existing = $this->request($credential, 'get', '/files', [
             'q' => "name = '{$escaped}' and mimeType = 'application/vnd.google-apps.folder' "
                 ."and '{$parentId}' in parents and trashed = false",
-            'fields' => 'files(id,name)',
+            'fields' => 'files(id,name,driveId)',
             'pageSize' => 1,
-            'supportsAllDrives' => 'true',
-            'includeItemsFromAllDrives' => 'true',
-        ]);
+        ] + $this->searchScopeParams());
 
         $found = $existing->json('files.0.id');
 
@@ -430,16 +437,82 @@ class GoogleDriveClient
      * folder exists AND is reachable by this account — the two things an
      * administrator most often gets wrong.
      *
+     * `supportsAllDrives=true` is what lets this resolve an id that lives in a
+     * shared drive instead of in the service account's own My Drive. It does
+     * NOT, by itself, make an externally shared folder visible: that depends on
+     * the OAuth scope, which is why a 404 here is read as a scope/sharing
+     * problem and not only as a wrong id.
+     *
      * @return array<string, mixed>
      *
      * @throws GoogleDriveException
      */
-    public function getFile(DriveCredential $credential, string $fileId, string $fields = 'id,name,mimeType,trashed,capabilities(canAddChildren)'): array
+    public function getFile(DriveCredential $credential, string $fileId, string $fields = 'id,name,mimeType,trashed,driveId,capabilities(canAddChildren)'): array
     {
         return (array) $this->request($credential, 'get', "/files/{$fileId}", [
             'fields' => $fields,
             'supportsAllDrives' => 'true',
         ])->json();
+    }
+
+    /**
+     * Folders this service account can actually reach right now, across My
+     * Drive, "Shared with me" and every shared drive.
+     *
+     * Diagnostic only, and deliberately so: it is the answer to the question an
+     * administrator staring at a 404 really has — "does this account see ANY of
+     * my folders?". An empty list means the sharing step never took effect (or
+     * the scope is too narrow to observe it); a list that does not contain the
+     * configured id means the id belongs to a different folder than the one
+     * that was shared.
+     *
+     * Returns an empty array on failure instead of throwing: a diagnostic that
+     * can itself blow up would replace the real error with its own.
+     *
+     * @return array<int, array{id: string, name: string}>
+     */
+    public function listAccessibleFolders(DriveCredential $credential, int $limit = 10): array
+    {
+        try {
+            $response = $this->request($credential, 'get', '/files', [
+                'q' => "mimeType = 'application/vnd.google-apps.folder' and trashed = false",
+                'fields' => 'files(id,name)',
+                'pageSize' => max(1, min($limit, 100)),
+            ] + $this->searchScopeParams());
+        } catch (Throwable) {
+            return [];
+        }
+
+        return collect((array) ($response->json('files') ?? []))
+            ->map(fn ($folder) => [
+                'id' => (string) ($folder['id'] ?? ''),
+                'name' => (string) ($folder['name'] ?? ''),
+            ])
+            ->filter(fn (array $folder) => $folder['id'] !== '')
+            ->values()
+            ->all();
+    }
+
+    /**
+     * Query parameters that stop a search from being confined to the service
+     * account's private storage.
+     *
+     * All three travel together because Drive requires them to: `corpora` is
+     * only honoured for `allDrives` when `includeItemsFromAllDrives` and
+     * `supportsAllDrives` are both true, and dropping any one of them quietly
+     * narrows the search back to My Drive. That silent narrowing is what makes
+     * a folder shared from outside — the normal setup for this module — look
+     * like it does not exist.
+     *
+     * @return array<string, string>
+     */
+    private function searchScopeParams(): array
+    {
+        return [
+            'corpora' => 'allDrives',
+            'includeItemsFromAllDrives' => 'true',
+            'supportsAllDrives' => 'true',
+        ];
     }
 
     /**
@@ -488,11 +561,31 @@ class GoogleDriveClient
             throw new GoogleDriveException(
                 $this->describeFailure($response, 'Google Drive respondió con un error'),
                 $response->status(),
-                ['path' => $path, 'method' => $method],
+                [
+                    'path' => $path,
+                    'method' => $method,
+                    // Google's reason code is carried up untouched because it
+                    // is often the entire diagnosis: `notFound` on a folder the
+                    // administrator can see in their browser means the account
+                    // cannot reach it, not that the id is wrong.
+                    'reason' => $this->failureReason($response),
+                ],
             );
         }
 
         return $response;
+    }
+
+    /**
+     * Google's machine-readable reason code for a failed call, when it sent one.
+     */
+    private function failureReason(Response $response): ?string
+    {
+        $body = $response->json();
+
+        $reason = is_array($body) ? ($body['error']['errors'][0]['reason'] ?? null) : null;
+
+        return is_string($reason) && $reason !== '' ? $reason : null;
     }
 
     /**
