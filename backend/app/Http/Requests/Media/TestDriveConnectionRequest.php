@@ -14,7 +14,8 @@ class TestDriveConnectionRequest extends FormRequest
     /**
      * Everything is optional because the health check runs on what is TYPED in
      * the form, falling back to what is stored for the fields the form cannot
-     * repopulate (the service account JSON never comes back to the browser).
+     * repopulate (a client secret and a refresh token never come back to the
+     * browser).
      *
      * That is what lets an administrator validate a credential BEFORE
      * persisting it — the whole reason a synchronous test exists.
@@ -23,7 +24,9 @@ class TestDriveConnectionRequest extends FormRequest
     {
         return [
             'credential_id' => ['nullable', 'uuid', 'exists:drive_credentials,id'],
-            'service_account_json' => ['nullable', 'string', 'max:20000'],
+            'client_id' => ['nullable', 'string', 'max:255'],
+            'client_secret' => ['nullable', 'string', 'max:255'],
+            'refresh_token' => ['nullable', 'string', 'max:2048'],
             'root_folder_id' => ['nullable', 'string', 'max:120', 'regex:/^[A-Za-z0-9_-]+$/'],
             'authorized_emails' => ['sometimes', 'array', 'max:50'],
             'authorized_emails.*' => ['email'],

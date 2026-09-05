@@ -17,24 +17,27 @@ use Throwable;
  * correctly" means. Everything above it (controllers, the library service)
  * talks to this class and never builds a Drive request by hand.
  *
- * THE STORAGE MODEL IS A SHARED DRIVE, AND THAT IS NOT A PREFERENCE. A service
- * account is an identity with no storage quota of its own. Every object it
- * creates needs an owner who pays for the bytes, and in an ordinary My Drive
- * folder that owner is the service account itself — so Drive answers
- * `403 [storageQuotaExceeded]` on the first real upload, no matter how
- * correctly the folder was shared and no matter which request parameters are
- * sent. Inside a shared drive the drive owns its contents and the organization
- * pays for them, and the same upload succeeds. That is why this class checks
- * for a `driveId` on the root folder before declaring a connection healthy,
- * and why it translates that specific 403 into the one instruction that fixes
- * it instead of repeating Google's wording.
+ * THE STORAGE MODEL IS THE OWNER'S OWN DRIVE. The module authenticates with an
+ * OAuth 2.0 refresh token issued by the person who owns the Drive, so every
+ * file it creates belongs to that person and consumes the Google One plan they
+ * already pay for. That is a deliberate replacement for the service account
+ * this module started with: a service account owns no storage quota at all, so
+ * Drive answered `403 [storageQuotaExceeded]` on the first real upload no
+ * matter how the folder was shared, and the documented remedy — a Shared Drive
+ * that owns its own contents — is a Google Workspace feature that a personal
+ * account does not have.
+ *
+ * The consequence for this class is that a quota 403 is no longer a structural
+ * impossibility to be explained away; it now means what it says, that the
+ * owner's Drive is genuinely full, and translateQuotaFailure() says so with the
+ * numbers to prove it.
  */
 class GoogleDriveService
 {
     /**
      * Google's reason code for "the owner of these bytes has no room left".
-     * For a service account that is not a transient condition to retry, it is
-     * a permanent property of the identity — see translateQuotaFailure().
+     * Under user-context OAuth this is a real, fixable storage condition —
+     * see translateQuotaFailure().
      */
     private const REASON_QUOTA_EXCEEDED = 'storageQuotaExceeded';
 
@@ -45,12 +48,13 @@ class GoogleDriveService
      * hardened.
      *
      * The order is deliberate: upload first, then lock the permissions, then
-     * report. Drive creates a file owned by the service account and not shared
-     * with anyone, so the window between the two calls is not a public window —
-     * the hardening step exists to remove any inherited grant and to add the
-     * explicitly authorized corporate readers, not to close a hole.
+     * report. Drive creates the file owned by the authorizing account and shared
+     * with nobody, so the window between the two calls is not a public window —
+     * the hardening step exists to strip any grant the parent folder passed down
+     * and to add the explicitly authorized corporate readers, not to close a
+     * hole.
      *
-     * @return array{drive_file_id: string, drive_folder_id: string, shared_drive_id: string|null, visibility: string, permissions: array<int, array<string, mixed>>}
+     * @return array{drive_file_id: string, drive_folder_id: string, visibility: string, permissions: array<int, array<string, mixed>>}
      *
      * @throws GoogleDriveException
      */
@@ -91,10 +95,6 @@ class GoogleDriveService
         return [
             'drive_file_id' => $driveFileId,
             'drive_folder_id' => $folderId,
-            // Present only for objects inside a shared drive. Recorded on the
-            // way out so a support call can confirm the storage model from the
-            // upload's own receipt rather than from a re-read.
-            'shared_drive_id' => is_string($uploaded['driveId'] ?? null) ? $uploaded['driveId'] : null,
             'visibility' => $hardening['visibility'],
             'permissions' => $hardening['permissions'],
         ];
@@ -103,12 +103,21 @@ class GoogleDriveService
     /**
      * Rewrites the quota 403 into the instruction that actually resolves it.
      *
-     * Google's own words here are `The user's Drive storage quota has been
-     * exceeded`, which sends an administrator to check a Drive that is 2% full
-     * and to widen sharing grants that were never the problem. The real
-     * statement is narrower and unintuitive: the service account has NO quota,
-     * has never had any, and cannot be given any — the bytes have to belong to
-     * a shared drive instead.
+     * THIS FAILURE CHANGED MEANING when the module moved from a service account
+     * to a user-context OAuth grant, and the message had to change with it.
+     * Under the service account it was structural and unfixable — that identity
+     * owns no storage at all, so the 403 arrived on a Drive with terabytes free
+     * and the only remedy was a Shared Drive, which a personal Google One
+     * account does not have. Under an owner's own refresh token the same code
+     * means the plain thing it says: that account is out of room.
+     *
+     * So the translation stops explaining an impossibility and states the
+     * numbers instead. `about` is consulted for the real usage and limit
+     * because "your Drive is full" is not actionable without them — the owner
+     * needs to know whether they are 40 GB over or 200 MB over before choosing
+     * between deleting files and buying storage. It degrades to the message
+     * without figures if that probe fails, since a diagnostic must never
+     * replace the failure it is describing.
      *
      * Any other Drive failure is passed through untouched: paraphrasing a
      * `notFound` or a permissions error into a storage explanation would be
@@ -120,60 +129,112 @@ class GoogleDriveService
             return $e;
         }
 
-        Log::error('Subida rechazada por cuota: la carpeta destino no pertenece a una unidad compartida.', [
-            'client_email' => $credential->client_email,
+        $quota = $this->readQuota($credential);
+
+        Log::error('Subida rechazada por cuota: la cuenta de Google que autorizó la conexión está llena.', [
+            'account_email' => $credential->account_email,
             'root_folder_id' => $credential->root_folder_id,
-            'root_shared_drive_id' => $this->client->driveIdOf($credential, (string) $credential->root_folder_id),
+            'storage_usage' => $quota['usage'],
+            'storage_limit' => $quota['limit'],
             'google_message' => $e->getMessage(),
         ]);
 
         return new GoogleDriveException(
             'Google Drive rechazó la subida por cuota de almacenamiento (403 storageQuotaExceeded). '
-                .'La cuenta de servicio ('.$credential->client_email.') no posee almacenamiento propio, así que '
-                .'cualquier archivo que cree dentro de una carpeta de "Mi unidad" queda a nombre de una cuenta con '
-                .'cero bytes disponibles — compartir la carpeta con permiso de Editor no lo cambia. '
-                .'Solución: crea una Unidad compartida en Google Drive, agrega a '.$credential->client_email
-                .' como Administrador de contenido o Colaborador, mueve la carpeta raíz de la biblioteca dentro de '
-                .'esa unidad y actualiza el ID de la carpeta raíz. Dentro de una unidad compartida los archivos '
-                .'pertenecen a la unidad y consumen la cuota de la organización, no la de la cuenta de servicio.',
+                .'La cuenta que autorizó la conexión ('.$credential->identityLabel().') ya no tiene espacio '
+                .'disponible'.$this->describeQuota($quota).'. '
+                .'Los archivos de la biblioteca pertenecen a esa cuenta y consumen su plan, así que la '
+                .'solución es liberar espacio en ella (incluida la papelera de Drive y los adjuntos de '
+                .'Gmail) o ampliar el plan de Google One. Cambiar los permisos de la carpeta raíz no '
+                .'modifica quién paga los bytes.',
             $e->statusCode,
-            $e->context + ['stage' => 'upload', 'remedy' => 'shared_drive'],
+            $e->context + ['stage' => 'upload', 'remedy' => 'free_storage'],
             $e,
         );
+    }
+
+    /**
+     * Storage usage of the authorizing account, or nulls when it cannot be read.
+     *
+     * Never throws: every caller uses this to enrich a message, and a probe that
+     * can blow up would replace the real diagnosis with its own.
+     *
+     * @return array{limit: int|null, usage: int|null}
+     */
+    private function readQuota(DriveCredential $credential): array
+    {
+        try {
+            $about = $this->client->about($credential);
+        } catch (Throwable) {
+            return ['limit' => null, 'usage' => null];
+        }
+
+        return ['limit' => $about['limit'], 'usage' => $about['usage']];
+    }
+
+    /**
+     * Human phrasing of a storage reading, or an empty string when Drive did
+     * not answer.
+     *
+     * A missing `limit` is not a gap in the data: Google omits it on unlimited
+     * plans, and saying so is more useful than printing nothing.
+     *
+     * @param  array{limit: int|null, usage: int|null}  $quota
+     */
+    private function describeQuota(array $quota): string
+    {
+        if ($quota['usage'] === null) {
+            return '';
+        }
+
+        if ($quota['limit'] === null) {
+            return ' (uso actual: '.$this->humanBytes($quota['usage']).', plan sin límite declarado)';
+        }
+
+        return ' ('.$this->humanBytes($quota['usage']).' de '.$this->humanBytes($quota['limit']).' usados)';
+    }
+
+    /** Byte count as the units a person reads on Google's own storage page. */
+    private function humanBytes(int $bytes): string
+    {
+        $units = ['B', 'KB', 'MB', 'GB', 'TB'];
+        $index = 0;
+        $value = (float) $bytes;
+
+        while ($value >= 1024 && $index < count($units) - 1) {
+            $value /= 1024;
+            $index++;
+        }
+
+        return round($value, $index > 1 ? 2 : 0).' '.$units[$index];
     }
 
     /**
      * Enforces this module's privacy contract on one object.
      *
      * WHAT IT REMOVES. Every grant of type `anyone` (Drive's "anyone with the
-     * link") and every grant of type `domain` (visible to a whole Workspace
-     * domain). Those are the two shapes that make a file readable by somebody
-     * who simply walks the folder structure — the exact leak this module was
-     * asked to prevent.
+     * link") and every grant of type `domain` (visible to a whole domain).
+     * Those are the two shapes that make a file readable by somebody who simply
+     * walks the folder structure — the exact leak this module was asked to
+     * prevent. Under user-context OAuth they are a live risk rather than a
+     * theoretical one: the library now lives inside a real person's Drive,
+     * where a parent folder may well have been shared with a link years ago,
+     * and a new child inherits that reach.
      *
-     * WHAT IT KEEPS. The service account's own ownership, and any explicit
-     * per-user grant. Deleting an owner permission is refused by Drive anyway,
-     * and deleting a corporate reader we ourselves granted would fight the
+     * WHAT IT KEEPS. The owner's own ownership, and any explicit per-user
+     * grant. Deleting an owner permission is refused by Drive anyway, and
+     * deleting a corporate reader we ourselves granted would fight the
      * administrator's configuration.
-     *
-     * WHAT IT CANNOT REMOVE, AND SAYS SO. A grant INHERITED from the shared
-     * drive belongs to the drive, not to the file: Drive refuses to delete it
-     * from a child and the fix is a change to the drive's own sharing settings,
-     * which is outside this application's authority. Attempting the deletion
-     * anyway would spend a request to earn a 403 and would report the same
-     * outcome less clearly, so an inherited public grant is skipped, logged
-     * with what has to change and where, and counted against the file's
-     * reported visibility.
-     *
-     * WHAT IT ADDS. A reader grant for each address in `authorized_emails`, so
-     * the accounting team can open the file with their own Google identity
-     * without the POS ever making it public.
      *
      * WHY IT DOES NOT THROW ON A FAILED REVOCATION. A single permission that
      * refuses to disappear must not abort an upload whose bytes are already in
      * Drive — that would leave an orphan object with no library row. The
      * failure is logged and reflected in the returned visibility, so the file
      * is reported for what it is instead of being silently trusted.
+     *
+     * WHAT IT ADDS. A reader grant for each address in `authorized_emails`, so
+     * the accounting team can open the file with their own Google identity
+     * without the POS ever making it public.
      *
      * @return array{visibility: string, permissions: array<int, array<string, mixed>>, removed: int, granted: int}
      *
@@ -200,23 +261,6 @@ class GoogleDriveService
                 continue;
             }
 
-            if (($permission['permissionDetails'][0]['inherited'] ?? false) === true) {
-                $publicRemains = true;
-
-                Log::warning(
-                    'Permiso público heredado de la Unidad compartida: no se puede revocar desde el archivo.',
-                    [
-                        'drive_file_id' => $driveFileId,
-                        'permission_id' => $permissionId,
-                        'permission_type' => $type,
-                        'remedy' => 'Cambia el acceso general de la Unidad compartida en Google Drive: '
-                            .'mientras la unidad completa sea pública, todo archivo nuevo nacerá público.',
-                    ],
-                );
-
-                continue;
-            }
-
             try {
                 $this->client->deletePermission($credential, $driveFileId, $permissionId);
                 $removed++;
@@ -228,6 +272,8 @@ class GoogleDriveService
                     'permission_id' => $permissionId,
                     'permission_type' => $type,
                     'error' => $e->getMessage(),
+                    'remedy' => 'Revisa el acceso general de la carpeta raíz en Drive: mientras la carpeta '
+                        .'padre siga compartida por enlace, cada archivo nuevo nacerá alcanzable.',
                 ]);
             }
         }
@@ -240,8 +286,8 @@ class GoogleDriveService
                 $granted++;
             } catch (Throwable $e) {
                 // A single unreachable corporate account (a typo, a suspended
-                // Workspace user) is a configuration problem, not a reason to
-                // fail an upload that already succeeded.
+                // account) is a configuration problem, not a reason to fail an
+                // upload that already succeeded.
                 Log::warning('No se pudo otorgar lectura a una cuenta autorizada de Drive.', [
                     'drive_file_id' => $driveFileId,
                     'email' => $email,
@@ -316,32 +362,30 @@ class GoogleDriveService
      * Synchronous health check of a connection, run against credentials that
      * may not be persisted yet.
      *
-     * WHY IT VERIFIES FOUR THINGS AND NOT ONE. Minting a token proves the key
-     * signs and the account exists — and nothing more. The three failures that
+     * WHY IT VERIFIES FIVE THINGS AND NOT ONE. Redeeming the refresh token
+     * proves the OAuth triplet is intact — and nothing more. The failures that
      * actually break this module in production are a root folder id that does
-     * not exist, a root folder that exists but was never SHARED with the
-     * service account, and a root folder that is shared correctly but sits in
-     * somebody's My Drive; all three mint a token happily and then fail on the
-     * first upload, hours later, with a 404 or a 403 nobody connects back to
-     * the setup screen. So the check also reads the folder, asserts
-     * `canAddChildren`, and asserts that the folder belongs to a shared drive.
+     * not exist, a folder that exists but belongs to a DIFFERENT Google account
+     * than the one that authorized the grant, and an account whose storage is
+     * already full; all three redeem a token happily and then fail on the first
+     * upload, hours later, with a 404 or a 403 nobody connects back to the
+     * setup screen.
      *
-     * THE SHARED DRIVE ASSERTION IS THE ONE THAT CANNOT BE INFERRED LATER. A My
-     * Drive folder shared with the service account passes every other check in
-     * this method — it is reachable, it is writable, subfolders can even be
-     * created inside it, because a folder costs zero bytes. It fails only when
-     * the first real file is uploaded, with `403 [storageQuotaExceeded]`,
-     * because the service account owns no quota and there is no request
-     * parameter that changes who owns a new object. Reading `driveId` here is
-     * what moves that failure from the operator's first upload to the setup
-     * screen where it can be fixed.
+     * THE IDENTITY CHECK IS THE ONE THAT CANNOT BE INFERRED LATER. A refresh
+     * token carries no readable identity, so nothing on this screen reveals
+     * that the token was minted while signed into a personal Gmail account
+     * while the folder id was copied from a work account. Asking Drive `about`
+     * turns that invisible mismatch into a named address the administrator can
+     * compare, and returns the storage figures in the same call — which is the
+     * number that matters now that the bytes are billed to a real person with a
+     * finite plan.
      *
      * The folder read is the step that most often fails with Google's least
      * helpful answer. Drive does not distinguish "this id does not exist" from
      * "this id is outside your token's reach": both are `404 File not found`.
      * That is why a 404 here is not repeated verbatim but expanded into the
-     * checklist of causes — sharing grant, id shape, OAuth scope — together
-     * with the folders the account can actually see.
+     * checklist of causes — wrong Google account, id shape, OAuth scope —
+     * together with the folders the grant can actually see.
      *
      * It never throws: it returns a diagnostic array for every outcome, so the
      * controller can answer 422 with the provider's own words instead of
@@ -355,9 +399,9 @@ class GoogleDriveService
         $checks = [
             'credentials_complete' => false,
             'token_minted' => false,
+            'account_identified' => false,
             'root_folder_reachable' => false,
             'root_folder_writable' => false,
-            'root_folder_in_shared_drive' => false,
         ];
 
         $missing = $credential->missingPieces();
@@ -379,23 +423,52 @@ class GoogleDriveService
 
         try {
             // An unsaved model has no id to key the cache with, and a saved one
-            // may be carrying a token minted by the key being replaced. Either
-            // way the check must exercise the credential in front of it, so the
-            // cached token is dropped first.
+            // may be carrying a token minted by the refresh token being
+            // replaced. Either way the check must exercise the credential in
+            // front of it, so the cached token is dropped first.
             $credential->forgetAccessToken();
 
             $this->client->accessToken($credential);
             $checks['token_minted'] = true;
 
+            $about = $this->client->about($credential);
+
+            $checks['account_identified'] = filled($about['email']);
+            $checks['account_email'] = $about['email'];
+            $checks['storage_usage'] = $about['usage'];
+            $checks['storage_limit'] = $about['limit'];
+            $checks['storage_available'] = $about['limit'] === null || $about['usage'] === null
+                ? null
+                : max(0, $about['limit'] - $about['usage']);
+
+            // Recorded on the model so the panel names the account on load and
+            // every later log line can say WHO the connection speaks as. The
+            // candidate may be unsaved; the controller decides what to persist.
+            $credential->account_email = $about['email'] ?? $credential->account_email;
+
+            if ($about['limit'] !== null && $about['usage'] !== null && $about['usage'] >= $about['limit']) {
+                return $this->testFailure(
+                    $checks,
+                    'La cuenta '.$credential->identityLabel().' autentica correctamente, pero su '
+                        .'almacenamiento está agotado'
+                        .$this->describeQuota(['limit' => $about['limit'], 'usage' => $about['usage']]).'. '
+                        .'Los archivos de la biblioteca se guardan a nombre de esa cuenta, así que toda '
+                        .'subida sería rechazada con 403 storageQuotaExceeded. Libera espacio (incluida la '
+                        .'papelera de Drive y los adjuntos de Gmail) o amplía el plan de Google One.',
+                    'storage_quota',
+                    $startedAt,
+                );
+            }
+
             $folder = $this->client->getFile(
                 $credential,
                 (string) $credential->root_folder_id,
-                'id,name,mimeType,trashed,driveId,capabilities(canAddChildren)',
+                'id,name,mimeType,trashed,ownedByMe,capabilities(canAddChildren)',
             );
 
             $checks['root_folder_reachable'] = true;
             $checks['root_folder_name'] = $folder['name'] ?? null;
-            $checks['shared_drive_id'] = is_string($folder['driveId'] ?? null) ? $folder['driveId'] : null;
+            $checks['root_folder_owned'] = (bool) ($folder['ownedByMe'] ?? false);
 
             if (($folder['mimeType'] ?? null) !== 'application/vnd.google-apps.folder') {
                 return $this->testFailure(
@@ -418,39 +491,20 @@ class GoogleDriveService
             if (($folder['capabilities']['canAddChildren'] ?? false) !== true) {
                 return $this->testFailure(
                     $checks,
-                    'La cuenta de servicio ('.$credential->client_email.') puede ver la carpeta pero no escribir en ella. '
-                        .'Compártela con esa dirección con permiso de Editor desde Google Drive.',
+                    'La cuenta '.$credential->identityLabel().' puede ver la carpeta pero no escribir en ella. '
+                        .'Si la carpeta pertenece a otra persona, pídele permiso de Editor; lo más simple es '
+                        .'crear la carpeta raíz dentro del Drive de la cuenta que autorizó esta conexión.',
                     'root_folder',
                     $startedAt,
                 );
             }
 
             $checks['root_folder_writable'] = true;
-
-            if (blank($checks['shared_drive_id'])) {
-                $checks['root_folder_in_shared_drive'] = false;
-
-                // Strict by default, because in every deployment shape this
-                // module supports the next upload of real bytes WILL fail. The
-                // escape hatch exists only for an installation that has proven
-                // otherwise — a service account with delegated impersonation,
-                // say — and must not be flipped to make a red panel go green.
-                if ((bool) config('media.drive.require_shared_drive', true)) {
-                    return $this->testFailure(
-                        $checks,
-                        $this->explainMyDriveRootFolder($credential),
-                        'shared_drive',
-                        $startedAt,
-                    );
-                }
-            } else {
-                $checks['root_folder_in_shared_drive'] = true;
-            }
         } catch (GoogleDriveException $e) {
             return $this->reportDriveFailure($credential, $checks, $e, $startedAt);
         } catch (Throwable $e) {
             Log::error('Fallo inesperado al probar la conexión con Google Drive.', [
-                'client_email' => $credential->client_email,
+                'account_email' => $credential->account_email,
                 'root_folder_id' => $credential->root_folder_id,
                 'exception' => $e::class,
                 'error' => $e->getMessage(),
@@ -471,16 +525,18 @@ class GoogleDriveService
      * Turns a Drive failure raised during the health check into a diagnosis an
      * administrator can act on, and leaves a full record of it in the log.
      *
-     * The two statuses worth translating are the ones that arrive with the
-     * root folder configured and the token already minted, because Google's own
-     * wording actively misleads there:
+     * The statuses worth translating are the ones Google words misleadingly:
      *
+     * - A token-stage failure is the OAuth triplet, never the folder. The
+     *   client already expands `invalid_grant` and `invalid_client` into their
+     *   real causes, so that text is passed through as it stands.
      * - 404 "File not found" does NOT mean the id does not exist. Drive reports
-     *   every object outside the token's reach as absent, so a folder shared
-     *   with the service account an hour ago still reads as 404 when the OAuth
-     *   scope cannot see externally shared objects, or when the grant landed on
-     *   a different address than the one signing these requests.
-     * - 403 means the folder IS visible but this account may not write into it.
+     *   every object outside the token's reach as absent, so a folder sitting in
+     *   the administrator's browser still reads as 404 when the refresh token
+     *   was issued by a different Google account, or when the OAuth scope cannot
+     *   see objects this application did not create.
+     * - 403 means the folder IS visible but this account may not write into it —
+     *   or, with a `storageQuotaExceeded` reason, that the account is full.
      *
      * @param  array<string, mixed>  $checks
      * @return array{success: bool, checks: array<string, mixed>, error: array<string, mixed>, elapsed_ms: int}
@@ -491,10 +547,16 @@ class GoogleDriveService
         GoogleDriveException $e,
         float $startedAt,
     ): array {
-        // The client stamps a stage only on the token and signing paths; a
-        // failure that got past a minted token is by construction the folder
-        // read, which is the whole rest of this check.
-        $stage = $e->context['stage'] ?? ($checks['token_minted'] === true ? 'root_folder' : 'drive');
+        // The client stamps a stage only on the token path, so the rest is
+        // inferred from the call that failed. The distinction matters: a 404
+        // raised by the identity probe must NOT be dressed up as the root
+        // folder checklist, which would send the administrator to inspect a
+        // folder that was never read.
+        $stage = $e->context['stage'] ?? match (true) {
+            ($e->context['path'] ?? null) === '/about' => 'account',
+            $checks['token_minted'] === true => 'root_folder',
+            default => 'drive',
+        };
 
         $message = $e->getMessage();
         $visibleFolders = [];
@@ -506,36 +568,36 @@ class GoogleDriveService
 
         if ($stage === 'root_folder' && $e->statusCode === 403) {
             // The two 403s arrive at the same place and need opposite fixes:
-            // one is about who may touch the folder, the other about who pays
-            // for the bytes. Google's HTTP status does not separate them; its
-            // reason code does.
+            // one is about who may touch the folder, the other about who has
+            // room for the bytes. Google's HTTP status does not separate them;
+            // its reason code does.
             $message = ($e->context['reason'] ?? null) === self::REASON_QUOTA_EXCEEDED
-                ? $this->explainMyDriveRootFolder($credential).' Respuesta de Google: '.$e->getMessage()
+                ? 'La cuenta '.$credential->identityLabel().' no tiene espacio disponible en Drive'
+                    .$this->describeQuota($this->readQuota($credential)).'. Libera espacio o amplía el '
+                    .'plan de Google One. Respuesta de Google: '.$e->getMessage()
                 : 'Google Drive negó el acceso (403) a la carpeta raíz "'.$credential->root_folder_id.'". '
-                    .'La cuenta de servicio ('.$credential->client_email.') alcanza la carpeta pero no tiene el '
-                    .'permiso que la operación necesita. Compártela con esa dirección con rol de Editor. '
-                    .'Respuesta de Google: '.$e->getMessage();
+                    .'La cuenta '.$credential->identityLabel().' alcanza la carpeta pero no tiene el permiso '
+                    .'que la operación necesita. Pide permiso de Editor a su propietario, o usa una carpeta '
+                    .'creada por la propia cuenta autorizada. Respuesta de Google: '.$e->getMessage();
         }
 
         Log::error('Prueba de conexión con Google Drive fallida.', [
             'stage' => $stage,
             'status_code' => $e->statusCode,
             // Google's reason code separates a genuinely wrong id from an
-            // unreachable one; both surface as HTTP 404.
+            // unreachable one; both surface as HTTP 404. At the token stage it
+            // separates a revoked grant (`invalid_grant`) from a wrong OAuth
+            // application (`invalid_client`).
             'google_reason' => $e->context['reason'] ?? null,
             'google_message' => $e->getMessage(),
-            'client_email' => $credential->client_email,
+            'client_id' => $credential->client_id,
+            'account_email' => $credential->account_email,
             'root_folder_id' => $credential->root_folder_id,
             // Recorded on every failure because it is the single setting that
-            // decides whether an externally shared folder is visible at all,
-            // and it is invisible from the panel.
+            // decides whether a folder created by hand is visible at all, and
+            // it is invisible from the panel.
             'oauth_scope' => config('media.drive.scope'),
-            'shared_drive_params' => 'supportsAllDrives=true, includeItemsFromAllDrives=true, corpora=allDrives',
-            // Null here means the root folder is NOT in a shared drive, which
-            // is the quota failure waiting to happen; it is recorded on every
-            // failure because it reframes several of them.
-            'root_shared_drive_id' => $checks['shared_drive_id'] ?? null,
-            'folders_visible_to_service_account' => $visibleFolders,
+            'folders_visible_to_account' => $visibleFolders,
             'drive_path' => $e->context['path'] ?? null,
         ]);
 
@@ -543,56 +605,15 @@ class GoogleDriveService
     }
 
     /**
-     * The message for a root folder that is configured, shared, and still
-     * unusable, because it lives in a My Drive instead of a shared drive.
-     *
-     * It is written as a procedure rather than as a diagnosis on purpose. The
-     * finding itself ("the service account has no storage quota") is true but
-     * unactionable to somebody looking at a Drive with 2 TB free, and the
-     * instinctive next moves — widening the sharing grant, upgrading the
-     * Workspace plan, emptying the trash — all fail. The only fix is to change
-     * WHERE the folder lives, so the message spells out those four steps.
-     */
-    private function explainMyDriveRootFolder(DriveCredential $credential): string
-    {
-        $visibleFolders = $this->client->listAccessibleFolders($credential);
-
-        $sharedDriveFolders = collect($visibleFolders)
-            ->filter(fn (array $folder) => ($folder['shared_drive'] ?? false) === true)
-            ->map(fn (array $folder) => $folder['name'].' ('.$folder['id'].')')
-            ->implode(', ');
-
-        // The sentence deliberately does not claim the folder is writable. This
-        // message is also used for a quota 403 raised before that was
-        // established, and a diagnosis that asserts something it did not verify
-        // is how an administrator stops trusting the whole panel.
-        $message = 'La carpeta raíz "'.$credential->root_folder_id.'" NO pertenece a una Unidad compartida: '
-            .'está en la "Mi unidad" de una persona. '
-            .'Una cuenta de servicio no tiene almacenamiento propio, así que todo archivo que cree '
-            .'ahí queda a nombre de una cuenta con cero bytes y Google responde '
-            .'403 [storageQuotaExceeded] en la primera subida real — sin importar los permisos de la '
-            .'carpeta. Para corregirlo: '
-            .'1) crea una Unidad compartida en Google Drive; '
-            .'2) agrega a '.$credential->client_email.' como Administrador de contenido (o Colaborador); '
-            .'3) mueve o vuelve a crear la carpeta de la biblioteca DENTRO de esa unidad; '
-            .'4) actualiza aquí el ID de la carpeta raíz y vuelve a probar la conexión.';
-
-        if ($sharedDriveFolders !== '') {
-            $message .= ' Carpetas en Unidades compartidas que esta cuenta ya alcanza: '.$sharedDriveFolders.'.';
-        }
-
-        return $message;
-    }
-
-    /**
      * The 404 message, written as the checklist the administrator has to walk.
      *
-     * Ordered by how often each cause is the real one, and it names the account
-     * and the scope in force because neither is visible from the settings
-     * panel — an operator cannot check a sharing grant against an address they
-     * have not been told.
+     * Ordered by how often each cause is the real one. Under user-context OAuth
+     * the first cause is new and is now the most common of all: the refresh
+     * token was generated while signed into one Google account and the folder
+     * id was copied from another. Nothing on the settings screen reveals that
+     * on its own, which is why the authorizing address is named here.
      *
-     * @param  array<int, array{id: string, name: string, shared_drive: bool}>  $visibleFolders
+     * @param  array<int, array{id: string, name: string, owned: bool}>  $visibleFolders
      */
     private function explainUnreachableRootFolder(
         DriveCredential $credential,
@@ -606,29 +627,30 @@ class GoogleDriveService
             .$credential->root_folder_id.'". Drive reporta como inexistente cualquier objeto que el token '
             .'no alcanza, así que un 404 aquí casi nunca significa que el ID esté mal escrito. Revisa, en '
             .'este orden: '
-            .'1) que la carpeta esté compartida con '.$credential->client_email.' con permiso de Editor '
-            .'(compartir la carpeta padre no alcanza si la carpeta se movió después de compartirse); '
+            .'1) que el Refresh Token se haya generado con la MISMA cuenta de Google dueña de la carpeta '
+            .'(esta conexión autentica como '.$credential->identityLabel().'); '
             .'2) que el ID sea el tramo que sigue a /folders/ en la URL de la carpeta, sin parámetros ni '
             .'"?usp=sharing"; '
-            .'3) que la carpeta no haya sido eliminada o movida a otra unidad por su propietario.';
+            .'3) que la carpeta no haya sido eliminada ni movida por su propietario.';
 
         if ($scope === $narrowScope) {
             $message .= ' AVISO: el alcance OAuth en uso es '.$narrowScope.', que solo alcanza archivos '
-                .'creados por esta aplicación y NUNCA verá una carpeta compartida desde fuera, por más '
-                .'permisos de Editor que tenga la cuenta. Para una carpeta compartida externamente el '
-                .'alcance debe ser https://www.googleapis.com/auth/drive (variable MEDIA_DRIVE_SCOPE).';
+                .'creados por esta aplicación y NUNCA verá una carpeta que la persona creó a mano en su '
+                .'Drive. Para ese caso el alcance debe ser https://www.googleapis.com/auth/drive '
+                .'(variable MEDIA_DRIVE_SCOPE).';
         }
 
         if ($visibleFolders === []) {
-            $message .= ' La cuenta de servicio no ve NINGUNA carpeta en Drive en este momento, lo que '
-                .'apunta a que el paso de compartir nunca llegó a aplicarse sobre esta cuenta.';
+            $message .= ' La cuenta autorizada no ve NINGUNA carpeta en Drive en este momento, lo que '
+                .'apunta a que el token pertenece a una cuenta distinta de la que se pretendía autorizar.';
         } else {
-            // The shared-drive marker is part of the list because a reachable
-            // folder in a My Drive is not an answer to this problem: pointing
-            // the module at one would trade the 404 for a quota 403.
+            // Ownership is part of the list because a folder somebody else
+            // shared is not an answer to this problem: its children are billed
+            // to that other person, so pointing the module at one would trade
+            // the 404 for a quota failure that is not even ours to fix.
             $names = collect($visibleFolders)
                 ->map(fn (array $folder) => $folder['name'].' ('.$folder['id'].')'
-                    .(($folder['shared_drive'] ?? false) ? ' [Unidad compartida]' : ' [Mi unidad]'))
+                    .(($folder['owned'] ?? false) ? ' [propia]' : ' [compartida por terceros]'))
                 ->implode(', ');
 
             $message .= ' Carpetas que esta cuenta SÍ alcanza: '.$names.'.';

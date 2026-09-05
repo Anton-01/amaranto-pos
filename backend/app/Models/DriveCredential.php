@@ -7,16 +7,23 @@ use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Support\Facades\Cache;
-use Throwable;
 
 /**
- * Google Drive service account credentials, held encrypted in the database.
+ * Google Drive OAuth 2.0 grant, held encrypted in the database.
  *
- * The secret columns go through Laravel's `encrypted` cast, so a database dump
- * yields ciphertext, and they are listed in `$hidden` so no controller can
+ * IDENTITY MODEL. The connection is a USER-CONTEXT grant — a client id, a
+ * client secret and a refresh token issued by the owner of the Drive — and no
+ * longer a service account key. A service account owns no storage quota, so
+ * every byte it wrote was billed to an account with zero bytes and Drive
+ * answered `403 [storageQuotaExceeded]`; the documented workaround, a Shared
+ * Drive, does not exist on a personal Google One account. Acting AS the owner
+ * makes the uploads belong to them and consume the plan they already pay for.
+ *
+ * The two secret columns go through Laravel's `encrypted` cast, so a database
+ * dump yields ciphertext, and they are listed in `$hidden` so no controller can
  * leak them by returning the model. The browser only ever sees the derived
- * `has_*` booleans and the client email — enough to recognize which account is
- * loaded, useless for impersonating it.
+ * `has_*` booleans, the client id and the authorizing account's email — enough
+ * to recognize which connection is loaded, useless for impersonating it.
  */
 class DriveCredential extends Model
 {
@@ -27,12 +34,10 @@ class DriveCredential extends Model
 
     protected $fillable = [
         'label',
-        'service_account_json',
-        'client_email',
-        'project_id',
+        'account_email',
         'client_id',
         'client_secret',
-        'private_key',
+        'refresh_token',
         'root_folder_id',
         'authorized_emails',
         'is_active',
@@ -43,27 +48,24 @@ class DriveCredential extends Model
     ];
 
     /**
-     * The three columns that can impersonate the service account. None of them
-     * has any business reaching the browser, not even truncated.
+     * The two columns that can act on the owner's Drive. Neither has any
+     * business reaching the browser, not even truncated.
      */
     protected $hidden = [
-        'service_account_json',
         'client_secret',
-        'private_key',
+        'refresh_token',
     ];
 
     protected $appends = [
-        'has_service_account',
-        'has_private_key',
         'has_client_secret',
+        'has_refresh_token',
     ];
 
     protected function casts(): array
     {
         return [
-            'service_account_json' => 'encrypted',
             'client_secret' => 'encrypted',
-            'private_key' => 'encrypted',
+            'refresh_token' => 'encrypted',
             'authorized_emails' => 'array',
             'is_active' => 'boolean',
             'last_tested_at' => 'datetime',
@@ -99,15 +101,16 @@ class DriveCredential extends Model
     }
 
     /**
-     * True when the row carries everything the JWT signer needs: an issuer
-     * identity, a signing key and a destination folder. A row missing any of
-     * the three would fail at the first API call, so it is rejected up front
-     * with a message naming what is absent.
+     * True when the row carries everything a token exchange needs: the OAuth
+     * client pair, the grant issued against it, and a destination folder. A row
+     * missing any of the four would fail at the first API call, so it is
+     * rejected up front with a message naming what is absent.
      */
     public function isUsable(): bool
     {
-        return filled($this->client_email)
-            && filled($this->private_key)
+        return filled($this->client_id)
+            && filled($this->client_secret)
+            && filled($this->refresh_token)
             && filled($this->root_folder_id);
     }
 
@@ -119,50 +122,11 @@ class DriveCredential extends Model
     public function missingPieces(): array
     {
         return collect([
-            'Correo de la Service Account' => $this->client_email,
-            'Llave privada (JSON de la Service Account)' => $this->private_key,
+            'Client ID de OAuth' => $this->client_id,
+            'Client Secret de OAuth' => $this->client_secret,
+            'Refresh Token' => $this->refresh_token,
             'ID de la carpeta raíz en Drive' => $this->root_folder_id,
         ])->filter(fn ($value) => blank($value))->keys()->all();
-    }
-
-    /**
-     * Fills client_email, project_id and private_key out of a pasted service
-     * account JSON.
-     *
-     * WHY DENORMALIZE. The signer needs the private key on every token refresh
-     * and the UI needs the issuer on every page load. Decrypting and parsing
-     * the whole JSON document for that would be work on a hot path, and would
-     * put the full credential in memory far more often than necessary.
-     *
-     * Returns false when the payload is not a usable service account key, so
-     * the caller can answer 422 instead of persisting something that will only
-     * fail later against Google.
-     */
-    public function fillFromServiceAccountJson(string $json): bool
-    {
-        try {
-            $decoded = json_decode($json, true, 512, JSON_THROW_ON_ERROR);
-        } catch (Throwable) {
-            return false;
-        }
-
-        if (! is_array($decoded) || blank($decoded['client_email'] ?? null) || blank($decoded['private_key'] ?? null)) {
-            return false;
-        }
-
-        $this->service_account_json = $json;
-        $this->client_email = $decoded['client_email'];
-        $this->private_key = $decoded['private_key'];
-        $this->project_id = $decoded['project_id'] ?? null;
-
-        // The JSON also carries the OAuth client id. Keeping it lets the panel
-        // show the same identifier Google Cloud displays, without a second
-        // field for the administrator to copy by hand.
-        if (blank($this->client_id) && filled($decoded['client_id'] ?? null)) {
-            $this->client_id = $decoded['client_id'];
-        }
-
-        return true;
     }
 
     /**
@@ -183,29 +147,38 @@ class DriveCredential extends Model
     }
 
     /**
+     * Label for this connection in logs and diagnostics.
+     *
+     * The authorizing account is resolved from Drive itself on every connection
+     * test, so it is normally present; before the first test there is only the
+     * client id, which still identifies WHICH OAuth application is speaking.
+     */
+    public function identityLabel(): string
+    {
+        return filled($this->account_email)
+            ? (string) $this->account_email
+            : 'la cuenta autorizada del Client ID '.($this->client_id ?: 'sin configurar');
+    }
+
+    /**
      * Drops the cached OAuth token of this connection.
      *
-     * Called on every credential write: after a key rotation the token minted
-     * by the previous key is still inside its one-hour window and would keep
-     * working, which would make a revocation look like it had not applied.
+     * Called on every credential write: after a rotation the token minted by
+     * the previous refresh token is still inside its one-hour window and would
+     * keep working, which would make a revocation look like it had not applied.
      */
     public function forgetAccessToken(): void
     {
         Cache::forget(self::TOKEN_CACHE_PREFIX.$this->id);
     }
 
-    public function getHasServiceAccountAttribute(): bool
-    {
-        return filled($this->service_account_json);
-    }
-
-    public function getHasPrivateKeyAttribute(): bool
-    {
-        return filled($this->private_key);
-    }
-
     public function getHasClientSecretAttribute(): bool
     {
         return filled($this->client_secret);
+    }
+
+    public function getHasRefreshTokenAttribute(): bool
+    {
+        return filled($this->refresh_token);
     }
 }

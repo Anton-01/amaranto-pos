@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { InputText } from 'primereact/inputtext';
-import { InputTextarea } from 'primereact/inputtextarea';
+import { Password } from 'primereact/password';
 import { Chips } from 'primereact/chips';
 import { Button } from 'primereact/button';
 import { Tag } from 'primereact/tag';
@@ -11,16 +11,23 @@ import { formatDateTime } from '../../lib/mediaPreview';
 /**
  * Google Drive connection panel.
  *
- * THE ONE UI RULE THAT MATTERS HERE: the service account JSON is write-only.
- * The API never returns it, so the textarea always loads empty, and an empty
- * textarea on save means "keep the credential you already have". Rotating
- * requires deliberately pasting a new document — which is what stops an
- * administrator from wiping a working connection while editing the reader list.
+ * THE CONNECTION IS AN OAUTH 2.0 USER GRANT, not a service account. The three
+ * fields below — Client ID, Client Secret, Refresh Token — let the POS act AS
+ * the owner of the Drive, so uploaded files belong to that person and consume
+ * the Google One plan they already pay for. The previous service account owned
+ * no storage of its own and Google answered `403 storageQuotaExceeded` on every
+ * upload, with no fix available on a personal account.
+ *
+ * THE ONE UI RULE THAT MATTERS HERE: the two secrets are write-only. The API
+ * never returns them, so their inputs always load empty, and an empty input on
+ * save means "keep the value you already have". Rotating requires deliberately
+ * pasting a new value — which is what stops an administrator from wiping a
+ * working connection while editing the folder id or the reader list.
  *
  * The status strip states what is MISSING rather than a bare configured
- * yes/no, because the common failure is a half-configured row: a valid key with
- * no root folder authenticates perfectly and then fails at the first upload,
- * with an error that points nowhere near this screen.
+ * yes/no, because the common failure is a half-configured row: a valid token
+ * with no root folder authenticates perfectly and then fails at the first
+ * upload, with an error that points nowhere near this screen.
  */
 export default function GoogleDrivePanel() {
   const [credential, setCredential] = useState(null);
@@ -28,7 +35,7 @@ export default function GoogleDrivePanel() {
     is_configured: false,
     missing: [],
     scope: '',
-    supports_external_shared_folders: false,
+    supports_manual_folders: false,
   });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -38,7 +45,9 @@ export default function GoogleDrivePanel() {
 
   const [form, setForm] = useState({
     label: 'Google Drive',
-    service_account_json: '',
+    client_id: '',
+    client_secret: '',
+    refresh_token: '',
     root_folder_id: '',
     authorized_emails: [],
   });
@@ -53,8 +62,12 @@ export default function GoogleDrivePanel() {
       if (res.data) {
         setForm({
           label: res.data.label ?? 'Google Drive',
-          // Always empty: see the class docblock.
-          service_account_json: '',
+          // Not a secret: it identifies the OAuth application and is useless
+          // without the pair it belongs to, so it round-trips normally.
+          client_id: res.data.client_id ?? '',
+          // Always empty: see the component docblock.
+          client_secret: '',
+          refresh_token: '',
           root_folder_id: res.data.root_folder_id ?? '',
           authorized_emails: res.data.authorized_emails ?? [],
         });
@@ -91,7 +104,9 @@ export default function GoogleDrivePanel() {
 
   /**
    * Runs the health check on what is TYPED, not on what is stored, so a
-   * credential can be validated before being persisted.
+   * credential can be validated before being persisted. The secrets are sent
+   * only when they carry a new value; otherwise the server falls back to the
+   * stored ones, exactly as saving does.
    */
   const handleTest = async () => {
     setTesting(true);
@@ -99,7 +114,9 @@ export default function GoogleDrivePanel() {
     try {
       const result = await mediaApi.testDriveConnection({
         credential_id: credential?.id ?? undefined,
-        service_account_json: form.service_account_json || undefined,
+        client_id: form.client_id || undefined,
+        client_secret: form.client_secret || undefined,
+        refresh_token: form.refresh_token || undefined,
         root_folder_id: form.root_folder_id || undefined,
         authorized_emails: form.authorized_emails,
       });
@@ -111,8 +128,8 @@ export default function GoogleDrivePanel() {
       setTestResult({
         success: false,
         checks: data?.data?.checks ?? {},
-        // Google's own words, passed through: an "insufficientFilePermissions"
-        // and a "File not found" call for different fixes.
+        // Google's own words, passed through: an "invalid_grant" and a
+        // "File not found" call for different fixes.
         message: data?.message ?? 'La prueba de conexión falló.',
       });
       toast.error('La prueba falló', { description: data?.message });
@@ -129,6 +146,15 @@ export default function GoogleDrivePanel() {
     </div>
   );
 
+  /**
+   * Placeholder of a write-only field: it has to say that leaving the box empty
+   * PRESERVES the stored secret, because an empty input that means "keep" and
+   * an empty input that means "erase" look identical.
+   */
+  const secretPlaceholder = (stored, fresh) => (stored
+    ? 'Déjalo vacío para conservar el valor actual. Pega uno nuevo solo si quieres rotarlo.'
+    : fresh);
+
   if (loading) {
     return (
       <div className="flex h-40 items-center justify-center">
@@ -142,7 +168,7 @@ export default function GoogleDrivePanel() {
       <div>
         <h3 className="text-base font-semibold text-slate-900">Conexión con Google Drive</h3>
         <p className="text-sm text-slate-500">
-          Credenciales de la Service Account que almacena la biblioteca de medios.
+          Credenciales de OAuth 2.0 con las que la biblioteca de medios escribe en Google Drive.
         </p>
       </div>
 
@@ -158,8 +184,8 @@ export default function GoogleDrivePanel() {
             severity={meta.is_configured ? 'success' : 'warning'}
             className="text-xs"
           />
-          {credential?.client_email && (
-            <span className="font-mono text-[11px] text-slate-600">{credential.client_email}</span>
+          {credential?.account_email && (
+            <span className="font-mono text-[11px] text-slate-600">{credential.account_email}</span>
           )}
           {credential?.last_tested_at && (
             <span className="text-[11px] text-slate-500">
@@ -182,38 +208,77 @@ export default function GoogleDrivePanel() {
 
       <div className="rounded-lg border border-sky-200 bg-sky-50 p-3">
         <p className="text-xs leading-relaxed text-sky-900">
-          Las credenciales se guardan <strong>cifradas</strong> en la base de datos con la llave de la
-          aplicación, y nunca vuelven al navegador. El alcance solicitado a Google es{' '}
+          El Client Secret y el Refresh Token se guardan <strong>cifrados</strong> en la base de datos con
+          la llave de la aplicación, y nunca vuelven al navegador. El POS actúa <strong>como la cuenta de
+          Google que autorizó el token</strong>, así que los archivos pertenecen a esa cuenta y consumen su
+          plan de almacenamiento. El alcance solicitado a Google es{' '}
           <code className="font-mono text-[10px]">{meta.scope}</code>
-          {meta.supports_external_shared_folders
-            ? ': la cuenta de servicio alcanza únicamente lo que alguien le compartió expresamente a '
-              + 'su correo — la carpeta raíz de la biblioteca y lo que cuelga de ella.'
+          {meta.supports_manual_folders
+            ? ': alcanza las carpetas de esa cuenta, incluida una carpeta raíz creada a mano.'
             : ': el token solo puede tocar los archivos que este POS creó, así que NO podrá ver una '
-              + 'carpeta raíz creada por una persona y compartida con la cuenta de servicio.'}
+              + 'carpeta raíz creada a mano por una persona.'}
         </p>
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
-        <div className="lg:col-span-2">
+        <div>
+          <label className="mb-1 block text-xs font-semibold text-slate-600">Client ID</label>
+          <InputText
+            value={form.client_id}
+            onChange={(e) => setForm({ ...form, client_id: e.target.value })}
+            className="w-full font-mono text-xs"
+            placeholder="123456789012-abc....apps.googleusercontent.com"
+          />
+          {fieldErrors.client_id && (
+            <p className="mt-1 text-xs text-rose-600">{fieldErrors.client_id}</p>
+          )}
+        </div>
+
+        <div>
           <label className="mb-1 block text-xs font-semibold text-slate-600">
-            JSON de la Service Account
-            {credential?.has_private_key && (
-              <span className="ml-2 font-normal text-emerald-600">· ya hay una llave cargada</span>
+            Client Secret
+            {credential?.has_client_secret && (
+              <span className="ml-2 font-normal text-emerald-600">· ya hay uno guardado</span>
             )}
           </label>
-          <InputTextarea
-            value={form.service_account_json}
-            onChange={(e) => setForm({ ...form, service_account_json: e.target.value })}
-            rows={6}
-            className="w-full font-mono text-xs"
-            placeholder={
-              credential?.has_private_key
-                ? 'Déjalo vacío para conservar la llave actual. Pega un JSON nuevo solo si quieres rotarla.'
-                : 'Pega aquí el archivo JSON descargado de Google Cloud Console.'
-            }
+          <Password
+            value={form.client_secret}
+            onChange={(e) => setForm({ ...form, client_secret: e.target.value })}
+            feedback={false}
+            toggleMask
+            inputClassName="w-full font-mono text-xs"
+            className="w-full"
+            placeholder={secretPlaceholder(credential?.has_client_secret, 'GOCSPX-...')}
           />
-          {fieldErrors.service_account_json && (
-            <p className="mt-1 text-xs text-rose-600">{fieldErrors.service_account_json}</p>
+          {fieldErrors.client_secret && (
+            <p className="mt-1 text-xs text-rose-600">{fieldErrors.client_secret}</p>
+          )}
+        </div>
+
+        <div className="lg:col-span-2">
+          <label className="mb-1 block text-xs font-semibold text-slate-600">
+            Refresh Token
+            {credential?.has_refresh_token && (
+              <span className="ml-2 font-normal text-emerald-600">· ya hay uno guardado</span>
+            )}
+          </label>
+          <Password
+            value={form.refresh_token}
+            onChange={(e) => setForm({ ...form, refresh_token: e.target.value })}
+            feedback={false}
+            toggleMask
+            inputClassName="w-full font-mono text-xs"
+            className="w-full"
+            placeholder={secretPlaceholder(credential?.has_refresh_token, '1//0g...')}
+          />
+          <p className="mt-1 text-[11px] text-slate-400">
+            Genéralo con el mismo Client ID de arriba y con la cuenta de Google <strong>dueña de la carpeta
+            raíz</strong>, pidiendo <code>access_type=offline</code> y <code>prompt=consent</code>. Si la
+            aplicación de OAuth sigue en modo <em>Testing</em> en Google Cloud, el token caduca a los 7 días:
+            publícala para que deje de expirar.
+          </p>
+          {fieldErrors.refresh_token && (
+            <p className="mt-1 text-xs text-rose-600">{fieldErrors.refresh_token}</p>
           )}
         </div>
 
@@ -235,11 +300,9 @@ export default function GoogleDrivePanel() {
             placeholder="1AbC2dEfGh3IjKlMnOp"
           />
           <p className="mt-1 text-[11px] text-slate-400">
-            El tramo que sigue a <code>/folders/</code> en la URL de Drive. La carpeta debe vivir dentro de
-            una <strong>Unidad compartida</strong> y la cuenta de servicio debe ser miembro de esa unidad
-            como <strong>Administrador de contenido</strong>. Una carpeta de &quot;Mi unidad&quot;, aunque
-            esté compartida como Editor, hace que Google rechace toda subida con
-            <code> 403 storageQuotaExceeded</code>: la cuenta de servicio no tiene almacenamiento propio.
+            El tramo que sigue a <code>/folders/</code> en la URL de Drive. Lo más simple es que la carpeta
+            viva en el Drive de la misma cuenta que autorizó el Refresh Token: si pertenece a otra persona,
+            los archivos consumirán la cuota de esa persona y hará falta permiso de Editor.
           </p>
           {fieldErrors.root_folder_id && (
             <p className="mt-1 text-xs text-rose-600">{fieldErrors.root_folder_id}</p>
@@ -259,7 +322,7 @@ export default function GoogleDrivePanel() {
           />
           <p className="mt-1 text-[11px] text-slate-400">
             Cada archivo subido recibe permiso de lectura para estas cuentas de Google, y solo para ellas.
-            Vacío significa que únicamente la cuenta de servicio puede abrir los archivos.
+            Vacío significa que únicamente la cuenta que autorizó la conexión puede abrir los archivos.
           </p>
         </div>
       </div>
@@ -277,14 +340,19 @@ export default function GoogleDrivePanel() {
           </p>
           <div className="mt-2">
             {checkRow('Credenciales completas', testResult.checks?.credentials_complete)}
-            {checkRow('Token emitido por Google', testResult.checks?.token_minted)}
+            {checkRow('Token de acceso renovado con el Refresh Token', testResult.checks?.token_minted)}
+            {/* A refresh token carries no readable identity, so this row is the
+                only place an administrator learns WHICH Google account the POS
+                speaks as — a mismatch there is the usual cause of a 404 on a
+                folder id that is perfectly valid for somebody else. */}
+            {checkRow(
+              testResult.checks?.account_email
+                ? `Cuenta autorizada: ${testResult.checks.account_email}`
+                : 'Cuenta autorizada identificada',
+              testResult.checks?.account_identified,
+            )}
             {checkRow('Carpeta raíz alcanzable', testResult.checks?.root_folder_reachable)}
             {checkRow('Carpeta raíz con permiso de escritura', testResult.checks?.root_folder_writable)}
-            {/* The row that a passing connection used to hide: a My Drive
-                folder satisfies every check above and still cannot receive a
-                single byte, because the bytes would be billed to a service
-                account that owns no quota. */}
-            {checkRow('Carpeta raíz dentro de una Unidad compartida', testResult.checks?.root_folder_in_shared_drive)}
           </div>
           <p className={`mt-2 text-xs ${testResult.success ? 'text-emerald-800' : 'text-rose-800'}`}>
             {testResult.message}

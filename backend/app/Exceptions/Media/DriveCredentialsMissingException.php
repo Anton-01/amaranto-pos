@@ -6,7 +6,7 @@ use RuntimeException;
 
 /**
  * Raised when the media module is asked to reach Drive before an administrator
- * has configured a usable service account.
+ * has configured a usable OAuth grant.
  *
  * It is a distinct type (and not a generic GoogleDriveException) because the
  * remedy is different: nothing is wrong with Google, the POS simply has no
@@ -20,7 +20,7 @@ class DriveCredentialsMissingException extends RuntimeException
     public function __construct(?string $message = null)
     {
         parent::__construct($message ?? 'Google Drive no está configurado. '
-            .'Registra las credenciales de la Service Account en Configuración → Google Drive '
-            .'antes de operar la biblioteca de medios.');
+            .'Registra el Client ID, el Client Secret y el Refresh Token de OAuth en '
+            .'Configuración → Google Drive antes de operar la biblioteca de medios.');
     }
 }
