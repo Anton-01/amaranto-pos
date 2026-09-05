@@ -17,16 +17,28 @@ class StoreDriveCredentialRequest extends FormRequest
             'label' => ['sometimes', 'string', 'max:120'],
 
             /*
-             * Nullable on purpose. The panel never returns the stored JSON, so
-             * an administrator editing the folder id or the reader list submits
-             * this field empty; an empty value means "keep the credential you
-             * already have", exactly as the mailing panel treats its API key.
-             * Rotating requires actually pasting a new document.
+             * The OAuth triplet. The client id is not a secret and always comes
+             * back to the panel, so it is required outright.
              */
-            'service_account_json' => ['nullable', 'string', 'max:20000'],
+            'client_id' => ['required', 'string', 'max:255'],
 
-            'client_id' => ['nullable', 'string', 'max:255'],
+            /*
+             * Nullable on purpose, both of them. The API never returns a stored
+             * secret, so an administrator editing the folder id or the reader
+             * list submits these fields empty; empty means "keep the value you
+             * already have", exactly as the mailing panel treats its API key.
+             * Rotating requires actually pasting a new value, which prevents an
+             * accidental save from wiping a working connection.
+             */
             'client_secret' => ['nullable', 'string', 'max:255'],
+
+            /*
+             * Google's refresh tokens are around 100 characters today, but the
+             * length is not contractual and has grown before; the ceiling is
+             * generous so a longer token is never rejected by this application
+             * for a limit Google never promised to respect.
+             */
+            'refresh_token' => ['nullable', 'string', 'max:2048'],
 
             /*
              * Drive ids are opaque strings from Google's alphabet. The pattern
@@ -45,6 +57,7 @@ class StoreDriveCredentialRequest extends FormRequest
     public function messages(): array
     {
         return [
+            'client_id.required' => 'Indica el Client ID de OAuth generado en Google Cloud Console.',
             'root_folder_id.required' => 'Indica el ID de la carpeta raíz de Drive donde vivirá la biblioteca.',
             'root_folder_id.regex' => 'Pega solo el ID de la carpeta, no la URL completa. '
                 .'Es el tramo que sigue a /folders/ en la dirección de Drive.',

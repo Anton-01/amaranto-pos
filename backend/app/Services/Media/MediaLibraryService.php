@@ -92,25 +92,27 @@ class MediaLibraryService
              * The upload is where a half-configured connection finally bites,
              * often hours after the setup screen was last opened. Google's own
              * text alone ("File not found") is not enough to act on, because a
-             * root folder that is unreachable — not shared with this address,
-             * or outside the OAuth scope's reach — is reported exactly like a
-             * folder id that was never valid. The identity, the folder and the
-             * scope in force are recorded together so the log line answers the
-             * question instead of starting the investigation.
+             * root folder that is unreachable — owned by a Google account other
+             * than the one that issued the refresh token, or outside the OAuth
+             * scope's reach — is reported exactly like a folder id that was
+             * never valid. The identity, the folder and the scope in force are
+             * recorded together so the log line answers the question instead of
+             * starting the investigation.
              */
             Log::error('Google Drive rechazó una subida de la biblioteca de medios.', [
                 'status_code' => $e->statusCode,
                 'google_reason' => $e->context['reason'] ?? null,
                 'google_message' => $e->getMessage(),
-                'client_email' => $credential->client_email,
+                'account_email' => $credential->account_email,
                 'root_folder_id' => $credential->root_folder_id,
                 'oauth_scope' => config('media.drive.scope'),
                 'category' => $policy->category,
                 'storage_name' => $storageName,
                 'hint' => $e->statusCode === 404
-                    ? 'Un 404 con la carpeta raíz configurada suele significar que la carpeta no está '
-                        .'compartida con la cuenta de servicio, o que el alcance OAuth no alcanza carpetas '
-                        .'compartidas desde fuera. Usa Configuración → Google Drive → Probar conexión.'
+                    ? 'Un 404 con la carpeta raíz configurada suele significar que el Refresh Token '
+                        .'pertenece a una cuenta de Google distinta de la dueña de la carpeta, o que el '
+                        .'alcance OAuth no alcanza carpetas creadas a mano. Usa Configuración → Google '
+                        .'Drive → Probar conexión.'
                     : null,
             ]);
 
@@ -161,11 +163,6 @@ class MediaLibraryService
             'size_bytes' => $media->size_bytes,
             'checksum' => $checksum,
             'drive_folder_id' => $stored['drive_folder_id'],
-            // Null means the object landed in a My Drive folder, which is the
-            // storage model that eventually fails with a quota 403. Recording
-            // it makes the audit trail able to answer "when did this start"
-            // instead of only "it is failing now".
-            'shared_drive_id' => $stored['shared_drive_id'] ?? null,
             'visibility' => $media->visibility,
             'permissions_after_upload' => count($stored['permissions']),
         ], $actor);

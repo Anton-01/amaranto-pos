@@ -7438,99 +7438,103 @@ deben abrirse por una decisión deliberada de quien conoce el intercambio.
 
 ### 63.3 Credenciales de Drive cifradas en la base de datos
 
-`drive_credentials` guarda la Service Account. **Por qué no un archivo:** meter
-el JSON en la imagen hornea una credencial viva en cada artefacto de build y
-cada capa del registry; montarlo como volumen convierte la rotación en un ticket
-de operaciones y un reinicio de contenedor. Aquí el secreto vive en una columna
-cifrada, se rota desde el panel y aplica en la siguiente subida.
+`drive_credentials` guarda la **concesión de OAuth 2.0 en contexto de usuario**
+(Client ID + Client Secret + Refresh Token). Hasta la sección 69 guardaba una
+Service Account; ese modelo se abandonó porque una Service Account no posee
+cuota de almacenamiento y el Drive del cliente es una cuenta personal de Google
+One, donde no existen las Unidades compartidas que Google propone como remedio
+— **ver sección 69** para el razonamiento completo.
 
-- `service_account_json`, `private_key` y `client_secret` pasan por el cast
-  `encrypted` (AES-256 con `APP_KEY`): un dump de la base —la fuga realista—
-  entrega texto cifrado. Verificado: la columna en PostgreSQL no contiene
-  `BEGIN PRIVATE KEY`.
-- Las tres están además en `$hidden`, así que **ningún** controlador puede
-  filtrarlas devolviendo el modelo. El panel trabaja con `has_private_key`,
-  `has_service_account` y el `client_email` — suficiente para reconocer qué
-  cuenta está cargada, inútil para suplantarla.
-- `client_email`, `project_id` y `private_key` se **desnormalizan** al guardar el
-  JSON: el firmante necesita la llave en cada refresco de token y la UI el emisor
-  en cada carga; descifrar y parsear el documento completo para eso sería trabajo
-  en un camino caliente y pondría la credencial en memoria mucho más seguido de
-  lo necesario.
-- Un campo de JSON vacío al guardar significa **"conserva la credencial
-  actual"**, igual que la API Key del módulo de correo. Rotar exige pegar un
-  documento nuevo, lo que impide que un guardado accidental borre una conexión
-  que funciona mientras se editaba la lista de lectores.
+**Por qué la base y no un archivo:** meter una credencial en la imagen la hornea
+en cada artefacto de build y cada capa del registry; montarla como volumen
+convierte la rotación en un ticket de operaciones y un reinicio de contenedor.
+Aquí el secreto vive en columnas cifradas, se rota desde el panel y aplica en la
+siguiente subida.
+
+- `client_secret` y `refresh_token` pasan por el cast `encrypted` (AES-256 con
+  `APP_KEY`): un dump de la base —la fuga realista— entrega texto cifrado.
+- Ambas están además en `$hidden`, así que **ningún** controlador puede
+  filtrarlas devolviendo el modelo. El panel trabaja con `has_client_secret`,
+  `has_refresh_token`, el `client_id` y el `account_email` — suficiente para
+  reconocer qué conexión está cargada, inútil para suplantarla.
+- `client_id` se guarda **en claro a propósito**: es el identificador público de
+  la aplicación de OAuth, se muestra de vuelta en el panel y no sirve de nada sin
+  el par al que pertenece.
+- `account_email` no lo teclea nadie: lo resuelve la prueba de conexión
+  preguntándole a Drive (`/about`) y se escribe de vuelta en la fila. Un Refresh
+  Token no lleva identidad legible, así que sin este paso nada en la pantalla
+  revela **con qué cuenta de Google** habla el POS — y esa es justamente la causa
+  habitual de un 404 sobre un ID de carpeta perfectamente válido.
+- Un campo de secreto vacío al guardar significa **"conserva el valor actual"**,
+  igual que la API Key del módulo de correo. Rotar exige pegar un valor nuevo, lo
+  que impide que un guardado accidental borre una conexión que funciona mientras
+  se editaba la lista de lectores.
+- Cambiar el `client_id` **borra** el `account_email` y la última prueba
+  almacenada: un Refresh Token está atado al cliente de OAuth que lo emitió, así
+  que apuntar la conexión a otro par deja una concesión ya no canjeable, y la UI
+  no debe seguir afirmando una identidad que no se ha vuelto a demostrar.
 - Toda escritura llama a `forgetAccessToken()`. Sin eso, el token emitido por la
-  llave anterior sigue vivo dentro de su ventana de una hora y la revocación
+  concesión anterior sigue vivo dentro de su ventana de una hora y la revocación
   parecería no haber aplicado — la clase exacta de fallo que vuelve
   indigno de confianza a un control de seguridad.
 
 **Autenticación (`GoogleDriveClient`).** Se habla la API REST de Drive v3
 directamente sobre el cliente HTTP del framework, sin `google/apiclient`: la
-superficie usada es mínima (token, files, permissions) y el SDK oficial está
-construido alrededor de credenciales que viven en disco o en el entorno —
-justo lo contrario de la premisa de este módulo. Una Service Account no usa el
-baile interactivo de OAuth: se arma un JWT que afirma *"soy `<client_email>`,
-quiero `<scope>`"*, se firma con RS256 usando la llave RSA de la cuenta y se
-canjea por un token de vida corta, cacheado por fila de credencial.
+superficie usada es mínima (token, files, permissions, about) y el SDK oficial
+está construido alrededor de credenciales que viven en disco o en el entorno —
+justo lo contrario de la premisa de este módulo. Lo que el SDK haría aquí es un
+único `POST` de formulario, que es exactamente `exchangeRefreshToken()`:
 
-Dos detalles que cuestan horas de diagnóstico si faltan:
+```
+POST https://oauth2.googleapis.com/token
+grant_type=refresh_token & client_id & client_secret & refresh_token
+```
 
-- **`iat` se retrasa 10 segundos.** Google rechaza una aserción emitida en su
-  futuro, y un contenedor con el reloj unos segundos adelantado fallaría **todas**
-  las subidas con un opaco `invalid_grant`.
-- **`normalizePrivateKey()`** repara las dos formas en que una llave sobrevive
-  mal a un copiar-pegar: la secuencia literal `\n` como únicos saltos de línea, y
-  la normalización a CRLF. OpenSSL no acepta ninguna de las dos, y decirle a un
-  administrador que su llave válida es inválida es peor que arreglarlo en la
-  frontera.
+- **La vigencia la dicta Google, no una constante.** Se usa el `expires_in` de la
+  respuesta (hoy una hora) y `media.drive.token_ttl` queda solo como respaldo
+  para el caso en que Google lo omita. Cachear un token más de lo que vive
+  produce 401 que parecen un problema de permisos.
+- **Se resta un margen (`token_leeway`, 300 s) antes de cachear.** Un token
+  guardado su hora completa puede entregarse a una petición que sale 200 ms antes
+  del vencimiento y llega después: un 401 que ninguna política de reintentos
+  explica.
+- **`invalid_grant` e `invalid_client` se expanden a sus causas reales.** Google
+  responde ambos con un "Bad Request" opaco que manda al administrador a revisar
+  el ID de la carpeta, que nunca es la causa en esta etapa. El cliente nombra las
+  tres causas de un `invalid_grant` —acceso revocado por el usuario, token
+  generado con otro Client ID, y la aplicación de OAuth aún en modo *Testing*,
+  donde los refresh tokens caducan a los 7 días— y las dos de un
+  `invalid_client`.
 
-**El scope pasó de `drive.file` a `drive`, y esa fue la causa raíz del 404.**
-`drive.file` concede acceso *por archivo* únicamente a los objetos que esta
-aplicación creó. La carpeta raíz de la biblioteca no la crea el POS: la crea una
-persona en su propio Drive y la **comparte** con el correo de la Service
-Account. Bajo `drive.file` esa carpeta sencillamente no forma parte del universo
-del token — y Drive **no responde 403 para lo que está fuera del universo del
-token, responde `404 File not found`**. De ahí el fallo que parecía imposible:
-el permiso de Editor está puesto y visible en la UI de Drive, y la API insiste
-en que la carpeta no existe. Ningún parámetro de la petición lo arregla, porque
-el problema no está en la petición sino en lo que el token puede ver.
+**El scope sigue siendo `drive` y no `drive.file`.** `drive.file` concede acceso
+*por archivo* únicamente a los objetos que esta aplicación creó. La carpeta raíz
+de la biblioteca no la crea el POS: la crea una persona a mano en su Drive. Bajo
+`drive.file` esa carpeta sencillamente no forma parte del universo del token — y
+Drive **no responde 403 para lo que está fuera del universo del token, responde
+`404 File not found`**. De ahí el fallo que parece imposible: la carpeta está
+ahí, visible en el navegador, y la API insiste en que no existe. Ningún parámetro
+de la petición lo arregla, porque el problema no está en la petición sino en lo
+que el token puede ver. El alcance vive en `MEDIA_DRIVE_SCOPE` con defecto
+`https://www.googleapis.com/auth/drive`.
 
-El alcance vive ahora en `MEDIA_DRIVE_SCOPE` con defecto
-`https://www.googleapis.com/auth/drive`. El radio de daño sigue siendo estrecho,
-por una razón distinta a la anterior: una Service Account es una identidad nueva
-que no posee nada ni pertenece a nada, así que `drive` alcanza exactamente lo que
-alguien compartió a propósito con esa dirección —la carpeta raíz y su
-descendencia— y nada más de la organización. Una instalación cuya carpeta raíz
-la cree la propia aplicación puede volver al alcance estrecho poniendo
-`MEDIA_DRIVE_SCOPE=https://www.googleapis.com/auth/drive.file`, a cambio de
-perder las carpetas compartidas desde fuera.
-
-**Los parámetros de unidades compartidas ya estaban, y no eran el problema.**
-Toda llamada lleva `supportsAllDrives=true`; toda **búsqueda** lleva además
-`includeItemsFromAllDrives=true` y `corpora=allDrives`, los tres juntos porque
-Drive solo honra `corpora=allDrives` cuando los otros dos están presentes, y
-omitir cualquiera de ellos reduce la búsqueda a la unidad privada de la cuenta de
-servicio en silencio. `ensureFolder()` los centraliza en `searchScopeParams()`
-para que ninguna consulta futura pueda quedarse a medias.
-
-**Diagnóstico síncrono que verifica TRES cosas, no una.** Emitir un token prueba
-que la llave firma y la cuenta existe, y nada más. Los dos fallos que de verdad
-rompen este módulo en producción son un ID de carpeta raíz inexistente y una
-carpeta que existe pero **nunca se compartió** con la Service Account; ambos
-emiten token felizmente y fallan en la primera subida, horas después, con un 404
-o un 403 que nadie conecta con la pantalla de configuración. Por eso el
-`testConnection()` además lee la carpeta y exige `canAddChildren`:
+**Diagnóstico síncrono que verifica CINCO cosas, no una.** Canjear el Refresh
+Token prueba que el trío de OAuth está íntegro, y nada más. Los fallos que de
+verdad rompen este módulo en producción son un ID de carpeta inexistente, una
+carpeta que pertenece a **otra** cuenta de Google distinta de la que autorizó la
+concesión, y una cuenta sin espacio libre; los tres canjean el token felizmente y
+fallan en la primera subida, horas después, con un 404 o un 403 que nadie conecta
+con la pantalla de configuración.
 
 | Escenario | Resultado |
 |---|---|
-| Carpeta correcta y escribible | ✅ éxito |
-| Carpeta inalcanzable (404) | ❌ checklist ordenada: compartición con el `client_email`, forma del ID, carpeta movida o eliminada; más el alcance OAuth en uso y **la lista de carpetas que esa cuenta sí alcanza** |
-| Carpeta visible pero sin permiso de Editor | ❌ *"puede ver la carpeta pero no escribir en ella. Compártela con esa dirección…"* |
+| Token válido, cuenta identificada, carpeta escribible | ✅ éxito, nombrando la cuenta autorizada |
+| Refresh Token revocado o de otro Client ID | ❌ `invalid_grant` expandido a sus tres causas, incluida la caducidad a 7 días en modo *Testing* |
+| Client ID/Secret que no forman una app válida | ❌ `invalid_client` con la ruta exacta en Google Cloud Console |
+| Cuenta de Google sin espacio | ❌ *"su almacenamiento está agotado (X de Y usados)"*, antes de intentar subir nada |
+| Carpeta inalcanzable (404) | ❌ checklist ordenada: **misma cuenta de Google**, forma del ID, carpeta movida o eliminada; más el alcance OAuth en uso y **la lista de carpetas que esa cuenta sí alcanza**, marcadas como propias o de terceros |
+| Carpeta visible pero sin permiso de escritura | ❌ *"puede ver la carpeta pero no escribir en ella…"* |
 | El ID apunta a un archivo, no a una carpeta | ❌ *"no corresponde a una carpeta de Drive, sino a un archivo"* |
 | Carpeta en la papelera de Drive | ❌ *"está en la papelera… Restáurala"* |
-| Google rechaza la llave | ❌ *"Google rechazó las credenciales (HTTP 400): Invalid JWT Signature."* |
 | Faltan datos obligatorios | ❌ nombra exactamente qué falta |
 
 Nunca lanza: devuelve un array de diagnóstico para todo desenlace, y el
@@ -7543,19 +7547,18 @@ tecleado no es un incidente de plataforma.
 la respuesta que Drive da tanto a un ID inventado como a un objeto que existe
 pero está fuera del alcance del token, y esas dos situaciones se arreglan de
 formas opuestas. `reportDriveFailure()` la expande en la checklist ordenada por
-frecuencia real, nombra el `client_email` que firma las peticiones —el
-administrador no puede verificar una compartición contra una dirección que nadie
-le dijo— y añade, consultando Drive, **las carpetas que esa cuenta sí alcanza**:
-una lista vacía dice que la compartición nunca llegó a aplicarse; una lista que
-no contiene el ID configurado dice que el ID es de otra carpeta. Si el alcance
-en vigor es el estrecho, el mensaje lo señala explícitamente como causa.
+frecuencia real, **nombra la cuenta con la que autentica la conexión** —el
+administrador no puede detectar un desajuste de cuentas contra una dirección que
+nadie le dijo— y añade, consultando Drive, las carpetas que esa cuenta sí
+alcanza, marcando cada una como propia o compartida por terceros: una lista vacía
+dice que el token pertenece a otra cuenta; una carpeta de un tercero no es
+respuesta al problema, porque sus hijos se cobran a la cuota de esa persona.
 
-**El log dejó de ser un `warning` sin contexto.** Tanto el diagnóstico como la
-subida registran ahora, en `error`: código HTTP, el `reason` de Google, el
-`client_email`, el `root_folder_id`, **el alcance OAuth en vigor** y los
-parámetros de unidades compartidas enviados. El alcance es invisible desde el
-panel y es justamente el dato que decide si una carpeta externa se ve; sin él en
-la línea de log, el 404 se vuelve a investigar desde cero cada vez.
+**El log registra en `error`:** código HTTP, el `reason` de Google, el
+`client_id`, el `account_email`, el `root_folder_id` y **el alcance OAuth en
+vigor**. El alcance es invisible desde el panel y es justamente el dato que
+decide si una carpeta creada a mano se ve; sin él en la línea de log, el 404 se
+vuelve a investigar desde cero cada vez.
 
 ### 63.4 Protección de recursos en la nube
 
@@ -7566,8 +7569,8 @@ también bajo demanda desde el botón *Revisar permisos en Drive*:
   tipo `domain` (visible para todo un dominio de Workspace). Son las dos formas
   que hacen legible un archivo a quien simplemente recorre la estructura de
   carpetas — la fuga exacta que el módulo debía impedir.
-- **Conserva** la propiedad de la cuenta de servicio y los permisos explícitos
-  por usuario.
+- **Conserva** la propiedad de la cuenta que autorizó la conexión y los permisos
+  explícitos por usuario.
 - **Otorga** lectura a cada dirección de `authorized_emails`, con
   `sendNotificationEmail=false` (un POS subiendo cien facturas no debe disparar
   cien correos al contador).
@@ -7749,11 +7752,14 @@ no-store`.
   ninguna parte hacer público el archivo en Drive ni un enlace sin caducidad.
 - **`components/settings/AllowedFileTypesPanel`** — pestaña *Tipos de Archivo* de
   Configuración, con interruptor optimista que revierte si el servidor se niega.
-- **`components/settings/GoogleDrivePanel`** — pestaña *Google Drive*. El JSON es
-  de **solo escritura**: el textarea siempre carga vacío. La franja de estado
-  dice **qué falta** en lugar de un sí/no, porque el fallo común es una fila a
-  medio configurar. El resultado del diagnóstico se desglosa en sus cuatro pasos:
-  un aprobado/reprobado no diría cuál rompió, y cada uno tiene arreglo distinto.
+- **`components/settings/GoogleDrivePanel`** — pestaña *Google Drive*. Tres
+  campos de OAuth (Client ID, Client Secret, Refresh Token) más el ID de la
+  carpeta raíz. Los dos secretos son de **solo escritura**: sus cajas siempre
+  cargan vacías y vacío significa "conserva el valor guardado". La franja de
+  estado dice **qué falta** en lugar de un sí/no, porque el fallo común es una
+  fila a medio configurar. El resultado del diagnóstico se desglosa en sus cinco
+  pasos —uno de ellos nombra la cuenta de Google con la que se autentica—: un
+  aprobado/reprobado no diría cuál rompió, y cada uno tiene arreglo distinto.
 - **`pages/admin/MediaAuditPage`** — visor forense de solo lectura, con filtros
   por acción, ventana de fechas y "solo eventos críticos". El detalle muestra el
   `metadata` **en crudo**: una investigación necesita el diff y el motivo de
@@ -7765,13 +7771,14 @@ no-store`.
 
 `config/media.php` gobierna el COMPORTAMIENTO; la base gobierna lo PERMITIDO
 (`allowed_file_types`) y la IDENTIDAD (`drive_credentials`). La separación
-importa: un operador debe poder habilitar una extensión o rotar una cuenta sin
-un despliegue, y **no** debe poder elevar los techos duros desde el navegador.
+importa: un operador debe poder habilitar una extensión o rotar la concesión de
+OAuth sin un despliegue, y **no** debe poder elevar los techos duros desde el
+navegador.
 
 | Variable | Defecto | Qué controla |
 |---|---|---|
 | `MEDIA_MAX_UPLOAD_KB` | `25600` | Techo absoluto de la plataforma (25 MB) |
-| `MEDIA_DRIVE_SCOPE` | `…/auth/drive` | Alcance OAuth pedido a Google. El defecto es el que permite usar una carpeta raíz compartida desde otro Drive; `…/auth/drive.file` la vuelve invisible |
+| `MEDIA_DRIVE_SCOPE` | `…/auth/drive` | Alcance OAuth pedido a Google. El defecto es el que permite usar una carpeta raíz creada a mano por una persona; `…/auth/drive.file` la vuelve invisible |
 | `MEDIA_DRIVE_TIMEOUT` | `20` | Segundos de red por llamada a Drive |
 | `MEDIA_DRIVE_CONNECT_TIMEOUT` | `8` | Segundos para establecer conexión |
 | `MEDIA_DRIVE_UPLOAD_TIMEOUT` | `120` | Segundos para subidas y descargas |
@@ -7783,89 +7790,29 @@ segundos terminando en un error legible es estrictamente mejor.
 
 ### 63.10 Puesta en marcha
 
-1. Google Cloud Console → crear Service Account → habilitar **Google Drive API**
-   → descargar la llave JSON.
-2. En Google Drive: crear la carpeta raíz de la biblioteca y **compartirla con el
-   `client_email` de la Service Account con permiso de _Editor_**. Sin este paso
-   el token se emite pero ninguna subida funciona — y es lo que detecta el
-   diagnóstico. Compartir la carpeta **padre** no basta si la carpeta raíz se
-   movió después de compartirse, y compartirla con una dirección distinta a la
-   del JSON cargado produce el mismo 404 que no haberla compartido.
-3. POS → *Configuración → Google Drive* → pegar el JSON, poner el ID de la
-   carpeta (el tramo tras `/folders/` en la URL) y las cuentas autorizadas de
-   lectura → **Probar conexión** → Guardar.
-4. `php artisan migrate` (5 migraciones) y `php artisan db:seed` siembran las
-   13 políticas base de tipos de archivo, con `svg` y `zip` desactivadas.
-5. Revisar *Configuración → Tipos de Archivo* y ajustar la política al negocio.
-
-### 63.11 Archivos del módulo
-
-**Backend**
-- `config/media.php`
-- `database/migrations/2026_09_01_00000{1..5}_*` — `allowed_file_types`,
-  `drive_credentials`, `media_files`, `media_share_links`, `media_audit_logs`
-- `database/seeders/AllowedFileTypeSeeder.php`
-- `app/Models/` — `AllowedFileType`, `DriveCredential`, `MediaFile`,
-  `MediaShareLink`, `MediaAuditLog`
-- `app/Services/Media/` — `GoogleDriveClient` (REST + JWT RS256),
-  `GoogleDriveService` (endurecimiento, carpetas, diagnóstico),
-  `FileTypeValidator`, `MediaLibraryService`, `ShareLinkService`,
-  `MediaAuditLogger`
-- `app/Exceptions/Media/` — `DisallowedFileTypeException`,
-  `DriveCredentialsMissingException`, `GoogleDriveException`
-- `app/Http/Controllers/Media/` — `MediaLibraryController`,
-  `AllowedFileTypeController`, `DriveCredentialController`,
-  `MediaShareLinkController`, `MediaAuditLogController`,
-  `PublicMediaShareController`
-- `app/Http/Requests/Media/` — 7 form requests
-
-**Frontend**
-- `api/media.js`, `lib/mediaPreview.js`
-- `components/media/` — `MediaPreviewTile`, `MediaUploadDialog`,
-  `MediaDetailModal`, `MediaShareDialog`
-- `components/settings/` — `AllowedFileTypesPanel`, `GoogleDrivePanel`
-- `pages/admin/` — `MediaLibraryPage`, `MediaAuditPage`
-- Rutas `/admin/medios` y `/admin/medios/auditoria`, entradas de sidebar y
-  pestañas de Configuración
-
-### 63.12 Verificación ejecutada
-
-- **Migraciones** — las 5 aplican limpias sobre PostgreSQL 16.
-- **Validador (9 casos)** — PNG y PDF legítimos aceptados; `.exe` no registrado,
-  `.svg` desactivado, PNG renombrado a `.pdf`, archivo sin extensión y archivo
-  sobre el límite rechazados, cada uno con su código; el interruptor de corte
-  aplica sin caché; el techo de plataforma clampa 999999 KB → 25600 KB.
-- **Cifrado** — la columna `private_key` en PostgreSQL no contiene `BEGIN PRIVATE
-  KEY`; el modelo la descifra; la serialización JSON del modelo no expone ninguna
-  de las tres columnas secretas.
-- **JWT** — firma RS256 verificada con la mitad pública de la llave, tal como
-  haría Google; `iat` retrasado 10 s; el scope viaja en la aserción tal como lo
-  resuelve `config('media.drive.scope')`.
-- **Endurecimiento de permisos** — de 4 permisos iniciales se revocan `anyone` y
-  `domain`, sobrevive el propietario y se añade el lector autorizado.
-- **Diagnóstico (6 escenarios)** — cada uno con su mensaje accionable distinto.
-- **Enlaces** — token guardado solo como SHA-256; resolución correcta; token
-  falso → `null`; agotamiento por tope; revocación; cierre al archivar.
-- **Auditoría** — sin columna `updated_at`; actor anónimo etiquetado en las
-  redenciones; acciones críticas marcadas.
-- **API extremo a extremo** — subida 201 con la secuencia de llamadas a Google en
-  el orden diseñado (token → carpeta categoría → carpeta mes → upload → permisos
-  → grant → re-lectura); `.exe` → 422 `ERR_MEDIA_TYPE_NOT_REGISTERED`; listado
-  con proyección de columnas (sin `description`); enlace compartido abierto **sin
-  sesión** y token inválido → 404 genérico.
-- **Frontend** — `npm run build` exitoso; sin advertencias de dependencias de
-  hooks en los archivos del módulo.
-
-**Ajuste del 404 en carpetas compartidas.** Verificado por análisis estático:
-`php -l` limpio en los cinco archivos PHP tocados (`config/media.php`,
-`GoogleDriveClient`, `GoogleDriveService`, `MediaLibraryService`,
-`DriveCredentialController`) y el panel `GoogleDrivePanel.jsx` parsea sin errores.
-**Pendiente de verificar contra Google**: el viaje real a la API exige la Service
-Account y la carpeta compartida, así que la confirmación definitiva es pulsar
-*Configuración → Google Drive → Probar conexión* con las credenciales reales. Si
-el 404 persistiera tras el cambio de alcance, el mensaje ahora nombra la causa
-concreta y el log lleva alcance, `client_email`, `reason` de Google y la lista de
-carpetas alcanzables.
+1. Google Cloud Console → habilitar **Google Drive API** → *Credenciales* →
+   crear un **ID de cliente de OAuth 2.0** de tipo *Aplicación de escritorio* →
+   anotar **Client ID** y **Client Secret**.
+2. En la *Pantalla de consentimiento de OAuth*: agregar el alcance
+   `https://www.googleapis.com/auth/drive` y **publicar la aplicación**. Si se
+   queda en modo *Testing*, Google caduca los refresh tokens a los **7 días** y
+   la biblioteca deja de funcionar sin que nada haya cambiado.
+3. Generar el **Refresh Token** con ese mismo Client ID, iniciando sesión con la
+   cuenta de Google **dueña de la carpeta raíz**, y pidiendo
+   `access_type=offline` con `prompt=consent` (el OAuth Playground de Google
+   sirve, configurando ahí las credenciales propias).
+4. En Google Drive: crear la carpeta raíz de la biblioteca **dentro del Drive de
+   esa misma cuenta**. Si la carpeta pertenece a otra persona, sus archivos se
+   cobran a la cuota de esa persona y hará falta permiso de Editor; usar una
+   carpeta propia evita ambas cosas.
+5. POS → *Configuración → Google Drive* → pegar Client ID, Client Secret y
+   Refresh Token, poner el ID de la carpeta (el tramo tras `/folders/` en la URL)
+   y las cuentas autorizadas de lectura → **Probar conexión** → Guardar. La
+   prueba nombra la cuenta autenticada: si no es la esperada, el Refresh Token se
+   generó con otra sesión de Google.
+6. `php artisan migrate` y `php artisan db:seed` siembran las 13 políticas base
+   de tipos de archivo, con `svg` y `zip` desactivadas.
+7. Revisar *Configuración → Tipos de Archivo* y ajustar la política al negocio.
 
 ---
 
@@ -8604,6 +8551,16 @@ apilado correcto en móvil y **cero desbordamiento horizontal** a 390 px.
 
 ### 68.3 El 403 `storageQuotaExceeded`: la cuenta de servicio no tiene dónde guardar
 
+> ⚠️ **SUPERADA POR LA SECCIÓN 69.** El diagnóstico de esta sección era correcto
+> —una Service Account no posee cuota y necesita una Unidad compartida— pero la
+> solución no era aplicable: el Drive del cliente es una cuenta personal de
+> Google One, donde las Unidades compartidas no existen. El módulo dejó de
+> autenticarse con Service Account y pasó a OAuth 2.0 con Refresh Token. Todo lo
+> que esta sección describe (`supportsAllDrives`, `driveId`, la comprobación
+> `root_folder_in_shared_drive`, `MEDIA_DRIVE_REQUIRE_SHARED_DRIVE`, los permisos
+> heredados de la unidad) **ya no está en el código**. Se conserva aquí porque
+> explica por qué el camino de las Unidades compartidas se recorrió primero.
+
 **La causa raíz no es un permiso, es la propiedad de los bytes.** Una Service
 Account es una identidad **sin cuota de almacenamiento propia** —no una pequeña:
 ninguna— y Drive cobra cada objeto nuevo a quien lo posee. Dentro de una carpeta
@@ -8700,3 +8657,193 @@ Lo que se hizo:
 - `src/components/settings/GoogleDrivePanel.jsx` — quinta comprobación y ayuda
   del campo de carpeta raíz
 - `package.json` — `cropperjs ^1.6.2`
+
+---
+
+## 69. MIGRACIÓN DE LA AUTENTICACIÓN DE DRIVE: DE SERVICE ACCOUNT A OAUTH 2.0 CON REFRESH TOKEN [🟢 COMPLETADO Y OPERATIVO]
+
+### 69.1 Por qué el camino anterior no tenía salida
+
+La sección 68.3 llegó al diagnóstico correcto y a la solución equivocada.
+
+Una Service Account es una identidad **sin cuota de almacenamiento propia** —no
+una pequeña: ninguna— y Drive cobra cada objeto nuevo a quien lo posee. Dentro de
+una carpeta de "Mi unidad" el propietario del archivo subido es la propia cuenta
+de servicio, así que Google responde `403 [storageQuotaExceeded]` en la primera
+subida real **sin importar los permisos de la carpeta ni los parámetros de la
+petición**. El remedio que documenta Google es mover la biblioteca a una Unidad
+compartida, donde la unidad posee su contenido y la cuota de la organización lo
+paga.
+
+**El entorno del cliente es una cuenta personal de Google One, y ahí las
+Unidades compartidas sencillamente no existen**: son una función de Google
+Workspace. No había ninguna configuración de la Service Account capaz de
+funcionar. Seguir ajustando parámetros era trabajar sobre un modelo de
+almacenamiento que esa cuenta no puede ofrecer.
+
+### 69.2 La decisión: hablar como el dueño, no como un robot sin cuota
+
+El módulo autentica ahora con una **concesión de OAuth 2.0 en contexto de
+usuario**: Client ID + Client Secret + Refresh Token emitido por el dueño del
+Drive. Cada llamada se hace **como esa persona**, así que los archivos le
+pertenecen y consumen el plan de Google One que ya paga. El problema no se
+rodea, desaparece: ya no hay una identidad sin cuota en la ecuación.
+
+El precio es honesto y hay que decirlo: la cuota pasa a ser **finita y real**. Un
+403 de almacenamiento ya no es una imposibilidad estructural que haya que
+explicar, ahora significa lo que dice —esa cuenta se quedó sin espacio— y el
+módulo lo reporta con las cifras de uso para que se pueda decidir entre liberar
+espacio o ampliar el plan. Además la conexión depende de una persona: si revoca
+el acceso de la aplicación desde su cuenta de Google, la biblioteca se detiene.
+
+### 69.3 El autenticador
+
+`GoogleDriveClient::exchangeAssertion()` —el JWT RS256 firmado con la llave
+privada— desapareció por completo, junto con `buildAssertion()`,
+`normalizePrivateKey()` y el `base64UrlEncode()` que solo servía para firmar. En
+su lugar hay un único `POST` de formulario:
+
+```
+POST https://oauth2.googleapis.com/token
+grant_type=refresh_token & client_id & client_secret & refresh_token
+```
+
+Esto es exactamente lo que hace `$client->setClientId(...)`,
+`$client->setClientSecret(...)` y `$client->refreshToken(...)` del SDK oficial de
+Google por dentro. **No se agregó `google/apiclient`** por la misma razón que no
+estaba antes: la superficie usada de la API es mínima y el SDK está construido
+alrededor de credenciales que viven en disco o en el entorno, justo lo contrario
+de la premisa de este módulo, donde el secreto vive cifrado en la base y se rota
+desde el panel. Traer un árbol de dependencias completo para sustituir un `POST`
+de cuatro campos habría sido peso sin beneficio.
+
+Dos afinaciones que no se heredaron del código anterior:
+
+- **La vigencia la dicta Google.** Se cachea con el `expires_in` de la respuesta
+  (hoy una hora) y `media.drive.token_ttl` queda solo como respaldo si Google lo
+  omite. La constante anterior era la vida de la *aserción*, un concepto que ya
+  no existe. Cachear un token más de lo que vive produce 401 que parecen un
+  problema de permisos.
+- **`invalid_grant` e `invalid_client` se expanden a sus causas reales.** Google
+  responde ambos con un "Bad Request" opaco que manda a revisar el ID de la
+  carpeta, que nunca es la causa en esta etapa. El cliente nombra las tres causas
+  de un `invalid_grant`: acceso revocado por el usuario, token generado con otro
+  Client ID, y —la que muerde semanas después de una instalación exitosa— la
+  aplicación de OAuth aún en modo *Testing* en Google Cloud, donde **los refresh
+  tokens caducan a los 7 días**.
+
+### 69.4 Todo lo de Unidades compartidas se retiró
+
+No se dejó "por si acaso": contra un Drive personal esos parámetros no
+direccionan nada, y conservarlos sugeriría un modelo de almacenamiento que el
+módulo ya no tiene.
+
+| Retirado | Dónde estaba |
+|---|---|
+| `supportsAllDrives=true` en toda llamada | `sharedDriveParams()`, fusionado en subida, lectura, `patch`, borrado y permisos |
+| `includeItemsFromAllDrives` + `corpora=allDrives` | `searchScopeParams()`, en las búsquedas |
+| `driveIdOf()` y el campo `driveId` | Sonda del modelo de almacenamiento |
+| Comprobación `root_folder_in_shared_drive` | `testConnection()` y su fila en el panel |
+| `explainMyDriveRootFolder()` | Mensaje de las cuatro instrucciones |
+| `MEDIA_DRIVE_REQUIRE_SHARED_DRIVE` | `config/media.php` |
+| `shared_drive_id` en la auditoría de subida | `MediaLibraryService` |
+| `permissionDetails(inherited)` en `hardenPermissions()` | Un permiso heredado de una unidad no puede existir sin unidades |
+
+La corrección de transporte del `DELETE` **sí se conservó**: `withQuery()` sigue
+armando el query string a mano porque el `delete()` del framework pone su arreglo
+en el cuerpo de la petición, y esa asimetría volvería a morder al primer
+parámetro que se agregue a un borrado.
+
+### 69.5 La prueba de conexión cambió de quinta comprobación
+
+Donde antes se exigía que la carpeta raíz viviera en una Unidad compartida, ahora
+se pregunta a `GET /drive/v3/about` por **quién es el dueño de la concesión y
+cuánto espacio le queda**. Las dos preguntas son nuevas y ninguna se puede
+deducir después:
+
+- **QUIÉN.** Un Refresh Token no lleva identidad legible. Nada en la pantalla
+  revela que el token se generó con una sesión de Gmail personal mientras el ID
+  de la carpeta se copió de una cuenta de trabajo — un desajuste que aparece
+  horas más tarde como un 404 inexplicable sobre un ID perfectamente válido. La
+  prueba resuelve la dirección, la muestra en la fila del diagnóstico, la escribe
+  en `account_email` y la usa en cada mensaje de error posterior.
+- **CUÁNTO ESPACIO.** La cuota es ahora un número real de una persona real, así
+  que una subida puede fallar legítimamente por falta de sitio. Detectarlo en la
+  pantalla de configuración —con `usage` y `limit` formateados— es mejor que
+  descubrirlo en el primer archivo grande del operador. Un `limit` ausente no es
+  un hueco en los datos: Google lo omite en los planes sin límite, y el mensaje
+  lo dice así.
+
+Las cinco comprobaciones quedan: credenciales completas → token renovado →
+cuenta identificada → carpeta alcanzable → carpeta escribible.
+
+El 404 conserva su checklist expandida, con la primera causa reescrita: ya no es
+"¿compartiste la carpeta con el `client_email`?" sino **"¿generaste el Refresh
+Token con la misma cuenta de Google dueña de la carpeta?"**, que es el error
+frecuente del modelo nuevo. La lista de carpetas alcanzables marca cada una como
+`[propia]` o `[compartida por terceros]`, porque una carpeta ajena no es
+respuesta al problema: sus hijos se cobran a la cuota de esa otra persona.
+
+### 69.6 Esquema, cifrado y superficie de la UI
+
+La migración `2026_09_05_000001_switch_drive_credentials_to_oauth_user_context`
+agrega `account_email` y `refresh_token`, y **elimina**
+`service_account_json`, `private_key`, `client_email` y `project_id`. Se
+eliminan en vez de dejarse nulables porque una de esas columnas es una llave RSA
+privada: conservar cifrada en producción una credencial que ya nada puede leer de
+vuelta es un pasivo sin ninguna contrapartida. La migración también limpia la
+última prueba almacenada, para que el panel no muestre un "última prueba:
+exitosa" en verde sobre credenciales que acaban de quedar inválidas.
+
+**Las filas existentes sobreviven pero dejan de ser utilizables, a propósito.**
+No hay forma de derivar un Refresh Token de una llave de Service Account, así que
+la conexión activa reporta lo que le falta y la biblioteca rechaza subidas hasta
+que un administrador pegue el trío nuevo. Es el desenlace honesto, y muy
+preferible a una fila que parece configurada y falla contra Google.
+
+- **Cifrado:** `client_secret` y `refresh_token` pasan por el cast `encrypted`
+  (AES-256 con `APP_KEY`) y están en `$hidden`. `client_id` y `account_email`
+  quedan en claro: son identificadores que la UI muestra, no secretos.
+- **UI:** el textarea gigante del JSON se sustituye por tres campos — Client ID
+  (`InputText`, viaja de ida y vuelta) y Client Secret + Refresh Token
+  (`Password` con `toggleMask`, de **solo escritura**: cargan vacíos y vacío
+  significa "conserva el valor guardado"). El ID de la carpeta raíz se mantiene,
+  con la ayuda reescrita: ya no pide una Unidad compartida, recomienda que la
+  carpeta viva en el Drive de la misma cuenta que autorizó el token.
+- **Auditoría:** la fila de credenciales guarda `client_id`, `account_email`,
+  `root_folder_id` y dos banderas —`client_secret_rotated` y
+  `refresh_token_rotated`— pero **ningún** secreto. La traza debe hacer auditable
+  una rotación sin convertirse en una segunda copia de la credencial.
+- **Cambiar el `client_id` borra `account_email` y la última prueba.** Un Refresh
+  Token está atado al cliente de OAuth que lo emitió; apuntar la conexión a otro
+  par deja una concesión no canjeable, y la UI no debe seguir afirmando una
+  identidad que no se ha vuelto a demostrar.
+
+### 69.7 Archivos
+
+**Backend (nuevos)**
+- `database/migrations/2026_09_05_000001_switch_drive_credentials_to_oauth_user_context.php`
+
+**Backend (modificados)**
+- `app/Services/Media/GoogleDriveClient.php` — `exchangeRefreshToken()` sustituye
+  al firmante JWT; `about()`; sin parámetros de unidades compartidas;
+  `describeTokenFailure()`
+- `app/Services/Media/GoogleDriveService.php` — quinta comprobación de identidad
+  y cuota, `translateQuotaFailure()` reescrita, `readQuota()`/`describeQuota()`,
+  `explainMyDriveRootFolder()` eliminada
+- `app/Services/Media/MediaLibraryService.php` — `account_email` en el log, sin
+  `shared_drive_id` en la auditoría
+- `app/Models/DriveCredential.php` — trío de OAuth, `identityLabel()`,
+  `has_refresh_token`; sin `fillFromServiceAccountJson()`
+- `app/Http/Controllers/Media/DriveCredentialController.php` — guardado cifrado
+  de los tres valores con semántica "vacío = conservar"
+- `app/Http/Requests/Media/StoreDriveCredentialRequest.php`,
+  `TestDriveConnectionRequest.php` — campos del trío
+- `app/Exceptions/Media/DriveCredentialsMissingException.php` — mensaje
+- `config/media.php` — bloque `drive` documentado para OAuth; sin
+  `require_shared_drive`
+
+**Frontend (modificados)**
+- `src/components/settings/GoogleDrivePanel.jsx` — tres campos de OAuth, secretos
+  enmascarados de solo escritura, quinta fila del diagnóstico con la cuenta
+  autenticada

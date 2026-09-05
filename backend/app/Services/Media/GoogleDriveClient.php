@@ -11,49 +11,51 @@ use Illuminate\Support\Facades\Http;
 use Throwable;
 
 /**
- * Native Google Drive v3 client driven by a database-held service account.
+ * Native Google Drive v3 client driven by an OAuth 2.0 grant held in the
+ * database.
  *
- * WHY NOT google/apiclient. The surface this module needs is small — mint a
+ * WHY NOT google/apiclient. The surface this module needs is small — refresh a
  * token, create a folder, upload a file, rewrite its permissions, read it back
  * — and the official SDK is built around credentials that live in a file on
  * disk or in an environment variable. This module's whole premise is the
  * opposite: the credential lives encrypted in the database and is rotated from
  * the admin panel. Speaking the REST API directly keeps that path under our
- * control and avoids bending an SDK into a shape it does not want.
+ * control and avoids bending an SDK into a shape it does not want. What the SDK
+ * would do for us here is one form POST, which is exactly what
+ * exchangeRefreshToken() below is.
  *
- * AUTHENTICATION. Service accounts do not use the interactive OAuth dance:
- * the application builds a JWT asserting "I am <client_email>, I want <scope>",
- * signs it with the account's RSA private key, and exchanges it for a
- * short-lived access token. The token is cached, keyed by credential row, so a
- * burst of uploads costs one token exchange rather than one per file.
+ * AUTHENTICATION IS USER CONTEXT, NOT A SERVICE ACCOUNT. The client sends the
+ * OAuth client id, the client secret and the stored refresh token to Google's
+ * token endpoint with `grant_type=refresh_token`, and Google answers with a
+ * short-lived access token minted FOR THE PERSON who granted it. Every call
+ * below is therefore made as that person.
  *
- * SCOPE. Requested from `config('media.drive.scope')`. It defaults to `drive`
- * and no longer to `drive.file`, because `drive.file` grants per-file access
- * only to objects this application created: a root folder a person created in
- * their own Drive and then shared with the service account is simply not part
- * of that token's universe, and Drive reports objects outside the universe as
- * `404 File not found` rather than 403 — the misconfiguration that looks like
- * a mistyped folder id. See config/media.php for the trade-off.
+ * WHY THE SERVICE ACCOUNT WAS ABANDONED. A service account is an identity with
+ * no storage quota of its own. Drive bills a new object to whoever owns it, so
+ * every upload into an ordinary My Drive folder was charged to an account that
+ * owns zero bytes and came back `403 [storageQuotaExceeded]`, whatever the
+ * sharing grant said. Google's remedy is a Shared Drive, where the drive owns
+ * its contents — and Shared Drives are a Workspace feature that does not exist
+ * on the personal Google One account this deployment runs against. A refresh
+ * token from the account's owner removes the problem instead of working around
+ * it: the files belong to them and consume the plan they already pay for.
  *
- * SHARED DRIVES. Every call — upload, read, patch, delete, permissions —
- * carries `supportsAllDrives=true`, and every search additionally carries
- * `includeItemsFromAllDrives=true` with `corpora=allDrives`. Without them Drive
- * silently confines the request to the service account's own My Drive, so a
- * root folder living in a shared drive — or shared into the account from
- * outside — reads as absent instead of as unreachable.
+ * NO SHARED-DRIVE PARAMETERS. `supportsAllDrives`, `includeItemsFromAllDrives`
+ * and `corpora=allDrives` are gone from every call. They exist to make objects
+ * inside shared drives addressable; against a personal Drive they address
+ * nothing, and carrying them would only suggest a storage model this module no
+ * longer has.
  *
- * Those parameters are not an optimization here, they are the module's storage
- * model. A service account owns no storage quota of its own, so every file it
- * creates inside an ordinary My Drive folder is billed to an account with zero
- * bytes and Drive answers `403 [storageQuotaExceeded]`. Inside a shared drive
- * the DRIVE owns the file and the organization pays for it, which is why the
- * library's root folder must live in one. The parameters below are what make
- * that placement addressable at all; `driveIdOf()` is what proves it holds.
+ * SCOPE. Requested from `config('media.drive.scope')`, and it stays `drive`
+ * rather than `drive.file`: the root folder is one the owner created by hand,
+ * and `drive.file` reaches only objects this application itself created. Drive
+ * reports anything outside the token's universe as `404 File not found`, which
+ * reads as a mistyped folder id. See config/media.php for the trade-off.
  */
 class GoogleDriveClient
 {
     /**
-     * Access token for a credential row, minted on demand and cached until
+     * Access token for a credential row, refreshed on demand and cached until
      * shortly before it expires.
      *
      * The leeway matters: a token cached for its full hour can be handed to a
@@ -61,7 +63,7 @@ class GoogleDriveClient
      * producing a 401 that no retry policy explains. Retiring it five minutes
      * early makes that race impossible.
      *
-     * @throws GoogleDriveException when Google refuses the assertion.
+     * @throws GoogleDriveException when Google refuses the refresh token.
      */
     public function accessToken(DriveCredential $credential): string
     {
@@ -73,38 +75,51 @@ class GoogleDriveClient
             return $cached;
         }
 
-        $ttl = (int) config('media.drive.token_ttl', 3600);
         $leeway = (int) config('media.drive.token_leeway', 300);
 
-        $token = $this->exchangeAssertion($credential, $ttl);
+        ['token' => $token, 'expires_in' => $expiresIn] = $this->exchangeRefreshToken($credential);
 
-        Cache::put($cacheKey, $token, max(60, $ttl - $leeway));
+        Cache::put($cacheKey, $token, max(60, $expiresIn - $leeway));
 
         return $token;
     }
 
     /**
-     * Builds and signs the JWT assertion, then trades it for an access token.
+     * Trades the stored refresh token for an access token.
+     *
+     * This is the whole authenticator. There is no assertion to build and no
+     * key to sign with: the refresh token IS the long-lived credential, and the
+     * client id/secret pair only proves which OAuth application is redeeming
+     * it. That is also why all three are stored together and rotated together —
+     * a refresh token is bound to the client that obtained it and is worthless
+     * against another one.
+     *
+     * The lifetime comes from Google's own `expires_in` rather than from a
+     * constant. Google currently answers one hour, but a token cached for
+     * longer than it lives produces 401s that look like a permissions problem,
+     * so the provider's answer is the one that decides.
+     *
+     * @return array{token: string, expires_in: int}
      *
      * @throws GoogleDriveException
      */
-    private function exchangeAssertion(DriveCredential $credential, int $ttl): string
+    private function exchangeRefreshToken(DriveCredential $credential): array
     {
-        $assertion = $this->buildAssertion($credential, $ttl);
-
         try {
             $response = $this->http(config('media.drive.timeout'))
                 ->asForm()
                 ->post(config('media.drive.token_endpoint'), [
-                    'grant_type' => 'urn:ietf:params:oauth:grant-type:jwt-bearer',
-                    'assertion' => $assertion,
+                    'grant_type' => 'refresh_token',
+                    'client_id' => (string) $credential->client_id,
+                    'client_secret' => (string) $credential->client_secret,
+                    'refresh_token' => (string) $credential->refresh_token,
                 ]);
         } catch (Throwable $e) {
             // A connection that never completed: blocked egress, DNS failure,
             // TLS rejected. Google said nothing, so there is no provider text
             // to preserve — the transport's own message is the diagnosis.
             throw new GoogleDriveException(
-                'No se pudo contactar a Google para autenticar la cuenta de servicio: '.$e->getMessage(),
+                'No se pudo contactar a Google para renovar el token de acceso: '.$e->getMessage(),
                 null,
                 ['stage' => 'token'],
                 $e,
@@ -113,9 +128,9 @@ class GoogleDriveClient
 
         if ($response->failed()) {
             throw new GoogleDriveException(
-                $this->describeFailure($response, 'Google rechazó las credenciales de la Service Account'),
+                $this->describeTokenFailure($response),
                 $response->status(),
-                ['stage' => 'token'],
+                ['stage' => 'token', 'reason' => $this->failureReason($response)],
             );
         }
 
@@ -129,74 +144,37 @@ class GoogleDriveClient
             );
         }
 
-        return $token;
+        $expiresIn = (int) ($response->json('expires_in') ?? config('media.drive.token_ttl', 3600));
+
+        return ['token' => $token, 'expires_in' => max(60, $expiresIn)];
     }
 
     /**
-     * RS256-signed JWT asserting the service account's identity.
+     * The token endpoint's failures, translated into the three things that are
+     * actually wrong when a refresh stops working.
      *
-     * `iat` is backdated by ten seconds deliberately. Google rejects an
-     * assertion issued in its future, and a container whose clock drifts a few
-     * seconds ahead of Google's would otherwise fail every single upload with
-     * an opaque "invalid_grant" — one of the hardest failures in this
-     * integration to diagnose from the symptom.
-     *
-     * @throws GoogleDriveException when the stored key cannot sign.
+     * Google answers all of them with the same opaque `invalid_grant` or
+     * `invalid_client`, and the raw wording ("Bad Request") sends an
+     * administrator to check the folder id, which is never the cause at this
+     * stage. Naming the three real causes is what turns a dead end into a fix.
      */
-    private function buildAssertion(DriveCredential $credential, int $ttl): string
+    private function describeTokenFailure(Response $response): string
     {
-        $now = time();
+        $error = (string) ($response->json('error') ?? '');
+        $base = $this->describeFailure($response, 'Google rechazó la renovación del token de OAuth');
 
-        $header = ['alg' => 'RS256', 'typ' => 'JWT'];
-
-        $claims = [
-            'iss' => $credential->client_email,
-            'scope' => config('media.drive.scope'),
-            'aud' => config('media.drive.token_endpoint'),
-            'iat' => $now - 10,
-            'exp' => $now + $ttl,
-        ];
-
-        $payload = $this->base64UrlEncode(json_encode($header, JSON_UNESCAPED_SLASHES))
-            .'.'
-            .$this->base64UrlEncode(json_encode($claims, JSON_UNESCAPED_SLASHES));
-
-        $key = openssl_pkey_get_private($this->normalizePrivateKey((string) $credential->private_key));
-
-        if ($key === false) {
-            throw new GoogleDriveException(
-                'La llave privada almacenada no es un PEM RSA válido. Vuelve a cargar el JSON '
-                    .'de la Service Account tal como lo descargaste de Google Cloud.',
-                null,
-                ['stage' => 'sign'],
-            );
-        }
-
-        $signature = '';
-
-        if (! openssl_sign($payload, $signature, $key, OPENSSL_ALGO_SHA256)) {
-            throw new GoogleDriveException(
-                'No se pudo firmar la aserción JWT con la llave privada almacenada.',
-                null,
-                ['stage' => 'sign'],
-            );
-        }
-
-        return $payload.'.'.$this->base64UrlEncode($signature);
-    }
-
-    /**
-     * Repairs the two ways a service account key survives a copy-paste badly.
-     *
-     * Pasting the JSON into a form and reading it back through a shell or a
-     * spreadsheet turns the literal two-character sequence `\n` into the key's
-     * only line breaks, and some clients normalize the newlines to CRLF.
-     * OpenSSL accepts neither. Fixing it here — once, at the boundary — beats
-     * telling an administrator their valid key is invalid.
-     */
-    private function normalizePrivateKey(string $key): string
-    {
-        return str_replace(["\\n", "\r\n"], ["\n", "\n"], trim($key));
+        return match ($error) {
+            'invalid_grant' => $base.' El Refresh Token ya no es válido. Las causas habituales son: '
+                .'1) el usuario revocó el acceso de la aplicación desde su cuenta de Google; '
+                .'2) el token se generó con un Client ID distinto al configurado aquí; '
+                .'3) la aplicación de OAuth sigue en modo "Testing" en Google Cloud, donde los '
+                .'refresh tokens caducan a los 7 días — publícala para que dejen de expirar. '
+                .'Genera un Refresh Token nuevo y vuelve a guardarlo.',
+            'invalid_client' => $base.' El Client ID o el Client Secret no corresponden a una '
+                .'aplicación OAuth válida. Cópialos de nuevo desde Google Cloud Console → '
+                .'Credenciales → ID de cliente de OAuth 2.0.',
+            default => $base,
+        };
     }
 
     /**
@@ -217,9 +195,9 @@ class GoogleDriveClient
         $existing = $this->request($credential, 'get', '/files', [
             'q' => "name = '{$escaped}' and mimeType = 'application/vnd.google-apps.folder' "
                 ."and '{$parentId}' in parents and trashed = false",
-            'fields' => 'files(id,name,driveId)',
+            'fields' => 'files(id,name)',
             'pageSize' => 1,
-        ] + $this->searchScopeParams());
+        ]);
 
         $found = $existing->json('files.0.id');
 
@@ -231,7 +209,7 @@ class GoogleDriveClient
             'name' => $name,
             'mimeType' => 'application/vnd.google-apps.folder',
             'parents' => [$parentId],
-        ], ['fields' => 'id'] + $this->sharedDriveParams());
+        ], ['fields' => 'id']);
 
         $id = $created->json('id');
 
@@ -289,11 +267,8 @@ class GoogleDriveClient
                 ->withBody($body, "multipart/related; boundary={$boundary}")
                 ->post($url.'?'.http_build_query([
                     'uploadType' => 'multipart',
-                    // `driveId` comes back only when the object landed inside a
-                    // shared drive, so it doubles as the receipt that the file
-                    // is not being billed to the service account's zero quota.
-                    'fields' => 'id,name,mimeType,size,parents,webViewLink,md5Checksum,createdTime,driveId',
-                ] + $this->sharedDriveParams()));
+                    'fields' => 'id,name,mimeType,size,parents,webViewLink,md5Checksum,createdTime',
+                ]));
         } catch (Throwable $e) {
             throw new GoogleDriveException(
                 'La subida a Google Drive no pudo completarse: '.$e->getMessage(),
@@ -308,9 +283,9 @@ class GoogleDriveClient
                 $this->describeFailure($response, 'Google Drive rechazó la subida del archivo'),
                 $response->status(),
                 // The reason code is what separates the two 403s this call can
-                // produce: `storageQuotaExceeded` is the storage model being
-                // wrong (a My Drive parent), while `insufficientFilePermissions`
-                // is the sharing grant being wrong. They need opposite fixes.
+                // produce: `storageQuotaExceeded` is the owner's Drive being
+                // genuinely full, while `insufficientFilePermissions` is the
+                // grant being too narrow. They need opposite fixes.
                 ['stage' => 'upload', 'reason' => $this->failureReason($response)],
             );
         }
@@ -332,7 +307,7 @@ class GoogleDriveClient
             'patch',
             "/files/{$fileId}",
             $metadata,
-            ['fields' => 'id,name,mimeType,size'] + $this->sharedDriveParams(),
+            ['fields' => 'id,name,mimeType,size'],
         )->json();
     }
 
@@ -349,11 +324,8 @@ class GoogleDriveClient
     public function listPermissions(DriveCredential $credential, string $fileId): array
     {
         $response = $this->request($credential, 'get', "/files/{$fileId}/permissions", [
-            // `permissionDetails` is what tells an inherited grant (one that
-            // belongs to the shared drive and cannot be deleted from the file)
-            // apart from one set on the object itself.
-            'fields' => 'permissions(id,type,role,emailAddress,domain,allowFileDiscovery,permissionDetails(inherited))',
-        ] + $this->sharedDriveParams());
+            'fields' => 'permissions(id,type,role,emailAddress,domain,allowFileDiscovery)',
+        ]);
 
         return (array) ($response->json('permissions') ?? []);
     }
@@ -361,13 +333,7 @@ class GoogleDriveClient
     /** @throws GoogleDriveException */
     public function deletePermission(DriveCredential $credential, string $fileId, string $permissionId): void
     {
-        $this->request(
-            $credential,
-            'delete',
-            "/files/{$fileId}/permissions/{$permissionId}",
-            [],
-            $this->sharedDriveParams(),
-        );
+        $this->request($credential, 'delete', "/files/{$fileId}/permissions/{$permissionId}");
     }
 
     /**
@@ -385,7 +351,7 @@ class GoogleDriveClient
             'type' => 'user',
             'role' => 'reader',
             'emailAddress' => $email,
-        ], ['sendNotificationEmail' => 'false'] + $this->sharedDriveParams());
+        ], ['sendNotificationEmail' => 'false']);
     }
 
     /**
@@ -404,7 +370,7 @@ class GoogleDriveClient
                 ->withToken($this->accessToken($credential))
                 ->get(
                     rtrim(config('media.drive.api_base'), '/')."/files/{$fileId}",
-                    ['alt' => 'media'] + $this->sharedDriveParams(),
+                    ['alt' => 'media'],
                 );
         } catch (Throwable $e) {
             throw new GoogleDriveException(
@@ -437,66 +403,97 @@ class GoogleDriveClient
      */
     public function trashFile(DriveCredential $credential, string $fileId): void
     {
-        $this->request($credential, 'patch', "/files/{$fileId}", ['trashed' => true], $this->sharedDriveParams());
+        $this->request($credential, 'patch', "/files/{$fileId}", ['trashed' => true]);
     }
 
     /** @throws GoogleDriveException */
     public function untrashFile(DriveCredential $credential, string $fileId): void
     {
-        $this->request($credential, 'patch', "/files/{$fileId}", ['trashed' => false], $this->sharedDriveParams());
+        $this->request($credential, 'patch', "/files/{$fileId}", ['trashed' => false]);
     }
 
     /**
      * Reads a file's metadata. Used by the health check to prove the root
-     * folder exists AND is reachable by this account — the two things an
+     * folder exists AND is reachable by this grant — the two things an
      * administrator most often gets wrong.
      *
-     * `supportsAllDrives=true` is what lets this resolve an id that lives in a
-     * shared drive instead of in the service account's own My Drive. It does
-     * NOT, by itself, make an externally shared folder visible: that depends on
-     * the OAuth scope, which is why a 404 here is read as a scope/sharing
-     * problem and not only as a wrong id.
+     * A 404 here is read as a scope/ownership problem and not only as a wrong
+     * id, because Drive answers the same way for both.
      *
      * @return array<string, mixed>
      *
      * @throws GoogleDriveException
      */
-    public function getFile(DriveCredential $credential, string $fileId, string $fields = 'id,name,mimeType,trashed,driveId,capabilities(canAddChildren)'): array
-    {
+    public function getFile(
+        DriveCredential $credential,
+        string $fileId,
+        string $fields = 'id,name,mimeType,trashed,ownedByMe,capabilities(canAddChildren)',
+    ): array {
         return (array) $this->request($credential, 'get', "/files/{$fileId}", [
             'fields' => $fields,
-        ] + $this->sharedDriveParams())->json();
+        ])->json();
     }
 
     /**
-     * Folders this service account can actually reach right now, across My
-     * Drive, "Shared with me" and every shared drive.
+     * Who this grant belongs to and how much room that account has left.
+     *
+     * This is the probe that replaced the old shared-drive check, and it
+     * answers the two questions the previous storage model could not. WHO:
+     * a refresh token carries no readable identity, so without asking there is
+     * no way to tell that the token authorizes a personal Gmail account
+     * different from the one whose folder id was pasted below it — a mismatch
+     * that surfaces later as an unexplainable 404. HOW MUCH ROOM: the quota is
+     * now a real, finite number that belongs to a human being, so an upload can
+     * genuinely fail for lack of space, and saying so on the settings screen is
+     * better than discovering it on the operator's first large file.
+     *
+     * `storageQuota.limit` is absent on unlimited plans, which is a valid
+     * answer and not an error.
+     *
+     * @return array{email: string|null, name: string|null, limit: int|null, usage: int|null}
+     *
+     * @throws GoogleDriveException
+     */
+    public function about(DriveCredential $credential): array
+    {
+        $response = $this->request($credential, 'get', '/about', [
+            'fields' => 'user(emailAddress,displayName),storageQuota(limit,usage)',
+        ]);
+
+        $limit = $response->json('storageQuota.limit');
+        $usage = $response->json('storageQuota.usage');
+
+        return [
+            'email' => $response->json('user.emailAddress'),
+            'name' => $response->json('user.displayName'),
+            'limit' => is_numeric($limit) ? (int) $limit : null,
+            'usage' => is_numeric($usage) ? (int) $usage : null,
+        ];
+    }
+
+    /**
+     * Folders this grant can actually reach right now.
      *
      * Diagnostic only, and deliberately so: it is the answer to the question an
-     * administrator staring at a 404 really has — "does this account see ANY of
-     * my folders?". An empty list means the sharing step never took effect (or
-     * the scope is too narrow to observe it); a list that does not contain the
-     * configured id means the id belongs to a different folder than the one
-     * that was shared.
-     *
-     * Each entry reports whether it lives in a shared drive, because that is
-     * the property that decides whether the folder can hold uploads at all —
-     * offering an administrator a list of reachable folders without saying
-     * which of them are usable would just move the failure one step later.
+     * administrator staring at a 404 really has — "does this token see ANY of
+     * my folders?". An empty list means the grant was issued against a
+     * different Google account than the one holding the folder (or the scope is
+     * too narrow to observe it); a list that does not contain the configured id
+     * means the id belongs to a different folder than the one that was meant.
      *
      * Returns an empty array on failure instead of throwing: a diagnostic that
      * can itself blow up would replace the real error with its own.
      *
-     * @return array<int, array{id: string, name: string, shared_drive: bool}>
+     * @return array<int, array{id: string, name: string, owned: bool}>
      */
     public function listAccessibleFolders(DriveCredential $credential, int $limit = 10): array
     {
         try {
             $response = $this->request($credential, 'get', '/files', [
                 'q' => "mimeType = 'application/vnd.google-apps.folder' and trashed = false",
-                'fields' => 'files(id,name,driveId)',
+                'fields' => 'files(id,name,ownedByMe)',
                 'pageSize' => max(1, min($limit, 100)),
-            ] + $this->searchScopeParams());
+            ]);
         } catch (Throwable) {
             return [];
         }
@@ -505,79 +502,14 @@ class GoogleDriveClient
             ->map(fn ($folder) => [
                 'id' => (string) ($folder['id'] ?? ''),
                 'name' => (string) ($folder['name'] ?? ''),
-                'shared_drive' => filled($folder['driveId'] ?? null),
+                // A folder somebody else shared with this account still stores
+                // its children against THEIR quota, so ownership is worth
+                // stating next to a folder offered as a candidate root.
+                'owned' => (bool) ($folder['ownedByMe'] ?? false),
             ])
             ->filter(fn (array $folder) => $folder['id'] !== '')
             ->values()
             ->all();
-    }
-
-    /**
-     * Id of the shared drive an object lives in, or null when it lives in a My
-     * Drive.
-     *
-     * This is the module's storage-model probe, and it answers the question no
-     * other field answers: a folder in a personal My Drive that has been shared
-     * with the service account looks IDENTICAL to a shared drive folder from
-     * every other angle — it is reachable, it reports `canAddChildren`, folders
-     * can even be created inside it, because a folder occupies zero bytes. The
-     * difference only surfaces on the first upload of real bytes, as a
-     * `403 [storageQuotaExceeded]` charged to an account that owns no quota.
-     * `driveId` is present exclusively for objects inside a shared drive, so it
-     * is the one honest, cheap answer available before that failure.
-     *
-     * Returns null on any failure rather than throwing: the caller uses this to
-     * EXPLAIN a problem, and a probe that can itself blow up would replace the
-     * real diagnosis with its own.
-     */
-    public function driveIdOf(DriveCredential $credential, string $fileId): ?string
-    {
-        try {
-            $driveId = $this->getFile($credential, $fileId, 'id,driveId')['driveId'] ?? null;
-        } catch (Throwable) {
-            return null;
-        }
-
-        return is_string($driveId) && $driveId !== '' ? $driveId : null;
-    }
-
-    /**
-     * Query parameters every non-search call must carry.
-     *
-     * Drive treats a request without `supportsAllDrives` as one made by a
-     * client that does not understand shared drives, and refuses to act on
-     * objects inside them — reads included. Centralizing it here is what makes
-     * "every call carries it" a property of the class rather than a rule each
-     * method has to remember: a new method that forgets to merge this in
-     * would work perfectly against My Drive during development and fail in
-     * production, which is the worst possible way to discover the omission.
-     *
-     * @return array<string, string>
-     */
-    private function sharedDriveParams(): array
-    {
-        return ['supportsAllDrives' => 'true'];
-    }
-
-    /**
-     * Query parameters that stop a search from being confined to the service
-     * account's private storage.
-     *
-     * All three travel together because Drive requires them to: `corpora` is
-     * only honoured for `allDrives` when `includeItemsFromAllDrives` and
-     * `supportsAllDrives` are both true, and dropping any one of them quietly
-     * narrows the search back to My Drive. That silent narrowing is what makes
-     * a folder shared from outside — the normal setup for this module — look
-     * like it does not exist.
-     *
-     * @return array<string, string>
-     */
-    private function searchScopeParams(): array
-    {
-        return [
-            'corpora' => 'allDrives',
-            'includeItemsFromAllDrives' => 'true',
-        ] + $this->sharedDriveParams();
     }
 
     /**
@@ -588,14 +520,11 @@ class GoogleDriveClient
      * is what keeps every caller above free of transport concerns and gives
      * every failure the same shape.
      *
-     * DELETE BUILDS ITS QUERY STRING BY HAND, and that is not a style choice.
-     * The framework's `get()` puts its array in the query string, but its
-     * `delete()` puts the very same array in the request BODY as JSON. Drive
-     * reads `supportsAllDrives` only from the query string and ignores bodies
-     * on DELETE, so passing the two the same way would send a parameter that
-     * silently never arrives — and the only call this affects is the one that
-     * revokes a public permission on a shared-drive file, which would then fail
-     * as "not found" while the grant it was meant to remove stayed in place.
+     * DELETE builds its query string by hand because the framework's `delete()`
+     * puts its array in the request BODY as JSON while `get()` puts it in the
+     * query string, and Drive ignores bodies on DELETE. Keeping the two
+     * symmetrical here means a parameter added to a delete later actually
+     * arrives.
      *
      * @param  array<string, mixed>  $payload
      * @param  array<string, mixed>  $query
@@ -638,8 +567,8 @@ class GoogleDriveClient
                     'method' => $method,
                     // Google's reason code is carried up untouched because it
                     // is often the entire diagnosis: `notFound` on a folder the
-                    // administrator can see in their browser means the account
-                    // cannot reach it, not that the id is wrong.
+                    // administrator can see in their browser means the token
+                    // belongs to another account, not that the id is wrong.
                     'reason' => $this->failureReason($response),
                 ],
             );
@@ -650,12 +579,20 @@ class GoogleDriveClient
 
     /**
      * Google's machine-readable reason code for a failed call, when it sent one.
+     *
+     * Both shapes are read: Drive answers `{error: {errors: [{reason}]}}` and
+     * the OAuth token endpoint answers `{error: "invalid_grant"}`.
      */
     private function failureReason(Response $response): ?string
     {
         $body = $response->json();
 
-        $reason = is_array($body) ? ($body['error']['errors'][0]['reason'] ?? null) : null;
+        if (! is_array($body)) {
+            return null;
+        }
+
+        $reason = $body['error']['errors'][0]['reason']
+            ?? (is_string($body['error'] ?? null) ? $body['error'] : null);
 
         return is_string($reason) && $reason !== '' ? $reason : null;
     }
@@ -666,9 +603,8 @@ class GoogleDriveClient
      *
      * Drive answers with `{error: {message, errors: [{reason}]}}` and the OAuth
      * endpoint with `{error, error_description}`. Both are read, because the
-     * reason code is often the whole diagnosis: `insufficientFilePermissions`
-     * means the root folder was never shared with the service account, and no
-     * paraphrase carries that.
+     * reason code is often the whole diagnosis: `invalid_grant` means the
+     * refresh token was revoked or expired, and no paraphrase carries that.
      */
     private function describeFailure(Response $response, string $prefix): string
     {
@@ -678,7 +614,7 @@ class GoogleDriveClient
             ? ($body['error']['message'] ?? $body['error_description'] ?? (is_string($body['error'] ?? null) ? $body['error'] : null))
             : null;
 
-        $reason = is_array($body) ? ($body['error']['errors'][0]['reason'] ?? null) : null;
+        $reason = $this->failureReason($response);
 
         $detail = trim((string) ($message ?? substr($response->body(), 0, 300)));
 
@@ -706,10 +642,5 @@ class GoogleDriveClient
     private function withQuery(string $url, array $query): string
     {
         return $query === [] ? $url : $url.'?'.http_build_query($query);
-    }
-
-    private function base64UrlEncode(string $value): string
-    {
-        return rtrim(strtr(base64_encode($value), '+/', '-_'), '=');
     }
 }

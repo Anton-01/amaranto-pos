@@ -16,10 +16,12 @@ use Illuminate\Support\Facades\Log;
 /**
  * Administration of the Google Drive connection.
  *
- * Every response passes through the model's $hidden rules, so the service
- * account JSON, the private key and the client secret never leave the server.
- * The panel works with the `has_*` booleans and the client email instead —
- * enough to recognize which account is loaded, useless for impersonating it.
+ * The connection is an OAuth 2.0 user-context grant: a client id, a client
+ * secret and a refresh token issued by the owner of the Drive. Every response
+ * passes through the model's $hidden rules, so the secret and the refresh token
+ * never leave the server. The panel works with the `has_*` booleans, the client
+ * id and the authorizing account's email instead — enough to recognize which
+ * connection is loaded, useless for impersonating it.
  */
 class DriveCredentialController extends Controller
 {
@@ -43,17 +45,18 @@ class DriveCredentialController extends Controller
             'metadata' => [
                 'is_configured' => (bool) $credential?->isUsable(),
                 'missing' => $credential?->missingPieces() ?? [
-                    'Correo de la Service Account',
-                    'Llave privada (JSON de la Service Account)',
+                    'Client ID de OAuth',
+                    'Client Secret de OAuth',
+                    'Refresh Token',
                     'ID de la carpeta raíz en Drive',
                 ],
                 // Echoed so the panel can tell the administrator exactly which
-                // Drive permission the service account is asking Google for.
-                // It is the setting that decides whether a root folder shared
-                // from somebody else's Drive is visible at all, and a 404 on
-                // the connection test is unreadable without knowing it.
+                // Drive permission this application asks Google for. It is the
+                // setting that decides whether a folder the owner created by
+                // hand is visible at all, and a 404 on the connection test is
+                // unreadable without knowing it.
                 'scope' => config('media.drive.scope'),
-                'supports_external_shared_folders' => config('media.drive.scope')
+                'supports_manual_folders' => config('media.drive.scope')
                     !== config('media.drive.narrow_scope'),
             ],
         ]);
@@ -62,11 +65,16 @@ class DriveCredentialController extends Controller
     /**
      * Creates or replaces the active connection.
      *
-     * An empty `service_account_json` means "keep the stored credential" — the
-     * form is normally submitted that way, because the API never returns the
-     * document. Rotating requires actually pasting a new one, which prevents an
-     * accidental save from wiping a working connection while editing the reader
-     * list.
+     * An empty `client_secret` or `refresh_token` means "keep the stored
+     * value" — the form is normally submitted that way, because the API never
+     * returns either of them. Rotating requires actually pasting a new value,
+     * which prevents an accidental save from wiping a working connection while
+     * editing the folder id or the reader list.
+     *
+     * Both are written through the model's `encrypted` cast, so what reaches
+     * PostgreSQL is ciphertext under APP_KEY. The client id is stored in the
+     * clear on purpose: it is a public identifier of the OAuth application,
+     * shown back in the panel, and useless without the pair it belongs to.
      */
     public function store(StoreDriveCredentialRequest $request): JsonResponse
     {
@@ -74,38 +82,42 @@ class DriveCredentialController extends Controller
 
         $credential = DriveCredential::active() ?? new DriveCredential();
 
-        if (filled($payload['service_account_json'] ?? null)) {
-            if (! $credential->fillFromServiceAccountJson($payload['service_account_json'])) {
-                return response()->json([
-                    'status' => 'error',
-                    'code' => 'ERR_MEDIA_DRIVE_INVALID_JSON',
-                    'message' => 'El JSON no corresponde a una Service Account de Google: '
-                        .'debe contener al menos "client_email" y "private_key". '
-                        .'Pega el archivo tal como lo descargaste de Google Cloud.',
-                ], 422);
-            }
-        }
-
         $credential->fill([
             'label' => $payload['label'] ?? ($credential->label ?: 'Google Drive'),
+            'client_id' => $payload['client_id'],
             'root_folder_id' => $payload['root_folder_id'],
             'authorized_emails' => $payload['authorized_emails'] ?? ($credential->authorized_emails ?? []),
             'is_active' => $request->boolean('is_active', true),
             'updated_by' => $request->user()->id,
         ]);
 
-        if (filled($payload['client_id'] ?? null)) {
-            $credential->client_id = $payload['client_id'];
-        }
-
         if (filled($payload['client_secret'] ?? null)) {
             $credential->client_secret = $payload['client_secret'];
+        }
+
+        if (filled($payload['refresh_token'] ?? null)) {
+            $credential->refresh_token = $payload['refresh_token'];
+        }
+
+        /*
+         * A refresh token is bound to the OAuth client that obtained it, so
+         * pointing an existing connection at a different client id leaves it
+         * holding a grant no longer redeemable — Google answers `invalid_grant`
+         * and the panel would blame the token. Forgetting the stored account
+         * and the stored health check is what stops the UI from asserting an
+         * identity that has not been proven against the new pair.
+         */
+        if ($credential->isDirty('client_id')) {
+            $credential->account_email = null;
+            $credential->last_tested_at = null;
+            $credential->last_test_status = null;
+            $credential->last_test_message = null;
         }
 
         $credential->save();
 
         /*
-         * A rotated key leaves the previous access token alive inside its
+         * A rotated grant leaves the previous access token alive inside its
          * one-hour window. Dropping it here is what makes a revocation take
          * effect at once instead of "sometime within the hour" — the exact
          * class of bug that makes a security control untrustworthy.
@@ -117,14 +129,16 @@ class DriveCredentialController extends Controller
             $credential->label,
             [
                 'drive_credential_id' => $credential->id,
-                // The identity is recorded, the secret is not. This row is
+                // The identity is recorded, the secrets are not. This row is
                 // read by auditors; it must not become a second copy of the
-                // credential.
-                'client_email' => $credential->client_email,
-                'project_id' => $credential->project_id,
+                // credential. Only whether each secret was replaced is stored,
+                // which is what makes a rotation auditable without exposing it.
+                'client_id' => $credential->client_id,
+                'account_email' => $credential->account_email,
                 'root_folder_id' => $credential->root_folder_id,
                 'authorized_emails' => $credential->grantableEmails(),
-                'service_account_rotated' => filled($payload['service_account_json'] ?? null),
+                'client_secret_rotated' => filled($payload['client_secret'] ?? null),
+                'refresh_token_rotated' => filled($payload['refresh_token'] ?? null),
                 'is_active' => $credential->is_active,
             ],
             $request->user(),
@@ -134,7 +148,7 @@ class DriveCredentialController extends Controller
             'status' => 'success',
             'data' => $credential->fresh('updatedByUser'),
             'metadata' => [
-                'message' => 'Credenciales de Google Drive guardadas de forma cifrada.',
+                'message' => 'Credenciales de OAuth de Google Drive guardadas de forma cifrada.',
                 'is_configured' => $credential->isUsable(),
                 'missing' => $credential->missingPieces(),
             ],
@@ -153,8 +167,8 @@ class DriveCredentialController extends Controller
      * WHY IT ACCEPTS AN UNSAVED PAYLOAD. It builds an in-memory model from what
      * is typed in the form, so a credential can be validated BEFORE being
      * persisted, through the exact code path production uses. The fields the
-     * form cannot repopulate — the service account JSON — fall back to what is
-     * stored.
+     * form cannot repopulate — the client secret and the refresh token — fall
+     * back to what is stored.
      *
      * WHY 422 AND NOT 500 ON FAILURE. The request was well formed and the
      * application did exactly what it was asked; what failed is the
@@ -170,24 +184,23 @@ class DriveCredentialController extends Controller
 
         $candidate = new DriveCredential([
             'label' => $stored?->label ?? 'Google Drive',
+            'client_id' => $payload['client_id'] ?? $stored?->client_id,
             'root_folder_id' => $payload['root_folder_id'] ?? $stored?->root_folder_id,
             'authorized_emails' => $payload['authorized_emails'] ?? ($stored?->authorized_emails ?? []),
         ]);
 
-        if (filled($payload['service_account_json'] ?? null)) {
-            if (! $candidate->fillFromServiceAccountJson($payload['service_account_json'])) {
-                return response()->json([
-                    'status' => 'error',
-                    'code' => 'ERR_MEDIA_DRIVE_INVALID_JSON',
-                    'message' => 'El JSON no corresponde a una Service Account de Google '
-                        .'(faltan "client_email" o "private_key").',
-                ], 422);
-            }
-        } elseif ($stored) {
-            $candidate->client_email = $stored->client_email;
-            $candidate->private_key = $stored->private_key;
-            $candidate->project_id = $stored->project_id;
-        }
+        // Assigned outside the fill() so a blank field falls back to the stored
+        // secret instead of blanking it: the panel cannot repopulate either of
+        // these, so "empty" always means "use what is saved".
+        $candidate->client_secret = filled($payload['client_secret'] ?? null)
+            ? $payload['client_secret']
+            : $stored?->client_secret;
+
+        $candidate->refresh_token = filled($payload['refresh_token'] ?? null)
+            ? $payload['refresh_token']
+            : $stored?->refresh_token;
+
+        $candidate->account_email = $stored?->account_email;
 
         // Only a persisted row owns a cache entry; giving the candidate the
         // stored id makes the check invalidate and exercise the real one.
@@ -203,7 +216,8 @@ class DriveCredentialController extends Controller
                 'checks' => $result['checks'],
                 'error' => $result['error']['message'] ?? null,
                 'elapsed_ms' => $result['elapsed_ms'],
-                'client_email' => $candidate->client_email,
+                'client_id' => $candidate->client_id,
+                'account_email' => $candidate->account_email,
                 'root_folder_id' => $candidate->root_folder_id,
             ],
             $request->user(),
@@ -214,6 +228,12 @@ class DriveCredentialController extends Controller
         // fine until somebody presses the button again.
         if ($stored) {
             $stored->forceFill([
+                // The check resolves the authorizing account from Drive itself.
+                // Writing it back is what lets the panel name WHO the connection
+                // speaks as — the one fact a refresh token does not reveal, and
+                // the usual cause of a 404 on a folder id that is perfectly
+                // valid for somebody else.
+                'account_email' => $candidate->account_email ?? $stored->account_email,
                 'last_tested_at' => now(),
                 'last_test_status' => $result['success'] ? 'success' : 'failed',
                 'last_test_message' => $result['success']
@@ -224,7 +244,8 @@ class DriveCredentialController extends Controller
 
         if (! $result['success']) {
             Log::warning('Prueba de conexión con Google Drive fallida.', [
-                'client_email' => $candidate->client_email,
+                'client_id' => $candidate->client_id,
+                'account_email' => $candidate->account_email,
                 'root_folder_id' => $candidate->root_folder_id,
                 'stage' => $result['error']['stage'] ?? null,
                 'status_code' => $result['error']['status_code'] ?? null,
@@ -234,9 +255,9 @@ class DriveCredentialController extends Controller
             return response()->json([
                 'status' => 'error',
                 'code' => 'ERR_MEDIA_DRIVE_TEST_FAILED',
-                // Google's own words, verbatim: an "insufficientFilePermissions"
-                // and a "File not found" call for different fixes, and a
-                // friendly paraphrase would erase the distinction.
+                // Google's own words, verbatim where they are useful: an
+                // `invalid_grant` and a "File not found" call for different
+                // fixes, and a friendly paraphrase would erase the distinction.
                 'message' => $result['error']['message'] ?? 'La prueba de conexión falló.',
                 'data' => [
                     'checks' => $result['checks'],
@@ -253,12 +274,13 @@ class DriveCredentialController extends Controller
                 'elapsed_ms' => $result['elapsed_ms'],
             ],
             'metadata' => [
-                // The shared drive is named in the success message because it
-                // is the part of a healthy setup an administrator cannot see
-                // from the panel, and the part that silently degrades if the
-                // folder is ever moved out of the unit.
-                'message' => 'Conexión verificada: la cuenta de servicio autentica, la carpeta raíz vive en una '
-                    .'Unidad compartida y se puede escribir en ella.',
+                // The authorizing account is named in the success message
+                // because it is the part of a healthy setup an administrator
+                // cannot see from the panel, and the part that silently breaks
+                // if that person ever revokes the application's access.
+                'message' => 'Conexión verificada: el Refresh Token autentica como '
+                    .($result['checks']['account_email'] ?? 'la cuenta autorizada')
+                    .', la carpeta raíz es alcanzable y se puede escribir en ella.',
             ],
         ]);
     }
@@ -268,7 +290,7 @@ class DriveCredentialController extends Controller
      *
      * The row survives so the audit trail keeps a resolvable reference to the
      * account that uploaded the existing library, and so re-enabling does not
-     * require pasting the JSON again.
+     * require generating a new refresh token.
      */
     public function destroy(Request $request): JsonResponse
     {

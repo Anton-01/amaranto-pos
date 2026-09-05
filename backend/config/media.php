@@ -42,28 +42,30 @@ return [
     | HTTP client instead of pulling in google/apiclient. The surface used is
     | tiny (token, files, permissions) and a native implementation keeps the
     | credential path under our own control — which is the whole point of
-    | storing the service account in the database.
+    | storing the connection in the database.
     |
-    | SCOPE. The module used to request `drive.file`, which grants per-file
-    | access ONLY to objects the application itself created (or that a human
-    | explicitly opened with it through Google's own picker). That scope cannot
-    | see a folder that a person created in their own Drive and then SHARED
-    | with the service account: Drive does not answer 403 for an object outside
-    | the token's universe, it answers `404 File not found` — which reads as a
-    | wrong folder id and sends the administrator hunting for the wrong bug,
-    | even though the Editor grant is right there in the Drive UI.
+    | AUTHENTICATION IS OAUTH 2.0 IN USER CONTEXT. The module used to sign a
+    | JWT assertion with a service account key. That identity owns no storage
+    | quota of its own, so Drive billed every uploaded byte to an account with
+    | zero bytes and answered `403 [storageQuotaExceeded]`. Google's own remedy
+    | — put the library root inside a Shared Drive, where the drive owns its
+    | contents — is a Workspace feature that simply does not exist on the
+    | personal Google One account this deployment uses.
     |
-    | Since the whole setup procedure of this module is "create the root folder
-    | in Drive and share it with the service account", `drive` is the scope that
-    | matches how the module is actually deployed. The blast radius stays small
-    | for a different reason than before: a service account is a fresh identity
-    | that owns nothing and is a member of nothing, so `drive` reaches exactly
-    | the objects somebody deliberately shared with that address — the library
-    | root and its descendants — and nothing else in the organization.
+    | So the connection now carries a client id, a client secret and a refresh
+    | token issued by the account's owner. Every call is made AS that person:
+    | uploaded files belong to them and consume the plan they already pay for,
+    | and the whole shared-drive apparatus (`supportsAllDrives`, `corpora`)
+    | drops out because a personal Drive has nothing for it to address.
     |
-    | An installation whose root folder is created BY the application can pin
-    | the narrower scope back with MEDIA_DRIVE_SCOPE, at the cost of losing
-    | externally shared folders.
+    | SCOPE. `drive` and not `drive.file`, for the same reason as before:
+    | `drive.file` reaches only objects this application itself created, so a
+    | root folder the owner made by hand in their own Drive is invisible to it —
+    | and Drive reports an object outside the token's universe as
+    | `404 File not found`, which reads as a mistyped folder id and sends an
+    | administrator hunting for the wrong bug. An installation whose root folder
+    | is created BY the application can pin the narrower scope with
+    | MEDIA_DRIVE_SCOPE, at the cost of losing folders created by hand.
     |
     */
 
@@ -77,43 +79,14 @@ return [
         // administrator which scope is in force and what it implies.
         'narrow_scope' => 'https://www.googleapis.com/auth/drive.file',
 
-        // JWT assertion lifetime requested from Google, in seconds. Google
-        // caps this at one hour.
+        // Fallback lifetime for a minted access token, in seconds, used only
+        // when Google's response omits `expires_in`. Google's own answer is
+        // authoritative and normally one hour.
         'token_ttl' => 3600,
 
         // Safety margin subtracted before caching the access token, so a
         // request never departs with a token that expires mid-flight.
         'token_leeway' => 300,
-
-        /*
-         * Shared drive requirement.
-         *
-         * A Google service account is an identity with NO storage quota of its
-         * own — not a small one, none — and Drive bills every new object to
-         * whoever owns it. Inside an ordinary "My Drive" folder the owner of an
-         * uploaded file is the service account itself, so Drive answers
-         * `403 [storageQuotaExceeded]` on the first upload of real bytes,
-         * however correctly the folder was shared and whatever parameters the
-         * request carries. Inside a Shared Drive the DRIVE owns its contents
-         * and the organization's quota pays for them, and the same upload
-         * succeeds.
-         *
-         * The trap is that a My Drive root folder passes every cheap check:
-         * it is reachable, it reports `canAddChildren`, and the module can even
-         * create its category subfolders inside it, because a folder costs zero
-         * bytes. The failure surfaces only on the first file an operator
-         * uploads. So the connection test asserts the root folder carries a
-         * `driveId` — present exclusively for objects inside a shared drive —
-         * and refuses to report a connection as healthy without it.
-         *
-         * The flag exists so an installation that has PROVEN uploads work some
-         * other way (a service account with domain-wide delegation
-         * impersonating a real user, for instance) can keep operating. It is
-         * not a way to make a red panel go green: turning it off does not grant
-         * any quota, it only postpones the same 403 to the operator's first
-         * upload.
-         */
-        'require_shared_drive' => (bool) env('MEDIA_DRIVE_REQUIRE_SHARED_DRIVE', true),
 
         // Bounded network time. A blocked egress port must fail in seconds
         // with a readable message, not hang until PHP's default timeout.
