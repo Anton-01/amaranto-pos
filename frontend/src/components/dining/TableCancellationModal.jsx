@@ -77,6 +77,14 @@ export default function TableCancellationModal({ visible, table, session, onHide
 
   const canSubmit = reason.trim().length >= 5 && (isAdmin || authorizationPassword.length > 0);
 
+  /*
+   * The dialog is opened from two places with two shapes of the same account:
+   * the floor-plan card carries a summarised session (`items_count`), the table
+   * detail carries the expanded one (`items`). Read whichever is present so the
+   * warning always states a real number of lines.
+   */
+  const itemsCount = session?.items?.length ?? session?.items_count ?? 0;
+
   return (
     <Dialog
       visible={visible}
@@ -96,8 +104,8 @@ export default function TableCancellationModal({ visible, table, session, onHide
       <form onSubmit={handleSubmit} className="space-y-4">
         <div className="rounded-lg border border-rose-100 bg-rose-50 px-3 py-2.5 text-sm text-rose-700">
           Se anulará el consumo de <strong>{table?.name}</strong> por{' '}
-          <strong>{fmtCurrency(session?.total)}</strong> ({session?.items?.length ?? 0} partida
-          {(session?.items?.length ?? 0) !== 1 ? 's' : ''}) y la mesa quedará libre.
+          <strong>{fmtCurrency(session?.total)}</strong> ({itemsCount} partida
+          {itemsCount !== 1 ? 's' : ''}) y la mesa quedará libre.
           El movimiento queda registrado con tu usuario y no puede deshacerse.
         </div>
 

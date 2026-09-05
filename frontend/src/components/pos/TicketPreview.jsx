@@ -1,9 +1,5 @@
 import { forwardRef } from 'react';
 
-function fmt(val) {
-  return '$' + parseFloat(val).toFixed(2);
-}
-
 function truncate(str, max) {
   if (str.length <= max) return str;
   return str.substring(0, max - 1) + '.';
@@ -17,6 +13,20 @@ const baseFont = {
   color: '#000',
   WebkitFontSmoothing: 'none',
   MozOsxFontSmoothing: 'unset',
+};
+
+/**
+ * Typography of the on-screen variant.
+ *
+ * No `fontFamily` on purpose: the ticket inherits the same sans-serif stack as
+ * the rest of the system, so a preview embedded in a dialog reads as part of
+ * that dialog instead of as a pasted-in terminal dump.
+ */
+const screenFont = {
+  fontSize: '12px',
+  lineHeight: '1.45',
+  fontWeight: 400,
+  color: '#1e293b',
 };
 
 const rowStyle = {
@@ -38,6 +48,20 @@ const hrDashed = {
   border: 'none',
   borderBottom: '1px dashed #000',
   margin: '2px 0',
+  padding: 0,
+};
+
+const hrScreenSolid = {
+  border: 'none',
+  borderBottom: '1px solid #cbd5e1',
+  margin: '8px 0',
+  padding: 0,
+};
+
+const hrScreenDashed = {
+  border: 'none',
+  borderBottom: '1px dashed #cbd5e1',
+  margin: '8px 0',
   padding: 0,
 };
 
@@ -71,8 +95,55 @@ function formatMoney(val) {
   return '$' + parseFloat(val).toFixed(2);
 }
 
-const TicketPreview = forwardRef(function TicketPreview({ order, ticketConfig, customLegend, taxRate = 0.16 }, ref) {
+/**
+ * One "label ....... amount" line of the ticket.
+ *
+ * The thermal variant pads the gap with spaces inside a monospace `<pre>`,
+ * which is the only way to line the amounts up in a 32-column font. The screen
+ * variant has no fixed column count, so it lets flexbox do the same job with
+ * the system font.
+ */
+function TicketLine({ mono, left, right, bold = false, style }) {
+  if (mono) {
+    return (
+      <pre style={{ ...preStyle, ...(bold ? { fontWeight: 500 } : null), ...style }}>
+        {padLine(left, right)}
+      </pre>
+    );
+  }
+  return (
+    <div style={{ ...rowStyle, gap: '12px', ...(bold ? { fontWeight: 600 } : null), ...style }}>
+      <span style={{ minWidth: 0, wordBreak: 'break-word' }}>{left}</span>
+      <span style={{ whiteSpace: 'nowrap' }}>{right}</span>
+    </div>
+  );
+}
+
+/**
+ * Ticket rendering shared by the checkout preview, the sales history reprint
+ * and the ticket configuration screen.
+ *
+ * `variant` decides which of the two readings it produces:
+ *
+ * - `print` (default) reproduces the 58mm thermal output character by
+ *   character — monospace columns padded to 32 chars — because that view is
+ *   what `window.print()` puts on paper and what a cashier compares against a
+ *   printed ticket.
+ * - `screen` is a preview embedded in a dialog. It carries no font of its own
+ *   and sits on a soft grey card, so it belongs to the interface around it
+ *   rather than imitating the printer.
+ */
+const TicketPreview = forwardRef(function TicketPreview(
+  { order, ticketConfig, customLegend, taxRate = 0.16, variant = 'print' },
+  ref
+) {
   if (!ticketConfig) return null;
+
+  const isScreen = variant === 'screen';
+  const mono = !isScreen;
+  const hrMain = isScreen ? hrScreenSolid : hrSolid;
+  const hrSoft = isScreen ? hrScreenDashed : hrDashed;
+  const muted = isScreen ? '#64748b' : '#000';
 
   const items = order?.items || [];
   const subtotal = order?.subtotal ?? 0;
@@ -102,89 +173,96 @@ const TicketPreview = forwardRef(function TicketPreview({ order, ticketConfig, c
   return (
     <div
       ref={ref}
-      id="ticket-print-area"
+      /* The print stylesheet isolates the page by this id; only the variant
+         that can actually reach the printer claims it. */
+      id={isScreen ? undefined : 'ticket-print-area'}
+      className={isScreen ? 'rounded-md bg-slate-100 p-4' : undefined}
       style={{
         boxSizing: 'border-box',
         width: '100%',
-        maxWidth: '240px',
+        maxWidth: isScreen ? '300px' : '240px',
         margin: '0 auto',
-        padding: 0,
-        backgroundColor: '#fff',
-        ...baseFont,
+        ...(isScreen ? screenFont : { padding: 0, backgroundColor: '#fff', ...baseFont }),
       }}
     >
       <div
-        className="ticket-inner-screen"
+        className={isScreen ? undefined : 'ticket-inner-screen'}
         style={{
           boxSizing: 'border-box',
-          border: '2px dashed #cbd5e1',
-          borderRadius: '8px',
-          padding: '4px 6px',
           width: '100%',
-          overflow: 'hidden',
+          ...(isScreen ? null : {
+            border: '2px dashed #cbd5e1',
+            borderRadius: '8px',
+            padding: '4px 6px',
+            overflow: 'hidden',
+          }),
         }}
       >
         {/* Header */}
         <div style={{ textAlign: 'center', marginBottom: '1px' }}>
-          <div style={{ fontSize: '12px', fontWeight: 500, lineHeight: '1.1', wordWrap: 'break-word', whiteSpace: 'normal' }}>
+          <div style={{ fontSize: isScreen ? '13px' : '12px', fontWeight: isScreen ? 600 : 500, lineHeight: isScreen ? '1.3' : '1.1', wordWrap: 'break-word', whiteSpace: 'normal' }}>
             {ticketConfig.business_name}
           </div>
           {ticketConfig.rfc && (
-            <div style={{ fontSize: '11px', lineHeight: '1.2' }}>RFC: {ticketConfig.rfc}</div>
+            <div style={{ fontSize: '11px', lineHeight: '1.2', color: muted }}>RFC: {ticketConfig.rfc}</div>
           )}
           {ticketConfig.address && (
-            <div style={{ fontSize: '10px', lineHeight: '1.2', wordWrap: 'break-word' }}>{ticketConfig.address}</div>
+            <div style={{ fontSize: '10px', lineHeight: '1.2', wordWrap: 'break-word', color: muted }}>{ticketConfig.address}</div>
           )}
           {ticketConfig.phone && (
-            <div style={{ fontSize: '11px', lineHeight: '1.2' }}>Tel: {ticketConfig.phone}</div>
+            <div style={{ fontSize: '11px', lineHeight: '1.2', color: muted }}>Tel: {ticketConfig.phone}</div>
           )}
           {ticketConfig.header_message && (
-            <div style={{ fontSize: '10px', fontStyle: 'italic', lineHeight: '1.2', marginTop: '1px', wordWrap: 'break-word' }}>
+            <div style={{ fontSize: '10px', fontStyle: 'italic', lineHeight: '1.2', marginTop: '1px', wordWrap: 'break-word', color: muted }}>
               {ticketConfig.header_message}
             </div>
           )}
         </div>
 
-        <hr style={hrSolid} />
+        <hr style={hrMain} />
 
         {/* Order info */}
         <div style={{ margin: '2px 0' }}>
           {orderId && (
             <div style={rowStyle}>
-              <span>Folio:</span>
+              <span style={{ color: muted }}>Folio:</span>
               <span style={{ fontWeight: 700 }}>{orderId.substring(0, 8).toUpperCase()}</span>
             </div>
           )}
           <div style={rowStyle}>
-            <span>Fecha:</span>
+            <span style={{ color: muted }}>Fecha:</span>
             <span>{dateStr}</span>
           </div>
           <div style={rowStyle}>
-            <span>Pago:</span>
+            <span style={{ color: muted }}>Pago:</span>
             <span style={{ fontWeight: 700 }}>{paymentLabel}</span>
           </div>
           {tableName && (
             <div style={rowStyle}>
-              <span>Mesa:</span>
+              <span style={{ color: muted }}>Mesa:</span>
               <span style={{ fontWeight: 700 }}>{tableName.toUpperCase()}</span>
             </div>
           )}
           {waiterName && (
             <div style={rowStyle}>
-              <span>Atendio:</span>
+              <span style={{ color: muted }}>Atendio:</span>
               <span>{waiterName}</span>
             </div>
           )}
         </div>
 
-        <hr style={hrDashed} />
+        <hr style={hrSoft} />
 
         {/* Column headers */}
-        <pre style={{ ...preStyle, fontWeight: 500 }}>
-          {padLine('PRODUCTO', 'IMPORTE')}
-        </pre>
+        <TicketLine
+          mono={mono}
+          left="PRODUCTO"
+          right="IMPORTE"
+          bold
+          style={isScreen ? { fontSize: '10px', letterSpacing: '0.04em', color: muted } : null}
+        />
 
-        <hr style={hrDashed} />
+        <hr style={hrSoft} />
 
         {/* Items */}
         <div style={{ margin: '2px 0' }}>
@@ -196,51 +274,61 @@ const TicketPreview = forwardRef(function TicketPreview({ order, ticketConfig, c
             const finalPrice = parseFloat(item.final_price_at_sale ?? (basePrice * qty - discount));
 
             return (
-              <div key={i} style={{ marginBottom: '1px' }}>
-                <pre style={preStyle}>
-                  {padLine(truncate(productName, maxNameLen), formatMoney(finalPrice))}
-                </pre>
-                <pre style={{ ...preStyle, fontSize: '10px', color: '#000' }}>
-                  {'  ' + qty + ' x ' + formatMoney(basePrice)}
-                  {discount > 0 ? '  -' + formatMoney(discount) : ''}
-                </pre>
-                {(item.promotion || item.promotion_name) && (
-                  <pre style={{ ...preStyle, fontSize: '10px', fontStyle: 'italic', color: '#000' }}>
-                    {'  ' + truncate(item.promotion?.name || item.promotion_name, LINE_WIDTH - 2)}
+              <div key={i} style={{ marginBottom: isScreen ? '6px' : '1px' }}>
+                <TicketLine
+                  mono={mono}
+                  left={isScreen ? productName : truncate(productName, maxNameLen)}
+                  right={formatMoney(finalPrice)}
+                  style={isScreen ? { fontWeight: 500 } : null}
+                />
+                {mono ? (
+                  <pre style={{ ...preStyle, fontSize: '10px', color: '#000' }}>
+                    {'  ' + qty + ' x ' + formatMoney(basePrice)}
+                    {discount > 0 ? '  -' + formatMoney(discount) : ''}
                   </pre>
+                ) : (
+                  <div style={{ fontSize: '11px', color: muted }}>
+                    {qty} x {formatMoney(basePrice)}
+                    {discount > 0 ? '  -' + formatMoney(discount) : ''}
+                  </div>
+                )}
+                {(item.promotion || item.promotion_name) && (
+                  mono ? (
+                    <pre style={{ ...preStyle, fontSize: '10px', fontStyle: 'italic', color: '#000' }}>
+                      {'  ' + truncate(item.promotion?.name || item.promotion_name, LINE_WIDTH - 2)}
+                    </pre>
+                  ) : (
+                    <div style={{ fontSize: '11px', fontStyle: 'italic', color: '#059669' }}>
+                      {item.promotion?.name || item.promotion_name}
+                    </div>
+                  )
                 )}
               </div>
             );
           })}
         </div>
 
-        <hr style={hrDashed} />
+        <hr style={hrSoft} />
 
         {/* Totals */}
         <div style={{ margin: '1px 0' }}>
           {discountTotal > 0 && (
-            <pre style={{ ...preStyle, fontWeight: 500 }}>
-              {padLine('Descuento:', '-' + formatMoney(discountTotal))}
-            </pre>
+            <TicketLine mono={mono} left="Descuento:" right={'-' + formatMoney(discountTotal)} bold />
           )}
-          <pre style={preStyle}>
-            {padLine('Subtotal:', formatMoney(subtotal))}
-          </pre>
-          <pre style={preStyle}>
-            {padLine(`IVA (${(taxRate * 100).toFixed(0)}%):`, formatMoney(ivaTotal))}
-          </pre>
-          <pre style={{ ...preStyle, fontWeight: 500 }}>
-            {padLine('TOTAL:', formatMoney(total))}
-          </pre>
+          <TicketLine mono={mono} left="Subtotal:" right={formatMoney(subtotal)} />
+          <TicketLine mono={mono} left={`IVA (${(taxRate * 100).toFixed(0)}%):`} right={formatMoney(ivaTotal)} />
+          <TicketLine
+            mono={mono}
+            left="TOTAL:"
+            right={formatMoney(total)}
+            bold
+            style={isScreen ? { fontSize: '14px', marginTop: '4px' } : null}
+          />
           {showCashChange && (
             <>
-              <pre style={preStyle}>{SEP_SINGLE}</pre>
-              <pre style={preStyle}>
-                {padLine('Recibido:', formatMoney(amountReceived))}
-              </pre>
-              <pre style={{ ...preStyle, fontWeight: 500 }}>
-                {padLine('Cambio:', formatMoney(amountChange))}
-              </pre>
+              {mono ? <pre style={preStyle}>{SEP_SINGLE}</pre> : <hr style={hrScreenDashed} />}
+              <TicketLine mono={mono} left="Recibido:" right={formatMoney(amountReceived)} />
+              <TicketLine mono={mono} left="Cambio:" right={formatMoney(amountChange)} bold />
             </>
           )}
         </div>
@@ -248,23 +336,23 @@ const TicketPreview = forwardRef(function TicketPreview({ order, ticketConfig, c
         {/* Custom legend */}
         {legend && (
           <>
-            <hr style={hrDashed} />
-            <div style={{ textAlign: 'center', fontSize: '10px', lineHeight: '1.2', margin: '2px 0', wordWrap: 'break-word', whiteSpace: 'pre-wrap' }}>
+            <hr style={hrSoft} />
+            <div style={{ textAlign: 'center', fontSize: '10px', lineHeight: '1.2', margin: '2px 0', wordWrap: 'break-word', whiteSpace: 'pre-wrap', color: muted }}>
               {legend}
             </div>
           </>
         )}
 
-        <hr style={hrSolid} />
+        <hr style={hrMain} />
 
         {/* Footer */}
-        <div style={{ textAlign: 'center', fontSize: '10px', lineHeight: '1.2', marginTop: '2px' }}>
+        <div style={{ textAlign: 'center', fontSize: '10px', lineHeight: '1.2', marginTop: '2px', color: muted }}>
           {ticketConfig.footer_message && (
             <div style={{ fontStyle: 'italic', marginBottom: '1px', wordWrap: 'break-word' }}>
               {ticketConfig.footer_message}
             </div>
           )}
-          <div style={{ color: '#000' }}>v{ticketConfig.version} - Cronos POS</div>
+          <div>v{ticketConfig.version} - Cronos POS</div>
         </div>
       </div>
     </div>

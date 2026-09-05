@@ -329,8 +329,13 @@ export default function CheckoutModal({ visible, onHide, cart, taxRate = 0.16, o
        *
        * On a phone it stays full-bleed (`w-full`), because a two-column
        * checkout squeezed into three quarters of a 390px screen is unusable.
+       *
+       * The desktop caps were tightened by a further fifth (`5xl` -> `4xl`,
+       * three quarters -> three fifths): at the old width the two columns drifted
+       * so far apart that the cashier had to sweep across the screen to read a
+       * ticket against the amount they were typing.
        */
-      className="w-full max-w-3xl md:w-11/12 md:max-w-4xl lg:w-3/4 lg:max-w-5xl"
+      className="w-full max-w-3xl md:w-11/12 md:max-w-3xl lg:w-3/5 lg:max-w-4xl"
       pt={{
         mask: { className: 'backdrop-blur-sm bg-black/30 p-3 sm:p-4' },
         /*
@@ -625,7 +630,10 @@ export default function CheckoutModal({ visible, onHide, cart, taxRate = 0.16, o
           </div>
         </div>
 
-        {/* Right: Ticket preview */}
+        {/* Right: Ticket preview.
+            The `screen` variant drops the monospace thermal typography and sits
+            on a soft grey card, so the preview reads as part of the dialog
+            instead of imitating the printer. */}
         <div className="flex justify-center overflow-x-auto">
           <TicketPreview
             ref={ticketRef}
@@ -633,6 +641,7 @@ export default function CheckoutModal({ visible, onHide, cart, taxRate = 0.16, o
             ticketConfig={ticketConfig}
             customLegend={customLegend}
             taxRate={taxRate}
+            variant="screen"
           />
         </div>
       </div>

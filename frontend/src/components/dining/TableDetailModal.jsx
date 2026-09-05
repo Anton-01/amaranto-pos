@@ -4,7 +4,6 @@ import { InputText } from 'primereact/inputtext';
 import { Button } from 'primereact/button';
 import { toast } from 'sonner';
 import api from '../../api/axios';
-import TableCancellationModal from './TableCancellationModal';
 import { useAuth } from '../../context/AuthContext';
 import { fmtCurrency, fmtElapsed } from './tableStatus';
 
@@ -35,7 +34,6 @@ export default function TableDetailModal({ visible, table, onHide, onCharge, onS
   const [search, setSearch] = useState('');
   const [addingId, setAddingId] = useState(null);
   const [mutatingItemId, setMutatingItemId] = useState(null);
-  const [showCancellation, setShowCancellation] = useState(false);
 
   const tableId = table?.id;
 
@@ -337,34 +335,11 @@ export default function TableDetailModal({ visible, table, onHide, onCharge, onS
               pt={{ root: { className: 'border-0' } }}
             />
           </div>
-
-          {/* Destructive path, kept visually apart from the charge action so a
-              mis-tap cannot void an account that was about to be paid. */}
-          <Button
-            type="button"
-            label="Cancelar Mesa"
-            icon="pi pi-times-circle"
-            onClick={() => setShowCancellation(true)}
-            disabled={!session}
-            className="mt-2 w-full cursor-pointer rounded-lg border border-rose-200 bg-white px-4 py-2.5 text-sm font-semibold text-rose-600 hover:bg-rose-50 disabled:opacity-50"
-            pt={{ root: { className: 'border border-rose-200' } }}
-          />
+          {/* The destructive path lives on the floor-plan card menu now: down
+              here it crowded "Cerrar" and "Cobrar Cuenta", and a mis-tap could
+              void an account that was about to be paid. */}
         </div>
       </div>
-
-      <TableCancellationModal
-        visible={showCancellation}
-        table={table}
-        session={session}
-        onHide={() => setShowCancellation(false)}
-        onCanceled={() => {
-          // The table is free again: close both dialogs and let the floor plan
-          // reload from the server rather than guessing the new state.
-          setShowCancellation(false);
-          onSessionChange?.();
-          onHide();
-        }}
-      />
     </Dialog>
   );
 }

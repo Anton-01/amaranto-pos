@@ -93,7 +93,12 @@ export default function PrintConfirmationModal({
       closeOnEscape={!printing}
       modal
       header={null}
-      className="w-full max-w-lg"
+      /*
+       * DESKTOP SIZING. Full-bleed on a phone; from `lg` up it is capped at
+       * half the viewport (never past `2xl`) so the post-sale receipt reads as
+       * a confirmation panel and not as a takeover of a wide monitor.
+       */
+      className="w-full max-w-lg lg:w-1/2 lg:max-w-2xl"
       pt={{
         mask: { className: 'backdrop-blur-sm bg-black/30' },
         root: { className: 'rounded-2xl border-0 shadow-2xl' },
