@@ -1,5 +1,6 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Dialog } from 'primereact/dialog';
+import { OverlayPanel } from 'primereact/overlaypanel';
 import { InputNumber } from 'primereact/inputnumber';
 import { InputText } from 'primereact/inputtext';
 import { Dropdown } from 'primereact/dropdown';
@@ -11,6 +12,7 @@ import useCachedResource from '../../hooks/useCachedResource';
 import CheckoutModal from '../../components/pos/CheckoutModal';
 import PrintConfirmationModal from '../../components/pos/PrintConfirmationModal';
 import TableDetailModal from '../../components/dining/TableDetailModal';
+import TableCancellationModal from '../../components/dining/TableCancellationModal';
 import { tableStatusMeta, fmtCurrency, fmtElapsed } from '../../components/dining/tableStatus';
 import useCronosAgent from '../../hooks/useCronosAgent';
 
@@ -45,6 +47,15 @@ export default function TablesFloorPlanPage() {
   const [detailTable, setDetailTable] = useState(null);
   const [chargeSession, setChargeSession] = useState(null);
   const [pendingPrint, setPendingPrint] = useState(null);
+
+  /*
+   * Per-card options menu. One single overlay is shared by the whole grid and
+   * anchored to whichever kebab button was pressed: mounting an overlay per
+   * card would put dozens of hidden popups in the DOM of a busy floor plan.
+   */
+  const cardMenuRef = useRef(null);
+  const [menuTable, setMenuTable] = useState(null);
+  const [cancelTarget, setCancelTarget] = useState(null);
 
   /*
    * El plano sale de la cache compartida (Fase 11). Al volver desde el POS, la
@@ -87,6 +98,23 @@ export default function TablesFloorPlanPage() {
     () => (zoneFilter ? tables.filter(t => t.zone === zoneFilter) : tables),
     [tables, zoneFilter]
   );
+
+  /**
+   * Opens the card options menu anchored to the kebab that was pressed.
+   *
+   * The click must not bubble: the card itself is a button that would open the
+   * table right behind the menu.
+   */
+  const openCardMenu = (event, table) => {
+    event.stopPropagation();
+    const switching = menuTable !== null && menuTable.id !== table.id;
+    setMenuTable(table);
+    if (switching) {
+      cardMenuRef.current?.show(event, event.currentTarget);
+    } else {
+      cardMenuRef.current?.toggle(event, event.currentTarget);
+    }
+  };
 
   const handleTableClick = (table) => {
     if (table.status === 'occupied') {
@@ -229,52 +257,104 @@ export default function TablesFloorPlanPage() {
             const meta = tableStatusMeta(table.status);
             const session = table.active_session;
             return (
-              <button
+              /*
+               * The card is a container, not a button: the options menu is a
+               * button of its own and a button cannot be nested inside another
+               * one. The whole surface is still one tap target — the inner
+               * button fills the card — while the kebab keeps its own hit area.
+               */
+              <div
                 key={table.id}
-                onClick={() => handleTableClick(table)}
-                className={`min-h-[104px] cursor-pointer rounded-xl border-2 p-3 text-left shadow-sm transition-all hover:shadow-md sm:p-4 ${meta.card}`}
+                className={`relative min-h-[104px] rounded-xl border-2 shadow-sm transition-all hover:shadow-md ${meta.card}`}
               >
-                <div className="flex items-start justify-between gap-2">
-                  <div className="min-w-0">
-                    <p className="truncate text-base font-bold text-slate-900">{table.name}</p>
-                    <p className="text-xs text-slate-500">
-                      {table.capacity} lugar{table.capacity !== 1 ? 'es' : ''}
-                      {table.zone ? ` · ${table.zone}` : ''}
-                    </p>
-                  </div>
-                  <span className={`mt-1 h-3 w-3 shrink-0 rounded-full ${meta.dot}`} />
-                </div>
-
-                <span className={`mt-3 inline-block rounded px-2 py-0.5 text-[11px] font-semibold ${meta.badge}`}>
-                  {meta.label}
-                </span>
-
-                {session ? (
-                  <div className="mt-3 border-t border-white/70 pt-2">
-                    <p className="truncate text-xs text-slate-600">
-                      {session.waiter?.name ?? 'Sin mesero'}
-                      {session.guests ? ` · ${session.guests} pax` : ''}
-                    </p>
-                    <div className="mt-1 flex items-end justify-between gap-2">
-                      <span className="text-xs text-slate-500">{fmtElapsed(session.elapsed_minutes)}</span>
-                      <span className={`text-base font-bold tabular-nums ${meta.accent}`}>
-                        {fmtCurrency(session.total)}
-                      </span>
+                <button
+                  type="button"
+                  onClick={() => handleTableClick(table)}
+                  className="block h-full w-full cursor-pointer rounded-xl p-3 text-left sm:p-4"
+                >
+                  <div className={`flex items-start justify-between gap-2 ${session ? 'pr-6' : ''}`}>
+                    <div className="min-w-0">
+                      <p className="truncate text-base font-bold text-slate-900">{table.name}</p>
+                      <p className="text-xs text-slate-500">
+                        {table.capacity} lugar{table.capacity !== 1 ? 'es' : ''}
+                        {table.zone ? ` · ${table.zone}` : ''}
+                      </p>
                     </div>
-                    <p className="mt-0.5 text-[11px] text-slate-500">
-                      {session.items_count} producto{session.items_count !== 1 ? 's' : ''}
-                    </p>
+                    {/* No status dot in the corner anymore: that corner belongs
+                        to the options menu. The colour cue moves into the badge
+                        below, where it reads exactly the same at a glance. */}
                   </div>
-                ) : (
-                  <div className="mt-3 border-t border-white/70 pt-2">
-                    <p className="text-xs text-slate-400">Sin cuenta abierta</p>
-                  </div>
+
+                  <span className={`mt-3 inline-flex items-center gap-1.5 rounded px-2 py-0.5 text-[11px] font-semibold ${meta.badge}`}>
+                    <span className={`h-2 w-2 shrink-0 rounded-full ${meta.dot}`} />
+                    {meta.label}
+                  </span>
+
+                  {session ? (
+                    <div className="mt-3 border-t border-white/70 pt-2">
+                      <p className="truncate text-xs text-slate-600">
+                        {session.waiter?.name ?? 'Sin mesero'}
+                        {session.guests ? ` · ${session.guests} pax` : ''}
+                      </p>
+                      <div className="mt-1 flex items-end justify-between gap-2">
+                        <span className="text-xs text-slate-500">{fmtElapsed(session.elapsed_minutes)}</span>
+                        <span className={`text-base font-bold tabular-nums ${meta.accent}`}>
+                          {fmtCurrency(session.total)}
+                        </span>
+                      </div>
+                      <p className="mt-0.5 text-[11px] text-slate-500">
+                        {session.items_count} producto{session.items_count !== 1 ? 's' : ''}
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="mt-3 border-t border-white/70 pt-2">
+                      <p className="text-xs text-slate-400">Sin cuenta abierta</p>
+                    </div>
+                  )}
+                </button>
+
+                {/* Only a table with a live account has anything to void, so a
+                    free table shows no menu instead of an empty one. */}
+                {session && (
+                  <button
+                    type="button"
+                    onClick={(e) => openCardMenu(e, table)}
+                    aria-label={`Opciones de ${table.name}`}
+                    aria-haspopup="menu"
+                    title="Opciones"
+                    className="absolute right-1 top-1 flex h-8 w-8 cursor-pointer items-center justify-center rounded-lg text-slate-500 transition-colors hover:bg-white/80 hover:text-slate-700 sm:right-1.5 sm:top-1.5"
+                  >
+                    <i className="pi pi-ellipsis-v text-sm" />
+                  </button>
                 )}
-              </button>
+              </div>
             );
           })}
         </div>
       )}
+
+      {/* Card options menu. Shared by every card and re-anchored on each open. */}
+      <OverlayPanel
+        ref={cardMenuRef}
+        onHide={() => setMenuTable(null)}
+        className="!rounded-xl !border-slate-200 !p-0 !shadow-xl !shadow-slate-200/50"
+        pt={{ content: { className: '!p-1.5' } }}
+      >
+        <div role="menu" className="w-48">
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              cardMenuRef.current?.hide();
+              setCancelTarget(menuTable);
+            }}
+            className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-3 py-2 text-left text-sm font-medium text-rose-600 hover:bg-rose-50"
+          >
+            <i className="pi pi-times-circle text-sm" />
+            Cancelar Mesa
+          </button>
+        </div>
+      </OverlayPanel>
 
       {/* Apertura de mesa */}
       <Dialog
@@ -282,7 +362,12 @@ export default function TablesFloorPlanPage() {
         onHide={() => !opening && setOpenTarget(null)}
         modal
         header={null}
-        className="w-full max-w-md"
+        /*
+         * DESKTOP SIZING. Full-bleed on a phone, and from `lg` up it is capped
+         * at half the viewport (never past `2xl`) so the floor plan behind it
+         * stays readable on a laptop or a wide monitor.
+         */
+        className="w-full max-w-md lg:w-1/2 lg:max-w-2xl"
         pt={{
           mask: { className: 'backdrop-blur-sm bg-black/30' },
           root: { className: 'rounded-2xl border-0 shadow-2xl' },
@@ -373,6 +458,18 @@ export default function TablesFloorPlanPage() {
             printerData: meta?.printerData || null,
             ticketConfig: meta?.ticketConfig || null,
           });
+        }}
+      />
+
+      {/* Voiding a table now starts from its card, not from the detail view. */}
+      <TableCancellationModal
+        visible={cancelTarget !== null}
+        table={cancelTarget}
+        session={cancelTarget?.active_session}
+        onHide={() => setCancelTarget(null)}
+        onCanceled={() => {
+          setCancelTarget(null);
+          fetchTables();
         }}
       />
 

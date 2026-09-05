@@ -9015,3 +9015,123 @@ cobrar.
   diálogo; clave de caché `header-shift-sales`
 - `src/components/layout/AppHeader.jsx` — la píldora lee `/sales/shift-count`,
   texto "en turno", estado gris para el cero
+
+---
+
+## 71. PULIDO VISUAL DE LAS MODALES DE OPERACIÓN Y REUBICACIÓN DE "CANCELAR MESA" AL MENÚ DE LA TARJETA [🟢 COMPLETADO Y OPERATIVO]
+
+Cuatro ajustes de interfaz sobre el mismo eje: las modales del ciclo de venta se
+habían diseñado una por una y en un monitor de escritorio no se leían como una
+familia — una ocupaba media pantalla, otra el ancho completo, y el ticket de la
+previsualización era el único elemento del sistema en tipografía monoespaciada.
+El cuarto ajuste saca una acción destructiva de donde no debía estar.
+
+Nada de esto toca el comportamiento en teléfono: **todas las reglas nuevas de
+ancho llevan prefijo `lg:`**, así que por debajo de 1024px las modales conservan
+exactamente el layout mobile-first de la sección 62.
+
+### 71.1 Las modales de escritorio se acotan a la mitad de la pantalla
+
+**Abrir Mesa** (`TablesFloorPlanPage`) y **Venta registrada**
+(`PrintConfirmationModal`) pasan de un tope fijo (`max-w-md` y `max-w-lg`) a
+`lg:w-1/2 lg:max-w-2xl`. En un monitor ancho el diálogo ocupa como mucho la mitad
+del viewport y nunca pasa de `2xl`; el plano de mesas —o el POS— sigue visible
+alrededor, que es el contexto que el usuario necesita mientras confirma.
+
+**Confirmar Cobro** (`CheckoutModal`) va en la dirección contraria: era el más
+ancho del sistema y sus dos columnas quedaban tan separadas que el cajero tenía
+que barrer la pantalla para leer el ticket contra el importe que estaba
+tecleando. Los topes de escritorio se reducen un quinto respecto de la sección
+70.3 — `lg:w-3/4 lg:max-w-5xl` → `lg:w-3/5 lg:max-w-4xl`, y `md:max-w-4xl` →
+`md:max-w-3xl`. El tope de altura y el `overflow-y-auto` del panel de contenido
+no cambian.
+
+### 71.2 El ticket de la previsualización deja de imitar a la impresora
+
+`TicketPreview` se usaba con un solo renglón visual en tres lugares distintos:
+la previsualización del cobro, la reimpresión del Historial de Ventas y la
+pantalla de configuración del ticket. Ese renglón es una reproducción literal de
+la salida térmica de 58mm: columnas de 32 caracteres rellenadas con espacios
+dentro de `<pre>` en `'Courier New'`. Es lo correcto para lo que se va a
+imprimir, y es exactamente lo que hacía que dentro de una modal el ticket se
+leyera como un volcado de terminal pegado en la interfaz.
+
+El componente gana una prop **`variant`** con dos lecturas del mismo dato:
+
+- **`print`** (por defecto) — sin cambios. Sigue siendo la reproducción carácter
+  a carácter que `window.print()` lleva al papel y contra la que un cajero
+  compara un ticket impreso; conserva el `id="ticket-print-area"` del que cuelga
+  todo el `@media print` de `index.css`.
+- **`screen`** — la que usa `CheckoutModal`. **No declara `fontFamily`**: hereda
+  el mismo stack sans-serif que el resto del sistema. Las líneas
+  "concepto ....... importe" dejan de alinearse con espacios y lo hacen con
+  flexbox, que es lo que permite quitar la fuente monoespaciada sin perder la
+  alineación de los importes; el nombre del producto ya no se trunca a 22
+  caracteres porque la fila puede envolver. El contenedor principal se pinta
+  sobre `bg-slate-100` con `rounded-md p-4`, de modo que el ticket se despega del
+  blanco de la modal sin necesidad del borde punteado.
+
+La variante `screen` **no** reclama el `id="ticket-print-area"`: ese id es lo que
+aísla la página al imprimir, y solo debe llevarlo la variante que puede llegar a
+la impresora. Historial de Ventas y Configuración de Ticket siguen montando la
+variante `print`, así que ni la impresión del navegador ni el ticket que viaja al
+agente local cambian una sola línea.
+
+### 71.3 "Cancelar Mesa" sale del pie del detalle y entra al menú de la tarjeta
+
+**El defecto.** El botón vivía debajo de "Cerrar" y "Cobrar Cuenta", dentro del
+detalle de la mesa activa. Se encimaba con ese par en pantallas cortas y, sobre
+todo, ponía la única acción destructiva del comedor a un dedo de distancia del
+botón que cobra: un toque errado anula una cuenta que estaba a punto de pagarse.
+
+**La reubicación.** La acción se movió al **plano de mesas**, dentro de un menú
+de opciones (tres puntos verticales) en la esquina superior derecha de cada
+tarjeta. Es el mismo `TableCancellationModal` de la sección 49 —motivo
+obligatorio, contraseña de autorización para quien no es admin, y el backend
+revalidando rol y hash por su cuenta—; lo único que cambia es desde dónde se
+abre.
+
+Tres decisiones de implementación:
+
+- **La tarjeta deja de ser un `<button>` y pasa a ser un contenedor.** Un botón
+  no puede anidar otro botón, y el menú necesita el suyo. La superficie sigue
+  siendo un solo objetivo táctil: el botón interior llena la tarjeta
+  (`block h-full w-full`) y el kebab se posiciona en absoluto sobre la esquina,
+  con su propia área de toque y `stopPropagation` para que abrir el menú no abra
+  la mesa por detrás.
+- **Un solo `OverlayPanel` para toda la rejilla**, reanclado al kebab que se
+  pulsó en cada apertura. Montar un overlay por tarjeta dejaría decenas de
+  popups ocultos en el DOM de un salón lleno.
+- **El menú solo se pinta en las mesas con cuenta viva.** Una mesa libre no tiene
+  consumo que anular, así que no muestra un menú vacío en lugar de mostrar uno
+  con la única opción deshabilitada.
+
+El punto de color de estado desaparece de la esquina superior derecha —que ahora
+es del menú— y se integra como punto dentro de la insignia de estado, donde la
+pista visual se lee igual de rápido.
+
+**Efecto colateral corregido.** El plano de mesas y el detalle sirven la misma
+cuenta con dos formas distintas: la tarjeta trae la sesión resumida
+(`items_count`) y el detalle la expandida (`items`), porque `presentTable()` solo
+adjunta las partidas cuando se lo piden. Abriendo la cancelación desde la tarjeta
+el aviso habría dicho siempre "0 partidas", así que `TableCancellationModal` lee
+`items?.length ?? items_count ?? 0` y enuncia el número real venga de donde
+venga.
+
+### 71.4 Archivos
+
+**Frontend (modificados)**
+- `src/pages/dining/TablesFloorPlanPage.jsx` — tarjeta como contenedor con menú
+  kebab, `OverlayPanel` único compartido por la rejilla, `TableCancellationModal`
+  a nivel de página, punto de estado dentro de la insignia, y ancho de escritorio
+  del diálogo de apertura (`lg:w-1/2 lg:max-w-2xl`)
+- `src/components/dining/TableDetailModal.jsx` — eliminado el botón "Cancelar
+  Mesa" y el modal de cancelación que colgaba de él
+- `src/components/dining/TableCancellationModal.jsx` — cuenta de partidas
+  tolerante a la sesión resumida de la tarjeta
+- `src/components/pos/TicketPreview.jsx` — prop `variant` (`print` / `screen`),
+  filas por flexbox y tipografía heredada en la variante de pantalla
+- `src/components/pos/CheckoutModal.jsx` — anchos de escritorio reducidos un
+  quinto y ticket en `variant="screen"`
+- `src/components/pos/PrintConfirmationModal.jsx` — ancho de escritorio
+  `lg:w-1/2 lg:max-w-2xl`
