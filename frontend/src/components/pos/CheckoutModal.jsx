@@ -267,10 +267,10 @@ export default function CheckoutModal({ visible, onHide, cart, taxRate = 0.16, o
 
       toast.success('Venta procesada con exito!');
 
-      // El contador de "ventas hoy" del header ya no sondea: se invalida su
-      // cache aqui para que la proxima lectura (navegacion o vuelta a la
-      // pestana) refleje esta venta.
-      invalidate('header-today-sales');
+      // The header's shift sales counter no longer polls: its cache is dropped
+      // here so the next read (a navigation or a return to the tab) reflects
+      // this sale.
+      invalidate('header-shift-sales');
 
       // Sin impresion automatica: la decision de imprimir se delega al
       // PrintConfirmationModal que POSPage abre con estos datos.
@@ -319,10 +319,30 @@ export default function CheckoutModal({ visible, onHide, cart, taxRate = 0.16, o
       dismissableMask={!submitting}
       modal
       header={null}
-      className="w-full max-w-3xl"
+      /*
+       * DESKTOP SIZING. On a laptop this dialog used to swallow the screen:
+       * with the mask's padding as its only margin, a 1366x768 panel ran edge
+       * to edge and the POS behind it disappeared, which costs the cashier the
+       * context of the sale they are confirming. From `md` it is capped to a
+       * fraction of the viewport — three quarters of the width at `lg`, never
+       * past `5xl` — so the till stays visible around it.
+       *
+       * On a phone it stays full-bleed (`w-full`), because a two-column
+       * checkout squeezed into three quarters of a 390px screen is unusable.
+       */
+      className="w-full max-w-3xl md:w-11/12 md:max-w-4xl lg:w-3/4 lg:max-w-5xl"
       pt={{
         mask: { className: 'backdrop-blur-sm bg-black/30 p-3 sm:p-4' },
-        root: { className: 'rounded-2xl border-0 shadow-2xl max-h-[92dvh]' },
+        /*
+         * The height cap is what keeps the panel a dialog rather than a page.
+         * `dvh` on phones so a retracting browser toolbar cannot clip the
+         * confirm button; a flat 85vh from `md` up, where no such toolbar
+         * exists and the remaining 15% is the breathing room that makes the
+         * POS readable behind the mask. The content pane below owns the
+         * overflow, so a long ticket scrolls inside the dialog instead of
+         * growing it.
+         */
+        root: { className: 'rounded-2xl border-0 shadow-2xl max-h-[92dvh] md:max-h-[85vh]' },
         content: { className: 'p-0 overflow-y-auto overscroll-contain' },
       }}
     >

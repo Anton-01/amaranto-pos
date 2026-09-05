@@ -12,10 +12,9 @@ import { useAuth } from '../../context/AuthContext';
 import useOnlineStatus from '../../hooks/useOnlineStatus';
 import useRefreshOnVisible from '../../hooks/useRefreshOnVisible';
 import { cachedGet, isStale } from '../../api/readCache';
-import { todayYmd } from '../../lib/dates';
 import api from '../../api/axios';
 
-const QUICK_STATS_KEY = 'header-today-sales';
+const QUICK_STATS_KEY = 'header-shift-sales';
 const QUICK_STATS_TTL = 60000;
 
 const pageNames = {
@@ -56,7 +55,7 @@ const paymentColors = {
 export default function AppHeader({ collapsed, onToggleSidebar, onOpenMobileNav }) {
   const location = useLocation();
   const isOnline = useOnlineStatus();
-  const [todaySales, setTodaySales] = useState(null);
+  const [shiftSales, setShiftSales] = useState(null);
   const [showSalesModal, setShowSalesModal] = useState(false);
   const [dailySummary, setDailySummary] = useState(null);
   const [summaryLoading, setSummaryLoading] = useState(false);
@@ -76,27 +75,32 @@ export default function AppHeader({ collapsed, onToggleSidebar, onOpenMobileNav 
   const currentPage = pageNames[location.pathname] || '';
 
   /**
-   * Contador de ventas del dia. Se lee al montar el header y al volver a la
-   * pestana (si el dato ya vencio); nunca por temporizador.
+   * Sales counter of the OPEN cash register shift. Read when the header mounts
+   * and when the tab regains focus with a stale value; never on a timer.
    *
-   * El `setInterval` de 60s que vivia aqui era, junto con el de la campana, el
-   * origen del trafico ciclico: dos GET intercalados cada minuto en cualquier
-   * ruta, indefinidamente y por cada pestana abierta. La cache de proceso
-   * ademas evita que cada navegacion (que remonta el layout) lo vuelva a pedir.
+   * WHY THE SHIFT AND NOT THE DAY. This used to ask `/orders` for the calendar
+   * day (00:00 to 23:59) and read the pagination total. That is not the number
+   * the pill claims to show: a shift running past midnight had its counter
+   * reset under the cashier mid-service, and a drawer opened in the morning
+   * inherited every sale of the shift that closed before it. The count now
+   * comes from `/sales/shift-count`, which scopes strictly to the open drawer
+   * and answers 0 when no shift is running.
+   *
+   * The `setInterval` that used to live here was, together with the bell's,
+   * the source of the cyclic traffic: two interleaved GETs every minute on any
+   * route, indefinitely and per open tab. The process cache also keeps each
+   * navigation (which remounts the layout) from asking for it again.
    */
   const fetchQuickStats = useCallback(async ({ force = false } = {}) => {
     try {
-      // Local calendar day, never the UTC one: after 18:00 CST the two differ
-      // and the counter would report tomorrow's (empty) sales. See lib/dates.
-      const today = todayYmd();
-      const total = await cachedGet(
+      const count = await cachedGet(
         QUICK_STATS_KEY,
         () => api
-          .get('/orders', { params: { date_from: today, date_to: today, per_page: 1 } })
-          .then((res) => res.data?.metadata?.total ?? null),
+          .get('/sales/shift-count')
+          .then((res) => res.data?.data?.count ?? null),
         { ttl: QUICK_STATS_TTL, force }
       );
-      setTodaySales(total);
+      setShiftSales(count);
     } catch {
       // silently fail
     }
@@ -185,13 +189,27 @@ export default function AppHeader({ collapsed, onToggleSidebar, onOpenMobileNav 
               </>
             )}
 
-            {isOnline && todaySales !== null && (
+            {/*
+              The pill counts the OPEN shift, so it reads "en turno" rather than
+              "hoy": with no drawer open it is a legitimate 0, and calling that
+              "hoy" would read as "the business has sold nothing today" instead
+              of "no shift has started". A 0 is still rendered — only `null`,
+              which means the counter has not resolved yet, hides it.
+            */}
+            {isOnline && shiftSales !== null && (
               <>
                 <div className="hidden h-4 w-px bg-slate-200 md:block" />
-                <div className="hidden shrink-0 items-center gap-1.5 rounded-lg bg-emerald-50 px-2.5 py-1 md:flex">
-                  <div className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-                  <span className="text-[11px] font-semibold text-emerald-700">
-                    {todaySales} venta{todaySales !== 1 ? 's' : ''} hoy
+                <div
+                  className={`hidden shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1 md:flex ${
+                    shiftSales > 0 ? 'bg-emerald-50' : 'bg-slate-100'
+                  }`}
+                  title={shiftSales > 0
+                    ? 'Ventas cobradas en el turno de caja abierto'
+                    : 'Sin ventas en el turno de caja abierto'}
+                >
+                  <div className={`h-1.5 w-1.5 rounded-full ${shiftSales > 0 ? 'bg-emerald-500' : 'bg-slate-400'}`} />
+                  <span className={`text-[11px] font-semibold ${shiftSales > 0 ? 'text-emerald-700' : 'text-slate-500'}`}>
+                    {shiftSales} venta{shiftSales !== 1 ? 's' : ''} en turno
                   </span>
                 </div>
               </>

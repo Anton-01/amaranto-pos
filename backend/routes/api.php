@@ -40,6 +40,7 @@ use App\Http\Controllers\Promotion\PromotionSearchController;
 use App\Http\Controllers\Sales\DailySummaryController;
 use App\Http\Controllers\Sales\OrderController;
 use App\Http\Controllers\Sales\SalesExportController;
+use App\Http\Controllers\Sales\ShiftSalesCountController;
 use App\Http\Controllers\Sales\TicketConfigController;
 use App\Models\GlobalSetting;
 use Illuminate\Support\Facades\Route;
@@ -141,6 +142,14 @@ Route::middleware(['auth:sanctum', 'user.active'])->group(function () {
     });
 
     Route::get('sales/daily-summary', DailySummaryController::class);
+
+    /*
+     * Sales counter of the OPEN shift, for the header pill. Deliberately not a
+     * filter on `orders`: the pill needs one integer, and routing it through
+     * the history endpoint made it paginate a page of tickets just to read the
+     * total out of the metadata.
+     */
+    Route::get('sales/shift-count', ShiftSalesCountController::class);
     Route::get('sales/export', [SalesExportController::class, 'export']);
 
     // --- Comedor (Dine-in) -------------------------------------------------

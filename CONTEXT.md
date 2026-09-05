@@ -8847,3 +8847,171 @@ preferible a una fila que parece configurada y falla contra Google.
 - `src/components/settings/GoogleDrivePanel.jsx` — tres campos de OAuth, secretos
   enmascarados de solo escritura, quinta fila del diagnóstico con la cuenta
   autenticada
+
+---
+
+## 70. CUATRO CORRECCIONES DE ITERACIÓN: COLUMNAS OAUTH AUSENTES, LAYOUT DE UNA PANTALLA EN EL POS, MODAL DE COBRO EN LAPTOP Y CONTEO DE VENTAS POR TURNO [🟢 CORREGIDO]
+
+### 70.1 `SQLSTATE[42703]` al guardar las credenciales de Drive
+
+Guardar el trío de OAuth en `Configuración → Google Drive` reventaba con
+`column "refresh_token" of relation "drive_credentials" does not exist`. **No es
+un defecto del controlador**: el modelo escribe cuatro columnas y la tabla del
+entorno tenía menos. Es una **deriva de esquema**, y sus dos orígenes posibles
+son la migración `2026_09_05_000001` interrumpida entre sus dos llamadas a
+`Schema::table()` —agrega `account_email` y `refresh_token` en la primera y
+elimina las columnas de service account en la segunda— y un esquema restaurado
+desde un volcado anterior a cualquiera de las dos migraciones.
+
+La reparación es una migración nueva,
+`2026_09_05_000002_add_oauth_columns_to_drive_credentials_table`, que agrega
+`client_id`, `client_secret`, `refresh_token` y `account_email` **una por una y
+cada cual detrás de su propio `Schema::hasColumn()`**. El guardia individual es
+el punto: en PostgreSQL agregar una columna que ya existe aborta la migración
+completa, así que la de una base ya correcta —el caso común— tiene que ser un
+no-op limpio, y también la de cualquier variante a medio migrar entre ambos
+extremos.
+
+Los tipos replican los casts del modelo. `client_secret` y `refresh_token` son
+`text`: llevan el cast `encrypted`, de modo que lo almacenado es un sobre AES-256
+en base64 varias veces más largo que el texto plano, y `text` en PostgreSQL no
+tiene techo que pueda truncar un token. `client_id` y `account_email` van como
+`string` porque **se guardan en claro a propósito** — son identificadores
+públicos que el panel muestra de vuelta, no secretos.
+
+El `down()` es **deliberadamente vacío**. Las cuatro columnas pertenecen a las
+dos migraciones que las declaran; esta solo rellena los huecos que encuentra y no
+puede saber cuáles creó ella, así que soltarlas en un rollback borraría una
+columna viva de credenciales en una base correctamente migrada — y un refresh
+token no se recupera una vez perdido.
+
+### 70.2 Rediseño del layout del POS: una pantalla, dos scrolls independientes
+
+**El defecto.** El POS era una página larga y corriente. Buscar un producto en un
+catálogo grande empujaba el ticket fuera de la vista, así que el cajero subía la
+página para leer el total a cobrar **en cada venta**. En un turno completo es la
+interacción más repetida del sistema y la que menos aportaba.
+
+**La forma nueva.** Desde `lg` el POS entero queda clavado al viewport y **la
+página no hace scroll**: el catálogo se desplaza dentro de su propia columna y el
+ticket permanece fijo al lado.
+
+- El contenedor global es `flex flex-col lg:h-[calc(100vh-7rem)] lg:min-h-0
+  lg:overflow-hidden`. Las `7rem` no son un número mágico: son las dos bandas de
+  cromo dentro de las que vive la página — el header sticky de `AppLayout`
+  (`h-16` = 4rem) más el padding vertical de ese layout (`lg:p-6`, 1.5rem arriba
+  y 1.5rem abajo). Con eso el fondo de las columnas cae exactamente sobre el
+  borde del viewport y no se genera barra de scroll de página.
+- La tarjeta de estado del turno es `shrink-0`; la rejilla toma el resto con
+  `lg:flex-1 lg:min-h-0`. **`min-h-0` es lo que hace que las columnas hagan
+  scroll en vez de estirarse**: un ítem de grid nace con `min-height: auto`, lo
+  que permite que el contenido alto empuje la pista más allá de la altura fija y
+  devuelva el desbordamiento a la página — justo lo que este layout elimina.
+- **Columna izquierda (catálogo).** El buscador es una fila fija de la columna,
+  por encima del scroller, así que no puede moverse en absoluto. La rejilla de
+  productos vive en `lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:overscroll-contain`:
+  scroll exclusivo de los productos, y `overscroll-contain` impide que un
+  arrastre al final de la lista continúe en la página de atrás.
+- **Columna derecha (Ticket de Venta).** El panel llena su columna y se queda
+  quieto todo el turno. Es una columna flex: el encabezado y el bloque de totales
+  son `shrink-0` y las líneas del ticket toman la altura sobrante con su propio
+  `overflow-y-auto`, de modo que **el total nunca se va de la pantalla** por
+  largo que sea el ticket. Sustituye al viejo `lg:sticky lg:top-6`, que seguía
+  dependiendo del scroll de la página.
+
+**Por debajo de `lg` todo esto es inerte a propósito.** Cada clase implicada
+lleva prefijo `lg:`, así que un teléfono conserva el flujo de página normal,
+donde el ticket es una sección debajo del catálogo y la barra fija de resumen
+—la que ya existía— es lo que mantiene el total a la vista.
+
+La única concesión es el buscador, que sí es `sticky` en móvil, donde la página
+sí hace scroll. Se ancla en `top-16` y **no** en `top-0`: el header sticky de
+`AppLayout` ocupa esos primeros 4rem y una caja en `top-0` se deslizaría por
+debajo. El fondo opaco es obligatorio para que las tarjetas no se transparenten
+al pasar, y por la misma razón la separación con la primera tarjeta se da con
+`pb-4` y no con `mb-4` en teléfono: un margen queda fuera del área pintada y
+dejaría una ventana de 1rem por donde asomaría el borde de una tarjeta.
+
+### 70.3 El modal de Confirmar Cobro en laptop
+
+Con el padding de la máscara como único margen, en un panel de 1366x768 el
+diálogo llegaba de borde a borde y el POS desaparecía detrás — se pierde el
+contexto de la venta que se está confirmando, que es justo lo que el cajero
+necesita ver mientras la revisa.
+
+Ahora el ancho se acota por tramos: `w-full max-w-3xl` en teléfono,
+`md:w-11/12 md:max-w-4xl` en tableta y `lg:w-3/4 lg:max-w-5xl` en escritorio. El
+tope de altura pasa a `max-h-[92dvh] md:max-h-[85vh]`: `dvh` en teléfono para
+que una barra de navegador que se retrae no recorte el botón de confirmar, y un
+`85vh` plano desde `md`, donde esa barra no existe y el 15% restante es el aire
+que hace legible el POS detrás de la máscara. El panel de contenido conserva su
+`overflow-y-auto`, así que un ticket largo hace scroll **dentro** del diálogo en
+vez de agrandarlo. En teléfono sigue siendo full-bleed: un cobro a dos columnas
+apretado en tres cuartos de una pantalla de 390px es inservible.
+
+### 70.4 La píldora de ventas cuenta el turno de caja, no el día
+
+**El defecto.** La píldora del Top Bar pedía `/orders` con
+`date_from=hoy&date_to=hoy&per_page=1` y leía el `metadata.total` de la
+paginación. Eso responde una pregunta que nadie en el piso está haciendo: un
+turno que arranca a las 17:00 y cruza la medianoche veía su contador **puesto a
+cero por debajo del cajero a media operación**, y una caja abierta por la mañana
+heredaba todas las ventas del turno que había cerrado antes. El número que el
+cajero concilia contra el cajón es el de su turno, nunca el de un reloj de pared.
+
+**El endpoint nuevo.** `GET /api/sales/shift-count`
+(`Sales\ShiftSalesCountController`) devuelve el conteo del **turno de caja
+abierto**. No es un filtro más sobre `orders` a propósito: la píldora necesita un
+entero, y pasarla por el endpoint del historial la obligaba a paginar una página
+de tickets solo para leer el total del metadata.
+
+- **De quién es el turno.** Primero la caja abierta del propio solicitante, que
+  es el registro contra el que el POS ya factura. Quien supervisa el piso nunca
+  abre caja propia, así que para esa persona cae hacia los turnos que el
+  **negocio** tiene abiertos — el mismo razonamiento que ya hace business-wide a
+  `CashRegisterController::status()`. Sin ese fallback la píldora sería un cero
+  permanente para todo administrador. La respuesta expone `scope` (`own` /
+  `business`) y `has_open_shift` para que la interfaz pueda redactarla.
+- **Sin caja abierta el resultado es 0**, no el total del último turno: con el
+  cajón cerrado no hay nada en curso que contar, y mostrar la cifra de ayer al
+  lado de una caja cerrada es cómo un cajero termina conciliando contra el número
+  equivocado.
+- **Solo cuentan los tickets `completed`.** Una cuenta de mesa todavía en `open`
+  no se ha cobrado, y una `canceled` se cobró y se devolvió; contar cualquiera de
+  las dos pondría en el header un número que ningún cajón va a cuadrar.
+
+**En el frontend** la píldora se relee del turno y cambia su texto de "N ventas
+hoy" a **"N ventas en turno"**: sin caja abierta el 0 es legítimo, y llamarlo
+"hoy" se leería como "el negocio no ha vendido nada en todo el día" en lugar de
+"no ha arrancado ningún turno". El 0 sí se pinta —en gris, no en verde—; lo único
+que oculta la píldora es el `null`, que significa que el contador aún no ha
+resuelto. La clave de caché pasa de `header-today-sales` a `header-shift-sales`
+para que nombre lo que guarda, y **abrir caja la invalida**: un turno nuevo
+arranca su contador en cero, y sin eso la píldora seguiría mostrando la cifra del
+turno anterior hasta que venciera su TTL de 60s — exactamente la confusión que
+este cambio existe para quitar.
+
+El contador sigue sin sondear: se lee al montar el header y al volver a la
+pestaña con el dato vencido, más la invalidación que `CheckoutModal` ya hacía al
+cobrar.
+
+### 70.5 Archivos
+
+**Backend (nuevos)**
+- `database/migrations/2026_09_05_000002_add_oauth_columns_to_drive_credentials_table.php`
+  — reparación idempotente de las cuatro columnas de OAuth, guardia por columna,
+  `down()` vacío
+- `app/Http/Controllers/Sales/ShiftSalesCountController.php` — conteo de ventas
+  del turno de caja abierto
+
+**Backend (modificados)**
+- `routes/api.php` — `GET sales/shift-count`
+
+**Frontend (modificados)**
+- `src/pages/pos/POSPage.jsx` — contenedor de una pantalla, buscador fijo,
+  scroll exclusivo del catálogo, panel de ticket fijo a la columna,
+  invalidación del contador al abrir caja
+- `src/components/pos/CheckoutModal.jsx` — anchos por tramo y tope de altura del
+  diálogo; clave de caché `header-shift-sales`
+- `src/components/layout/AppHeader.jsx` — la píldora lee `/sales/shift-count`,
+  texto "en turno", estado gris para el cero
