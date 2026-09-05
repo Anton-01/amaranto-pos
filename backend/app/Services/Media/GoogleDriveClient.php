@@ -35,11 +35,20 @@ use Throwable;
  * `404 File not found` rather than 403 — the misconfiguration that looks like
  * a mistyped folder id. See config/media.php for the trade-off.
  *
- * SHARED DRIVES. Every call carries `supportsAllDrives=true`, and every search
- * additionally carries `includeItemsFromAllDrives=true` with `corpora=allDrives`.
- * Without them Drive silently confines the request to the service account's own
- * My Drive, so a root folder living in a shared drive — or shared into the
- * account from outside — reads as absent instead of as unreachable.
+ * SHARED DRIVES. Every call — upload, read, patch, delete, permissions —
+ * carries `supportsAllDrives=true`, and every search additionally carries
+ * `includeItemsFromAllDrives=true` with `corpora=allDrives`. Without them Drive
+ * silently confines the request to the service account's own My Drive, so a
+ * root folder living in a shared drive — or shared into the account from
+ * outside — reads as absent instead of as unreachable.
+ *
+ * Those parameters are not an optimization here, they are the module's storage
+ * model. A service account owns no storage quota of its own, so every file it
+ * creates inside an ordinary My Drive folder is billed to an account with zero
+ * bytes and Drive answers `403 [storageQuotaExceeded]`. Inside a shared drive
+ * the DRIVE owns the file and the organization pays for it, which is why the
+ * library's root folder must live in one. The parameters below are what make
+ * that placement addressable at all; `driveIdOf()` is what proves it holds.
  */
 class GoogleDriveClient
 {
@@ -222,7 +231,7 @@ class GoogleDriveClient
             'name' => $name,
             'mimeType' => 'application/vnd.google-apps.folder',
             'parents' => [$parentId],
-        ], ['fields' => 'id', 'supportsAllDrives' => 'true']);
+        ], ['fields' => 'id'] + $this->sharedDriveParams());
 
         $id = $created->json('id');
 
@@ -280,9 +289,11 @@ class GoogleDriveClient
                 ->withBody($body, "multipart/related; boundary={$boundary}")
                 ->post($url.'?'.http_build_query([
                     'uploadType' => 'multipart',
-                    'supportsAllDrives' => 'true',
-                    'fields' => 'id,name,mimeType,size,parents,webViewLink,md5Checksum,createdTime',
-                ]));
+                    // `driveId` comes back only when the object landed inside a
+                    // shared drive, so it doubles as the receipt that the file
+                    // is not being billed to the service account's zero quota.
+                    'fields' => 'id,name,mimeType,size,parents,webViewLink,md5Checksum,createdTime,driveId',
+                ] + $this->sharedDriveParams()));
         } catch (Throwable $e) {
             throw new GoogleDriveException(
                 'La subida a Google Drive no pudo completarse: '.$e->getMessage(),
@@ -296,7 +307,11 @@ class GoogleDriveClient
             throw new GoogleDriveException(
                 $this->describeFailure($response, 'Google Drive rechazó la subida del archivo'),
                 $response->status(),
-                ['stage' => 'upload'],
+                // The reason code is what separates the two 403s this call can
+                // produce: `storageQuotaExceeded` is the storage model being
+                // wrong (a My Drive parent), while `insufficientFilePermissions`
+                // is the sharing grant being wrong. They need opposite fixes.
+                ['stage' => 'upload', 'reason' => $this->failureReason($response)],
             );
         }
 
@@ -317,7 +332,7 @@ class GoogleDriveClient
             'patch',
             "/files/{$fileId}",
             $metadata,
-            ['supportsAllDrives' => 'true', 'fields' => 'id,name,mimeType,size'],
+            ['fields' => 'id,name,mimeType,size'] + $this->sharedDriveParams(),
         )->json();
     }
 
@@ -334,9 +349,11 @@ class GoogleDriveClient
     public function listPermissions(DriveCredential $credential, string $fileId): array
     {
         $response = $this->request($credential, 'get', "/files/{$fileId}/permissions", [
-            'fields' => 'permissions(id,type,role,emailAddress,domain,allowFileDiscovery)',
-            'supportsAllDrives' => 'true',
-        ]);
+            // `permissionDetails` is what tells an inherited grant (one that
+            // belongs to the shared drive and cannot be deleted from the file)
+            // apart from one set on the object itself.
+            'fields' => 'permissions(id,type,role,emailAddress,domain,allowFileDiscovery,permissionDetails(inherited))',
+        ] + $this->sharedDriveParams());
 
         return (array) ($response->json('permissions') ?? []);
     }
@@ -344,9 +361,13 @@ class GoogleDriveClient
     /** @throws GoogleDriveException */
     public function deletePermission(DriveCredential $credential, string $fileId, string $permissionId): void
     {
-        $this->request($credential, 'delete', "/files/{$fileId}/permissions/{$permissionId}", [], [
-            'supportsAllDrives' => 'true',
-        ]);
+        $this->request(
+            $credential,
+            'delete',
+            "/files/{$fileId}/permissions/{$permissionId}",
+            [],
+            $this->sharedDriveParams(),
+        );
     }
 
     /**
@@ -364,10 +385,7 @@ class GoogleDriveClient
             'type' => 'user',
             'role' => 'reader',
             'emailAddress' => $email,
-        ], [
-            'supportsAllDrives' => 'true',
-            'sendNotificationEmail' => 'false',
-        ]);
+        ], ['sendNotificationEmail' => 'false'] + $this->sharedDriveParams());
     }
 
     /**
@@ -384,10 +402,10 @@ class GoogleDriveClient
         try {
             $response = $this->http(config('media.drive.upload_timeout'))
                 ->withToken($this->accessToken($credential))
-                ->get(rtrim(config('media.drive.api_base'), '/')."/files/{$fileId}", [
-                    'alt' => 'media',
-                    'supportsAllDrives' => 'true',
-                ]);
+                ->get(
+                    rtrim(config('media.drive.api_base'), '/')."/files/{$fileId}",
+                    ['alt' => 'media'] + $this->sharedDriveParams(),
+                );
         } catch (Throwable $e) {
             throw new GoogleDriveException(
                 'No se pudo descargar el archivo desde Google Drive: '.$e->getMessage(),
@@ -401,7 +419,7 @@ class GoogleDriveClient
             throw new GoogleDriveException(
                 $this->describeFailure($response, 'Google Drive rechazó la descarga'),
                 $response->status(),
-                ['stage' => 'download'],
+                ['stage' => 'download', 'reason' => $this->failureReason($response)],
             );
         }
 
@@ -419,17 +437,13 @@ class GoogleDriveClient
      */
     public function trashFile(DriveCredential $credential, string $fileId): void
     {
-        $this->request($credential, 'patch', "/files/{$fileId}", ['trashed' => true], [
-            'supportsAllDrives' => 'true',
-        ]);
+        $this->request($credential, 'patch', "/files/{$fileId}", ['trashed' => true], $this->sharedDriveParams());
     }
 
     /** @throws GoogleDriveException */
     public function untrashFile(DriveCredential $credential, string $fileId): void
     {
-        $this->request($credential, 'patch', "/files/{$fileId}", ['trashed' => false], [
-            'supportsAllDrives' => 'true',
-        ]);
+        $this->request($credential, 'patch', "/files/{$fileId}", ['trashed' => false], $this->sharedDriveParams());
     }
 
     /**
@@ -451,8 +465,7 @@ class GoogleDriveClient
     {
         return (array) $this->request($credential, 'get', "/files/{$fileId}", [
             'fields' => $fields,
-            'supportsAllDrives' => 'true',
-        ])->json();
+        ] + $this->sharedDriveParams())->json();
     }
 
     /**
@@ -466,17 +479,22 @@ class GoogleDriveClient
      * configured id means the id belongs to a different folder than the one
      * that was shared.
      *
+     * Each entry reports whether it lives in a shared drive, because that is
+     * the property that decides whether the folder can hold uploads at all —
+     * offering an administrator a list of reachable folders without saying
+     * which of them are usable would just move the failure one step later.
+     *
      * Returns an empty array on failure instead of throwing: a diagnostic that
      * can itself blow up would replace the real error with its own.
      *
-     * @return array<int, array{id: string, name: string}>
+     * @return array<int, array{id: string, name: string, shared_drive: bool}>
      */
     public function listAccessibleFolders(DriveCredential $credential, int $limit = 10): array
     {
         try {
             $response = $this->request($credential, 'get', '/files', [
                 'q' => "mimeType = 'application/vnd.google-apps.folder' and trashed = false",
-                'fields' => 'files(id,name)',
+                'fields' => 'files(id,name,driveId)',
                 'pageSize' => max(1, min($limit, 100)),
             ] + $this->searchScopeParams());
         } catch (Throwable) {
@@ -487,10 +505,58 @@ class GoogleDriveClient
             ->map(fn ($folder) => [
                 'id' => (string) ($folder['id'] ?? ''),
                 'name' => (string) ($folder['name'] ?? ''),
+                'shared_drive' => filled($folder['driveId'] ?? null),
             ])
             ->filter(fn (array $folder) => $folder['id'] !== '')
             ->values()
             ->all();
+    }
+
+    /**
+     * Id of the shared drive an object lives in, or null when it lives in a My
+     * Drive.
+     *
+     * This is the module's storage-model probe, and it answers the question no
+     * other field answers: a folder in a personal My Drive that has been shared
+     * with the service account looks IDENTICAL to a shared drive folder from
+     * every other angle — it is reachable, it reports `canAddChildren`, folders
+     * can even be created inside it, because a folder occupies zero bytes. The
+     * difference only surfaces on the first upload of real bytes, as a
+     * `403 [storageQuotaExceeded]` charged to an account that owns no quota.
+     * `driveId` is present exclusively for objects inside a shared drive, so it
+     * is the one honest, cheap answer available before that failure.
+     *
+     * Returns null on any failure rather than throwing: the caller uses this to
+     * EXPLAIN a problem, and a probe that can itself blow up would replace the
+     * real diagnosis with its own.
+     */
+    public function driveIdOf(DriveCredential $credential, string $fileId): ?string
+    {
+        try {
+            $driveId = $this->getFile($credential, $fileId, 'id,driveId')['driveId'] ?? null;
+        } catch (Throwable) {
+            return null;
+        }
+
+        return is_string($driveId) && $driveId !== '' ? $driveId : null;
+    }
+
+    /**
+     * Query parameters every non-search call must carry.
+     *
+     * Drive treats a request without `supportsAllDrives` as one made by a
+     * client that does not understand shared drives, and refuses to act on
+     * objects inside them — reads included. Centralizing it here is what makes
+     * "every call carries it" a property of the class rather than a rule each
+     * method has to remember: a new method that forgets to merge this in
+     * would work perfectly against My Drive during development and fail in
+     * production, which is the worst possible way to discover the omission.
+     *
+     * @return array<string, string>
+     */
+    private function sharedDriveParams(): array
+    {
+        return ['supportsAllDrives' => 'true'];
     }
 
     /**
@@ -511,8 +577,7 @@ class GoogleDriveClient
         return [
             'corpora' => 'allDrives',
             'includeItemsFromAllDrives' => 'true',
-            'supportsAllDrives' => 'true',
-        ];
+        ] + $this->sharedDriveParams();
     }
 
     /**
@@ -522,6 +587,15 @@ class GoogleDriveClient
      * PATCH carry a JSON body plus an optional query. Centralizing that here
      * is what keeps every caller above free of transport concerns and gives
      * every failure the same shape.
+     *
+     * DELETE BUILDS ITS QUERY STRING BY HAND, and that is not a style choice.
+     * The framework's `get()` puts its array in the query string, but its
+     * `delete()` puts the very same array in the request BODY as JSON. Drive
+     * reads `supportsAllDrives` only from the query string and ignores bodies
+     * on DELETE, so passing the two the same way would send a parameter that
+     * silently never arrives — and the only call this affects is the one that
+     * revokes a public permission on a shared-drive file, which would then fail
+     * as "not found" while the grant it was meant to remove stayed in place.
      *
      * @param  array<string, mixed>  $payload
      * @param  array<string, mixed>  $query
@@ -542,11 +616,9 @@ class GoogleDriveClient
 
         try {
             $response = match ($method) {
-                'get', 'delete' => $client->{$method}($url, $payload + $query),
-                default => $client->{$method}(
-                    $query === [] ? $url : $url.'?'.http_build_query($query),
-                    $payload,
-                ),
+                'get' => $client->get($url, $payload + $query),
+                'delete' => $client->delete($this->withQuery($url, $payload + $query)),
+                default => $client->{$method}($this->withQuery($url, $query), $payload),
             };
         } catch (Throwable $e) {
             throw new GoogleDriveException(
@@ -628,6 +700,12 @@ class GoogleDriveClient
         return Http::timeout($timeout ?? (int) config('media.drive.timeout', 20))
             ->connectTimeout((int) config('media.drive.connect_timeout', 8))
             ->acceptJson();
+    }
+
+    /** A URL with the given parameters appended, or the URL unchanged. */
+    private function withQuery(string $url, array $query): string
+    {
+        return $query === [] ? $url : $url.'?'.http_build_query($query);
     }
 
     private function base64UrlEncode(string $value): string

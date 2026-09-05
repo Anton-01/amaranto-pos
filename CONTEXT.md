@@ -8499,3 +8499,204 @@ La etiqueta pasa de "Ordenes" a "Ordenes del día".
   Resumen del Día y fila partida en dos columnas
 - `src/index.css` — `text-sm` efectivo sobre controles de PrimeReact, acotado
   desde 641 px para no anular la guarda anti-zoom de iOS
+
+## 68. EDITOR MULTIMEDIA EN LA SUBIDA Y UNIDADES COMPARTIDAS DE GOOGLE DRIVE [🟢 COMPLETADO Y OPERATIVO]
+
+Dos cambios sobre el Módulo de Medios (sección 63) que no comparten código pero
+sí una misma idea: **mover el fallo al momento en que todavía se puede
+corregir**. Antes, un archivo demasiado grande se descubría después de subirlo,
+y una carpeta raíz mal ubicada se descubría en la primera subida real de un
+operador. Ahora lo primero se resuelve en el navegador y lo segundo en la
+pantalla de configuración.
+
+### 68.1 La política de subida deja de mostrarse (y empieza a aplicarse antes)
+
+La modal de subida abría con una tira de etiquetas listando cada extensión
+habilitada y su tope de peso. Era exacta y era ruido: describía una regla que
+noventa y nueve de cada cien subidas iban a cumplir sin enterarse, y se leía
+como una lista de requisitos a satisfacer antes de que el sistema concediera el
+permiso — que no es como funciona el módulo. El operador elige un archivo, y el
+sistema lo toma o se explica.
+
+**Las etiquetas desaparecieron; la validación no.** El servidor sigue siendo la
+única autoridad: `allowed_file_types` se revalida en cada petición, magic bytes
+incluidos, y nada de lo que decida el navegador puede ampliarla. Lo que cambió
+es que la regla ahora **también** corre en el cliente, en silencio, y un archivo
+inadmisible se rechaza en el instante en que se elige — con el motivo y nada
+más, como toast y como bloque legible dentro de la modal.
+
+**Por qué se duplica la regla, si la sección 63 decía explícitamente que no.**
+No para dar el veredicto más rápido: para que el editor sea posible. Una
+herramienta que puede comprimir una imagen necesita saber contra qué techo está
+comprimiendo, y enterarse de que una foto de 40 MB no cabía **después** de
+haberla subido es exactamente el viaje redondo que el panel viene a eliminar.
+La duplicación está acotada por construcción: `src/lib/mediaEditing.js` lee las
+mismas filas de `allowed_file_types` que el backend aplica, obtenidas al abrir
+la biblioteca, nunca escritas a mano. Cuando esas filas no están disponibles —un
+manager sin el permiso de administración que expone el catálogo— **cada control
+del módulo se abstiene** y decide el servidor solo, igual que antes. Puede
+faltar una comprobación local; nunca puede existir una que el servidor no tenga.
+
+La capa de MIME deliberadamente **no** se replica. El servidor compara los magic
+bytes del archivo en disco, que el navegador no expone; cualquier aproximación
+en el cliente compararía el tipo que el sistema operativo dedujo de la misma
+extensión que ya revisamos —una tautología que no atraparía nada— y rechazaría
+archivos legítimos cuyo navegador escribe el tipo con otra grafía.
+
+### 68.2 La modal se vuelve un banco de trabajo
+
+`max-w-5xl` (`dialogClass('xl')`), dos columnas en escritorio y una sola pila
+por debajo de 1024 px: a la izquierda el visor/editor, a la derecha la ficha que
+se guardará en la biblioteca. La zona de arrastre se colapsa a una línea en
+cuanto hay un archivo cargado, para que el editor se quede con el espacio.
+
+**Imágenes — cropper.js v1.6, conducido por ref.** Recorte con manijas,
+proporciones (libre, 1:1, 4:3, 16:9, 3:4), giro de 90° en ambos sentidos,
+reflejo horizontal y vertical, reencuadre y restablecer. La exportación ofrece
+resolución (tamaño real del recorte, 1600 px, 1024 px y **miniatura de 400 px**),
+formato de salida (mantener el original, JPEG, WebP, PNG) y calidad de 40 a 100
+para los formatos con pérdida. Todo ocurre en un `<canvas>` **antes** de que un
+solo byte salga del navegador: una foto de teléfono de 4000 px y 8 MB que la
+biblioteca va a mostrar a 400 px no tiene por qué viajar, almacenarse ni
+descargarse a 4000 px. Medido en la prueba de humo: 197 KB → 7.8 KB con recorte
+cuadrado, miniatura de 400 px y salida JPEG al 82 %.
+
+Cuatro decisiones que sostienen ese flujo:
+
+- **`keep` es el formato por omisión.** Reencodear un archivo que nadie pidió
+  reencodear es una pérdida sin contrapartida: una segunda generación de JPEG
+  sobre una imagen que solo se giró, o una captura PNG vuelta con pérdida a
+  espaldas del usuario.
+- **El nombre se reconstruye con la extensión realmente escrita.** Un `logo.png`
+  exportado a JPEG llega como `logo.jpg`, o el servidor lo rechaza por mentir
+  sobre sí mismo: su capa 1 mira la extensión y su capa 3 los magic bytes, y
+  tienen que coincidir.
+- **El derivado se revalida contra la política antes de aceptarse.** Cambiar el
+  formato cambia la extensión, y una extensión que el catálogo no tiene sería
+  rechazada por el servidor después de subirla — el viaje que queríamos evitar.
+- **El reescalado se calcula a mano, no con `maxWidth`/`maxHeight`.** Esos dos
+  acotan cada eje por separado, así que un recorte panorámico vuelve aplastado
+  en vez de más pequeño. Escalar ambos ejes por un solo factor es la única
+  forma de conservar la proporción.
+- **Se rellena de blanco al exportar a un formato sin canal alfa.** Un logo con
+  fondo transparente exportado a JPEG sale con los píxeles transparentes en
+  negro si el lienzo no se rellena primero.
+
+SVG queda fuera del editor aunque un administrador lo habilite: es un formato de
+documento, y dibujarlo en un lienzo lo rasterizaría en algo que nadie pidió
+mientras se pierde todo lo vectorial.
+
+**Documentos.** El PDF se renderiza en línea con `<object>` y **no** con
+`<iframe>`, por una razón concreta: `<object>` dibuja a sus hijos cuando el
+navegador no puede mostrar el recurso. Un navegador sin visor de PDF integrado
+deja un iframe en blanco que no se distingue de una primera página vacía;
+aquí cae a la misma ficha de identidad que recibe cualquier otro documento —
+icono tipado con los colores de `mediaPreview`, nombre, categoría, extensión y
+peso. Hojas de cálculo, documentos de texto y comprimidos usan esa ficha como
+superficie principal: el navegador no puede dibujarlos sin embarcar un parser
+del formato que el usuario está a punto de subir sin modificar, y una hoja de
+cálculo a medio renderizar engañaría mucho más que un icono correcto.
+
+Verificado en navegador (Chromium headless, 1440×950 y 390×844): cropper montado
+y operativo, cero etiquetas de política, ficha de PDF en su modo de respaldo,
+rechazo local de un `.exe` con `ERR_MEDIA_TYPE_NOT_REGISTERED` sin tocar la red,
+apilado correcto en móvil y **cero desbordamiento horizontal** a 390 px.
+
+### 68.3 El 403 `storageQuotaExceeded`: la cuenta de servicio no tiene dónde guardar
+
+**La causa raíz no es un permiso, es la propiedad de los bytes.** Una Service
+Account es una identidad **sin cuota de almacenamiento propia** —no una pequeña:
+ninguna— y Drive cobra cada objeto nuevo a quien lo posee. Dentro de una carpeta
+de "Mi unidad", el propietario del archivo subido **es la cuenta de servicio**,
+así que Google responde `403 [storageQuotaExceeded]` en la primera subida real,
+por más correctamente que se haya compartido la carpeta y **sin importar qué
+parámetros lleve la petición**. Dentro de una Unidad compartida, la unidad posee
+su contenido y la cuota de la organización lo paga: la misma subida funciona.
+
+**La trampa es que una carpeta de "Mi unidad" pasa todas las comprobaciones
+baratas.** Es alcanzable, reporta `canAddChildren`, y el módulo incluso puede
+crear sus subcarpetas de categoría dentro de ella, porque una carpeta ocupa cero
+bytes. El fallo aparece solo en el primer archivo que sube un operador, horas
+después de la configuración y en otra pantalla.
+
+Lo que se hizo:
+
+- **`supportsAllDrives=true` en TODA interacción con la API**, centralizado en
+  `GoogleDriveClient::sharedDriveParams()` en lugar de repetido método a método:
+  subida, lectura, `patch`, borrado y permisos. Que "toda llamada lo lleva" sea
+  una propiedad de la clase y no una regla que cada método deba recordar importa
+  porque un método nuevo que lo olvide funciona perfecto contra "Mi unidad"
+  durante el desarrollo y falla en producción. Las búsquedas siguen sumando
+  `includeItemsFromAllDrives=true` y `corpora=allDrives`.
+- **Corrección de transporte en `DELETE`.** El `get()` del framework pone su
+  arreglo en el query string, pero su `delete()` pone ese mismo arreglo en el
+  **cuerpo** de la petición. Drive lee `supportsAllDrives` únicamente del query
+  string, así que el parámetro nunca llegaba en la única llamada afectada: la
+  que revoca un permiso público sobre un archivo en unidad compartida, que
+  fallaba como "not found" mientras el permiso que debía quitar seguía puesto.
+  Ahora `DELETE` arma su query string a mano.
+- **`driveId` como prueba del modelo de almacenamiento.** Está presente
+  exclusivamente en objetos dentro de una Unidad compartida, así que es la única
+  respuesta honesta y barata disponible **antes** del fallo. La prueba de
+  conexión lo pide sobre la carpeta raíz y añade una quinta comprobación,
+  `root_folder_in_shared_drive`, visible en el panel de Configuración. Sin ella
+  la conexión no se reporta como sana.
+- **Traducción del 403 en la subida.** Las palabras de Google —"The user's Drive
+  storage quota has been exceeded"— mandan al administrador a revisar un Drive
+  al 2 % de uso y a ampliar permisos que nunca fueron el problema. El mensaje se
+  reescribe como el procedimiento que sí lo resuelve: crear una Unidad
+  compartida, agregar a la cuenta de servicio como Administrador de contenido,
+  mover ahí la carpeta de la biblioteca y actualizar el ID de la carpeta raíz.
+  Cualquier otro fallo de Drive pasa intacto: parafrasear un `notFound` como un
+  problema de almacenamiento sería justo la desorientación que esto viene a
+  quitar.
+- **Los dos 403 se separan por su `reason`.** `storageQuotaExceeded` es el
+  modelo de almacenamiento; `insufficientFilePermissions` es el permiso de
+  compartición. Llegan con el mismo estado HTTP y necesitan arreglos opuestos,
+  así que el código de razón —que antes solo se conservaba en `request()`— ahora
+  viaja también desde `uploadFile()` y `downloadFile()`.
+- **Permisos heredados de la unidad.** Un permiso público que la unidad impone a
+  sus hijos no se puede borrar desde el archivo: Drive lo rechaza y el arreglo
+  es un cambio en la configuración de la propia unidad. Se detecta con
+  `permissionDetails(inherited)`, se salta el borrado condenado al fracaso, se
+  registra qué hay que cambiar y dónde, y **cuenta en contra** de la visibilidad
+  reportada del archivo — sobrestimar la privacidad de un objeto es peor que
+  admitir que el endurecimiento fue parcial.
+- **Diagnósticos que ya no envían al lugar equivocado.** La lista de carpetas
+  alcanzables marca cada una como `[Unidad compartida]` o `[Mi unidad]`: ofrecer
+  carpetas alcanzables sin decir cuáles sirven solo movería el fallo un paso más
+  adelante. La auditoría de cada subida guarda el `shared_drive_id` (nulo
+  significa "Mi unidad"), para poder responder *cuándo empezó* y no solo *está
+  fallando*.
+- **`MEDIA_DRIVE_REQUIRE_SHARED_DRIVE`** (por defecto `true`) es la única
+  válvula de escape, y existe para una instalación que haya **demostrado** que
+  sus subidas funcionan de otro modo —una cuenta con delegación de dominio
+  suplantando a un usuario real—. No es una forma de poner en verde un panel
+  rojo: apagarla no concede cuota alguna, solo pospone el mismo 403 a la primera
+  subida del operador.
+
+### Archivos
+**Backend (modificados)**
+- `app/Services/Media/GoogleDriveClient.php` — `sharedDriveParams()`,
+  `driveIdOf()`, `withQuery()`, `DELETE` con query string, `reason` propagado
+  desde subida y descarga, `driveId` en los campos pedidos
+- `app/Services/Media/GoogleDriveService.php` — `translateQuotaFailure()`,
+  `explainMyDriveRootFolder()`, comprobación `root_folder_in_shared_drive`,
+  permisos heredados en `hardenPermissions()`
+- `app/Services/Media/MediaLibraryService.php` — `shared_drive_id` en la
+  auditoría de subida
+- `app/Http/Controllers/Media/DriveCredentialController.php` — mensaje de éxito
+- `config/media.php` — `media.drive.require_shared_drive`
+
+**Frontend (nuevos)**
+- `src/lib/mediaEditing.js` — política en el cliente, formatos y presets de
+  salida, exportación de lienzo a `File`
+- `src/components/media/MediaFileEditor.jsx` — cropper, herramientas y fichas de
+  documento
+
+**Frontend (modificados)**
+- `src/components/media/MediaUploadDialog.jsx` — banco de trabajo a dos
+  columnas, sin etiquetas de política, rechazo local
+- `src/components/settings/GoogleDrivePanel.jsx` — quinta comprobación y ayuda
+  del campo de carpeta raíz
+- `package.json` — `cropperjs ^1.6.2`

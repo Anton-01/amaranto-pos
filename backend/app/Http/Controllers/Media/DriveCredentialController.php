@@ -253,7 +253,12 @@ class DriveCredentialController extends Controller
                 'elapsed_ms' => $result['elapsed_ms'],
             ],
             'metadata' => [
-                'message' => 'Conexión verificada: la cuenta de servicio autentica y puede escribir en la carpeta raíz.',
+                // The shared drive is named in the success message because it
+                // is the part of a healthy setup an administrator cannot see
+                // from the panel, and the part that silently degrades if the
+                // folder is ever moved out of the unit.
+                'message' => 'Conexión verificada: la cuenta de servicio autentica, la carpeta raíz vive en una '
+                    .'Unidad compartida y se puede escribir en ella.',
             ],
         ]);
     }
