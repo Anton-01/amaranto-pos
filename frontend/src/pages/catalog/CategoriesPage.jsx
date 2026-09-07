@@ -9,7 +9,7 @@ import { toast } from 'sonner';
 import api from '../../api/axios';
 import AppLayout from '../../components/layout/AppLayout';
 import DeleteDialog from '../../components/catalog/DeleteDialog';
-import { STACK_TABLE, STACK_CLASS } from '../../lib/responsive';
+import { STACK_TABLE, STACK_CLASS, dialogClass, DIALOG_PT } from '../../lib/responsive';
 
 export default function CategoriesPage() {
   const [categories, setCategories] = useState([]);
@@ -195,17 +195,28 @@ export default function CategoriesPage() {
         </DataTable>
       </div>
 
+      {/*
+        Alta y edicion de categoria: un nombre y un interruptor. El diálogo se
+        declara con `dialogClass('sm')` — el tamaño más pequeño de la escala —
+        porque `max-w-md` a secas nunca llegaba a aplicarse: el piso `.p-dialog`
+        de index.css va SIN capa, y una regla sin capa gana a las utilidades de
+        Tailwind (que viven en `@layer utilities`), así que su
+        `max-width: calc(100vw - 1.5rem)` mandaba y un formulario de dos campos
+        ocupaba el ancho del monitor. `dialogClass` declara un ANCHO real desde
+        `sm`, que nada sobreescribe.
+      */}
       <Dialog
         visible={showForm}
         onHide={() => setShowForm(false)}
         closable={!saving}
         modal
         header={null}
-        className="w-full max-w-md"
+        className={dialogClass('sm')}
         pt={{
-          mask: { className: 'backdrop-blur-sm bg-black/30' },
-          root: { className: 'rounded-2xl border-0 shadow-2xl' },
-          content: { className: 'p-0' },
+          ...DIALOG_PT,
+          mask: { className: 'backdrop-blur-sm bg-black/30 p-3 sm:p-4' },
+          root: { className: 'rounded-2xl border-0 shadow-2xl max-h-[92dvh] !max-w-full' },
+          content: { className: 'p-0 overflow-y-auto overscroll-contain' },
         }}
       >
         <form onSubmit={handleSave} className="p-6">

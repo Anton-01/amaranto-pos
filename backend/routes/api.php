@@ -19,6 +19,7 @@ use App\Http\Controllers\Catalog\ProductController;
 use App\Http\Controllers\Catalog\ProductImageController;
 use App\Http\Controllers\Dashboard\DashboardController;
 use App\Http\Controllers\Dashboard\MonthlyAnalyticsController;
+use App\Http\Controllers\Dashboard\MonthlyAnalyticsExportController;
 use App\Http\Controllers\Dining\TableController;
 use App\Http\Controllers\Dining\TableSessionController;
 use App\Http\Controllers\Finance\AnalyticsController;
@@ -204,6 +205,14 @@ Route::middleware(['auth:sanctum', 'user.active'])->group(function () {
         Route::get('/top-products', [DashboardController::class, 'topProducts']);
         Route::get('/monthly-analytics', MonthlyAnalyticsController::class)
             ->middleware('role:admin,manager');
+
+        /*
+         * Libro .XLSX ESTRICTO de la analitica mensual (PhpSpreadsheet). Freno
+         * propio: cada peticion arma cinco hojas en memoria, asi que es la ruta
+         * mas cara del panel y no debe compartir cupo con las lecturas ligeras.
+         */
+        Route::get('/monthly-analytics/export', MonthlyAnalyticsExportController::class)
+            ->middleware(['role:admin,manager', 'throttle:20,1']);
     });
 
     // Notificaciones estructuradas por tag (campana del header)

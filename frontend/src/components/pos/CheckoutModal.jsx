@@ -371,7 +371,7 @@ export default function CheckoutModal({ visible, onHide, cart, taxRate = 0.16, o
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-5 px-4 pb-4 sm:gap-6 sm:px-6 sm:pb-6 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-5 px-4 pb-4 sm:gap-6 sm:px-6 sm:pb-6 lg:grid-cols-2 lg:items-start">
         {/* Left: Controls */}
         <div className="space-y-4">
           <div>
@@ -434,7 +434,96 @@ export default function CheckoutModal({ visible, onHide, cart, taxRate = 0.16, o
             </div>
           )}
 
-          <div>
+
+          {/* Totals breakdown */}
+          <div className="rounded-lg bg-slate-50 p-3 text-sm">
+            <div className="flex justify-between text-slate-600">
+              <span>Subtotal (bruto)</span>
+              <span>${totalGrossBefore.toLocaleString('es-MX', { minimumFractionDigits: 2 })}</span>
+            </div>
+            {computedDiscount > 0 && (
+              <div className="flex justify-between text-amber-700 font-medium">
+                <span>Descuento</span>
+                <span>-${computedDiscount.toLocaleString('es-MX', { minimumFractionDigits: 2 })}</span>
+              </div>
+            )}
+            <div className="flex justify-between text-slate-600">
+              <span>Subtotal Neto</span>
+              <span>${subtotal.toLocaleString('es-MX', { minimumFractionDigits: 2 })}</span>
+            </div>
+            <div className="flex justify-between text-slate-600">
+              <span>IVA ({(taxRate * 100).toFixed(0)}%)</span>
+              <span>${ivaTotal.toLocaleString('es-MX', { minimumFractionDigits: 2 })}</span>
+            </div>
+            <div className="mt-2 flex justify-between border-t border-slate-200 pt-2 text-lg font-bold text-slate-900">
+              <span>Total</span>
+              <span>${total.toLocaleString('es-MX', { minimumFractionDigits: 2 })}</span>
+            </div>
+          </div>
+
+          {!ticketConfig && (
+            <div className="rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700 font-medium">
+              No hay configuracion de ticket activa. Ve a Configuracion para crear una.
+            </div>
+          )}
+
+          <div className="flex flex-col-reverse gap-3 sm:flex-row">
+            <Button
+              type="button"
+              label="Cancelar"
+              onClick={onHide}
+              disabled={submitting}
+              className="flex-1 justify-center rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700 hover:bg-slate-50 sm:py-2.5"
+              pt={{ root: { className: 'border border-slate-200' } }}
+            />
+            <Button
+              type="button"
+              label={submitting ? 'Procesando...' : 'Confirmar Cobro'}
+              onClick={handleSubmit}
+              disabled={submitting || !ticketConfig || !paymentMethodId || (isCash && cashInsufficient)}
+              loading={submitting}
+              className="flex-1 cursor-pointer justify-center rounded-lg bg-emerald-600 px-4 py-3 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-50 sm:py-2.5"
+              pt={{ root: { className: 'border-0' } }}
+            />
+          </div>
+        </div>
+
+        {/*
+          RIGHT COLUMN — its own scroll region.
+
+          Everything that grows with the sale lives here: the ticket grows one
+          line per product, and the legend and the discount block sit under it.
+          The column owns its overflow (`overflow-y-auto` under a height cap
+          tied to the dialog's own 85vh), so a twenty-item basket scrolls HERE
+          and the payment controls, the totals and the confirm button on the
+          left never move. `overscroll-contain` stops that scroll from being
+          handed to the POS behind the mask once it reaches the end.
+
+          Below `lg` there is one column and no cap: the dialog's content pane
+          scrolls as a whole, which is the right reading on a phone.
+        */}
+        <div className="flex flex-col gap-4 lg:max-h-[calc(85vh-9rem)] lg:overflow-y-auto lg:overscroll-contain lg:pr-1">
+          {/* Ticket preview.
+              The `screen` variant drops the monospace thermal typography and
+              sits on a soft grey card, so the preview reads as part of the
+              dialog instead of imitating the printer.
+
+              `items-start` is what keeps that card at the height of its own
+              content: as a stretched flex/grid child it used to grow to the
+              full height of the row and trail a slab of empty grey under the
+              last line of the ticket. */}
+          <div className="flex shrink-0 items-start justify-center overflow-x-auto">
+            <TicketPreview
+              ref={ticketRef}
+              order={previewOrder}
+              ticketConfig={ticketConfig}
+              customLegend={customLegend}
+              taxRate={taxRate}
+              variant="screen"
+            />
+          </div>
+
+          <div className="shrink-0">
             <label className="mb-1.5 block text-sm font-medium text-slate-700">
               Leyenda Personalizada
               <span className="ml-1 text-xs text-slate-400">(opcional)</span>
@@ -452,7 +541,7 @@ export default function CheckoutModal({ visible, onHide, cart, taxRate = 0.16, o
           </div>
 
           {/* Discount / Coupon Section */}
-          <div className="rounded-lg border border-slate-200 p-3">
+          <div className="shrink-0 rounded-lg border border-slate-200 p-3">
             <div className="flex items-center gap-2">
               <Checkbox
                 inputId="applyDiscount"
@@ -576,73 +665,6 @@ export default function CheckoutModal({ visible, onHide, cart, taxRate = 0.16, o
               </div>
             )}
           </div>
-
-          {/* Totals breakdown */}
-          <div className="rounded-lg bg-slate-50 p-3 text-sm">
-            <div className="flex justify-between text-slate-600">
-              <span>Subtotal (bruto)</span>
-              <span>${totalGrossBefore.toLocaleString('es-MX', { minimumFractionDigits: 2 })}</span>
-            </div>
-            {computedDiscount > 0 && (
-              <div className="flex justify-between text-amber-700 font-medium">
-                <span>Descuento</span>
-                <span>-${computedDiscount.toLocaleString('es-MX', { minimumFractionDigits: 2 })}</span>
-              </div>
-            )}
-            <div className="flex justify-between text-slate-600">
-              <span>Subtotal Neto</span>
-              <span>${subtotal.toLocaleString('es-MX', { minimumFractionDigits: 2 })}</span>
-            </div>
-            <div className="flex justify-between text-slate-600">
-              <span>IVA ({(taxRate * 100).toFixed(0)}%)</span>
-              <span>${ivaTotal.toLocaleString('es-MX', { minimumFractionDigits: 2 })}</span>
-            </div>
-            <div className="mt-2 flex justify-between border-t border-slate-200 pt-2 text-lg font-bold text-slate-900">
-              <span>Total</span>
-              <span>${total.toLocaleString('es-MX', { minimumFractionDigits: 2 })}</span>
-            </div>
-          </div>
-
-          {!ticketConfig && (
-            <div className="rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700 font-medium">
-              No hay configuracion de ticket activa. Ve a Configuracion para crear una.
-            </div>
-          )}
-
-          <div className="flex flex-col-reverse gap-3 sm:flex-row">
-            <Button
-              type="button"
-              label="Cancelar"
-              onClick={onHide}
-              disabled={submitting}
-              className="flex-1 justify-center rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700 hover:bg-slate-50 sm:py-2.5"
-              pt={{ root: { className: 'border border-slate-200' } }}
-            />
-            <Button
-              type="button"
-              label={submitting ? 'Procesando...' : 'Confirmar Cobro'}
-              onClick={handleSubmit}
-              disabled={submitting || !ticketConfig || !paymentMethodId || (isCash && cashInsufficient)}
-              loading={submitting}
-              className="flex-1 cursor-pointer justify-center rounded-lg bg-emerald-600 px-4 py-3 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-50 sm:py-2.5"
-              pt={{ root: { className: 'border-0' } }}
-            />
-          </div>
-        </div>
-
-        {/* Right: Ticket preview.
-            The `screen` variant drops the monospace thermal typography and sits
-            on a soft grey card, so the preview reads as part of the dialog
-            instead of imitating the printer. */}
-        <div className="flex justify-center overflow-x-auto">
-          <TicketPreview
-            ref={ticketRef}
-            order={previewOrder}
-            ticketConfig={ticketConfig}
-            customLegend={customLegend}
-            taxRate={taxRate}
-            variant="screen"
-          />
         </div>
       </div>
     </Dialog>
