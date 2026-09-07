@@ -9135,3 +9135,224 @@ venga.
   quinto y ticket en `variant="screen"`
 - `src/components/pos/PrintConfirmationModal.jsx` — ancho de escritorio
   `lg:w-1/2 lg:max-w-2xl`
+
+---
+
+## 72. AUDITORÍA DE MEDIOS COMO DATATABLE SERVIDO, REACOMODO DEL COBRO Y EXPORTACIÓN .XLSX DE LA ANALÍTICA [🟢 COMPLETADO Y OPERATIVO]
+
+Seis ajustes de una misma iteración. Tres son de layout —dónde vive cada cosa y
+cuánto espacio ocupa—, dos son de tamaño de modal, y uno cambia el formato del
+reporte financiero mensual. El hilo común es que todos nacen de leer las
+pantallas en un monitor de laptop y encontrar espacio muerto, controles
+desproporcionados o un archivo que no se lee como reporte.
+
+### 72.1 Un defecto de CSS que explica dos de los seis puntos
+
+Antes de los cambios conviene dejar escrita la causa, porque se repite:
+
+**Las utilidades `max-w-*` de Tailwind NO aplican sobre un `<Dialog>`.** El piso
+de seguridad de `index.css`
+
+```css
+.p-dialog { max-width: calc(100vw - 1.5rem); }
+```
+
+va **sin capa**, y en CSS una regla sin capa gana a cualquier regla dentro de
+`@layer` — que es donde viven todas las utilidades de Tailwind v4. Por eso un
+diálogo declarado como `w-full max-w-md` se pintaba a lo ancho de la página: el
+`w-full` sí se aplicaba (no compite con nada), el `max-w-md` no.
+
+La forma correcta —y la que `lib/responsive.js` implementa desde la sección 62—
+es declarar un **ANCHO** real por breakpoint (`sm:w-[26rem]`), que nada
+sobreescribe. De ahí que los dos diálogos de este apartado pasen a
+`dialogClass('sm')` en lugar de "arreglarse" subiendo la especificidad.
+
+### 72.2 Auditoría de Medios: DataTable servido por el backend
+
+La traza es la única tabla del sistema **garantizada** a crecer sin techo: es
+append-only y se escribe sola. La vista anterior traía una página fija de 25
+registros con tres filtros y un `<Paginator>` suelto debajo de la tabla.
+
+**Ahora la rejilla es servida de extremo a extremo.** El `<DataTable>` es `lazy`
+con el paginador dentro: página, tamaño de página, orden y **todos** los filtros
+viajan a la API, y en memoria solo está la página visible. Nada se filtra en el
+cliente, porque filtrar sobre una página de 25 filas responde en silencio una
+pregunta distinta de la que hizo el investigador.
+
+Lo que gana la vista:
+
+- **Tamaño de página elegible** (10 / 25 / 50 / 100) y reporte "1–25 de 4 812".
+- **Orden por fecha en ambos sentidos**, resuelto en el servidor. Es el único
+  orden que se ofrece: las demás columnas son *snapshots*, y ordenar una traza
+  por el nombre del operador no dice nada sobre la secuencia de los hechos.
+- **Búsqueda de texto libre** sobre nombre del recurso, operador, correo, IP e ID
+  de Drive.
+- **Filtro por operador**, alimentado por un catálogo nuevo.
+- **Panel de Filtros Avanzados plegable**, con contador de filtros activos, y
+  botones explícitos de Aplicar / Limpiar.
+- **Filas apiladas por debajo de 768px** (`STACK_TABLE`), como el resto de las
+  tablas del sistema.
+
+**Por qué los filtros se aplican a mano y la búsqueda no.** Estas lecturas son
+las más caras del módulo: un `<Dropdown>` cableado directo a la petición dispara
+una consulta por cada ajuste mientras el usuario todavía está armando la
+pregunta. La caja de búsqueda es la excepción y va con *debounce* de 400ms,
+porque un texto se teclea y se lee de forma incremental; sin eso la caja no
+sirve. `clearFilters` marca un `skipSearchEffect` antes de vaciar la caja para
+que el reset no encole una segunda petición 400ms detrás de la suya.
+
+**Backend.** `MediaAuditLogController` gana tres cosas:
+
+- `search` — aguja libre en `ILIKE` sobre las columnas **snapshot**
+  (`resource_name`, `user_name`, `user_email`, `ip_address`, `drive_file_id`).
+  Deliberadamente **no** hace join contra `media_files` ni `users`: la única
+  ortografía del archivo y del operador que sobrevive a un renombrado o a la baja
+  de un usuario es la congelada en la fila, y buscar por la relación dejaría de
+  encontrar justo las entradas que importan. Los comodines `%` y `_` del texto
+  del usuario se escapan antes de armar el patrón.
+- `sort_order` — `asc` | `desc` sobre `created_at`; cualquier otro valor cae en
+  `desc`.
+- `catalogs` devuelve además `operators`, leído con `DISTINCT` de las columnas
+  snapshot de la propia traza. No sale de `users`: listar la plantilla completa
+  ofrecería filtros que solo pueden devolver cero filas, y un operador dado de
+  baja hace seis meses **tiene** que seguir siendo seleccionable.
+
+El tope de `per_page` (100) y la ventana por defecto de 30 días no cambian.
+
+### 72.3 Confirmar Cobro: el ticket deja de arrastrar una plancha gris
+
+**El defecto.** La previsualización vivía en la columna derecha de una rejilla
+`lg:grid-cols-2`. Un hijo de rejilla se estira a la altura de su fila
+(`align-items: stretch`), así que la tarjeta `bg-slate-100` del ticket crecía
+hasta igualar la columna izquierda —que era la larga, con leyenda y descuento
+dentro— y dejaba media modal de gris vacío debajo de la última línea del ticket.
+
+**El reacomodo.** La columna derecha pasa a ser **un contenedor independiente**:
+
+- La rejilla lleva `lg:items-start` y el envoltorio del ticket `items-start`, de
+  modo que la tarjeta mide exactamente lo que mide su contenido.
+- **"Leyenda Personalizada" y "Aplicar descuento o cupón?" bajan a la derecha**,
+  debajo del ticket, que es el espacio que quedaba libre. La izquierda se queda
+  con lo que se opera al cobrar: método de pago, dinero recibido, cambio,
+  desglose de totales y los dos botones.
+- La columna derecha **posee su propio scroll**:
+  `lg:max-h-[calc(85vh-9rem)] lg:overflow-y-auto lg:overscroll-contain`. El tope
+  se deriva del `md:max-h-[85vh]` de la propia modal menos el bloque de
+  encabezado. Un ticket de veinte partidas se desplaza **ahí**, y los controles
+  de pago, los totales y el botón de confirmar no se mueven un pixel.
+  `overscroll-contain` evita que al llegar al final el gesto se lo quede el POS
+  que está detrás de la máscara.
+- Por debajo de `lg` no hay tope ni columna independiente: hay una sola columna y
+  el panel de contenido de la modal se desplaza completo, que es la lectura
+  correcta en un teléfono.
+
+Medido con el CSS compilado del proyecto: en un viewport de 1440×900 la columna
+derecha mide 504px y no necesita scroll; en 1280×720 el tope la deja en 468px y
+desplaza sus 504px de contenido dentro de sí misma. La tarjeta del ticket mide
+291px en ambos casos — su contenido exacto.
+
+### 72.4 "Venta registrada" un 30% más angosta
+
+`PrintConfirmationModal` es un recibo: una columna de líneas
+concepto/importe y dos botones. A la mitad del viewport esas líneas quedaban tan
+estiradas que el ojo tenía que viajar para emparejar un concepto con su cifra.
+Todos los topes bajan un 30% respecto de la sección 71.1: `max-w-lg` (32rem) →
+`22.4rem`, media pantalla → 35% de ella, `2xl` (42rem) → `29.4rem`.
+
+### 72.5 Diseño de Ticket: acción con icono y modal pequeña
+
+- **"Ver Ticket" pasa a un icono con tooltip.** Como texto en línea hacía la
+  columna tan ancha como su etiqueta y se leía como enlace en una rejilla donde
+  toda acción del sistema es un botón de icono. Ahora es un `<Button icon="pi
+  pi-eye" text rounded>` con `tooltip="Ver Ticket"`, `aria-label` con la versión
+  y `cursor-pointer` explícito (el reset de PrimeReact lo quita).
+- **La modal que abre era del ancho de la página** por el defecto de 72.1.
+  Pasa a `dialogClass('sm')` — 26rem desde `sm` hacia arriba —, que es el tamaño
+  que corresponde a un ticket de 58mm.
+- **El ticket se ve igual que en Confirmar Cobro**: monta la variante `screen`
+  de la sección 71.2 —fondo `bg-slate-100`, tipografía sans-serif del sistema—
+  en lugar de la variante `print`, que es la reproducción térmica monoespaciada y
+  pertenece a lo que llega al papel, no a un diálogo.
+
+### 72.6 Categorías: alta y edición en modal pequeña
+
+Mismo defecto y misma corrección que 72.5: un formulario de dos campos ocupaba
+el ancho del monitor. `dialogClass('sm')` + `DIALOG_PT`.
+
+### 72.7 Analítica Financiera: el reporte pasa de .CSV cliente a .XLSX servido
+
+**El defecto.** "Exportar Reporte" armaba un CSV en el navegador concatenando
+cadenas. Una sola hoja plana, sin formatos numéricos (una columna de pesos
+llegaba como float suelto que Excel reinterpreta según el locale), sin fórmulas
+y sin manera de distinguir un encabezado de un dato. Lo que se manda por correo
+a un socio o se entrega a contabilidad tiene que leerse como un reporte.
+
+**La corrección.** Ruta nueva
+`GET /api/dashboard/monthly-analytics/export` (`role:admin,manager`,
+`throttle:20,1`), que **transmite** un libro construido con PhpSpreadsheet. No
+hay rama CSV en el controlador ni en el servicio.
+
+**Cinco hojas, una por pregunta**, en el mismo orden en que la modal muestra sus
+gráficas, para que quien lea el archivo pueda seguir la pantalla desde la que se
+pidió:
+
+| Hoja | Contenido |
+| --- | --- |
+| Resumen Ejecutivo | KPIs del mes con la comparativa contra el mes previo, y el mes previo como base |
+| Métodos de Pago | Órdenes, total cobrado y % del total por método |
+| Top Productos | Top 10 por ingreso, con piezas |
+| Horas Pico | Solo las horas con movimiento; la hora pico va resaltada |
+| Tendencia Diaria | Órdenes, total y ticket promedio por día |
+
+El lenguaje visual es **deliberadamente el mismo** que el de
+`FinanceExportService` (sección 64): banner índigo `4F46E5`, encabezados
+`6366F1`, cuerpo cebra, formato `#,##0.00 [$MXN]` en cada celda de dinero,
+paneles congelados y filas de TOTAL con `=SUM()` reales —que se pueden pinchar y
+ver a Excel rederivarlas— en lugar de un número precocinado. Dos exportaciones
+financieras del mismo sistema tienen que parecer del mismo sistema. Los deltas
+llevan formato `+0.0"%";-0.0"%"` y color verde/rojo; un mes sin ventas escribe un
+aviso en la hoja de resumen, porque un lector que encuentra cuatro hojas vacías
+no puede distinguir un mes inactivo de una extracción rota.
+
+**Refactor que lo hace posible.** Las siete agregaciones vivían dentro de
+`MonthlyAnalyticsController`. Se movieron a `MonthlyAnalyticsService`, que
+conserva intacta la memoización por mes en Redis (`ModuleCache` +
+`CacheConfiguration::MODULE_MONTHLY_ANALYTICS`). El JSON de la modal y el libro
+`.xlsx` **leen el mismo payload cacheado**: dos copias de esas agregaciones
+serían dos oportunidades para que el archivo y la pantalla se contradigan, que es
+lo único que un reporte financiero no puede hacer. El controlador quedó en su
+validación y una resolución explícita del mes al día 1.
+
+En el cliente, el botón descarga el blob del backend (`responseType: 'blob'`,
+mismo patrón que el export de Historial de Ventas), muestra "Generando..." con
+`loading`, y pide el libro para **el mes que la modal está mostrando**.
+
+### 72.8 Archivos
+
+**Backend (nuevos)**
+- `app/Services/MonthlyAnalyticsService.php` — las siete agregaciones del mes y
+  su memoización, compartidas por el JSON y el libro
+- `app/Services/MonthlyAnalyticsExportService.php` — libro .xlsx de cinco hojas
+- `app/Http/Controllers/Dashboard/MonthlyAnalyticsExportController.php` —
+  descarga transmitida
+
+**Backend (modificados)**
+- `app/Http/Controllers/Dashboard/MonthlyAnalyticsController.php` — delega en el
+  servicio; expone `resolveMonth()` para que la exportación resuelva el mes igual
+- `app/Http/Controllers/Media/MediaAuditLogController.php` — filtro `search`,
+  `sort_order` y catálogo `operators`
+- `routes/api.php` — ruta de exportación de la analítica mensual
+
+**Frontend (modificados)**
+- `src/pages/admin/MediaAuditPage.jsx` — DataTable `lazy` con paginador, tamaño
+  de página, orden servido, búsqueda con debounce y panel de Filtros Avanzados
+- `src/components/pos/CheckoutModal.jsx` — columna derecha independiente y
+  desplazable, ticket a la altura de su contenido, leyenda y descuento bajo el
+  ticket
+- `src/components/pos/PrintConfirmationModal.jsx` — anchos 30% más angostos
+- `src/pages/settings/TicketConfigPage.jsx` — acción con icono + tooltip, modal
+  de vista previa en `dialogClass('sm')` y ticket en `variant="screen"`
+- `src/pages/catalog/CategoriesPage.jsx` — modal de alta/edición en
+  `dialogClass('sm')`
+- `src/components/dashboard/MonthlyAnalyticsModal.jsx` — "Exportar Reporte"
+  descarga el .xlsx del backend

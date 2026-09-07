@@ -94,11 +94,17 @@ export default function PrintConfirmationModal({
       modal
       header={null}
       /*
-       * DESKTOP SIZING. Full-bleed on a phone; from `lg` up it is capped at
-       * half the viewport (never past `2xl`) so the post-sale receipt reads as
-       * a confirmation panel and not as a takeover of a wide monitor.
+       * DESKTOP SIZING. Full-bleed on a phone; from `lg` up it is capped so the
+       * post-sale receipt reads as a confirmation panel and not as a takeover
+       * of a wide monitor.
+       *
+       * Every cap is 30% narrower than the section 71.1 sizing: `max-w-lg`
+       * (32rem) -> 22.4rem, half the viewport -> 35% of it, `2xl` (42rem) ->
+       * 29.4rem. This panel is a receipt — a column of label/value lines and
+       * two buttons — and at the old width those lines were stretched so far
+       * apart that the eye had to travel to pair a concept with its amount.
        */
-      className="w-full max-w-lg lg:w-1/2 lg:max-w-2xl"
+      className="w-full max-w-[22.4rem] lg:w-[35%] lg:max-w-[29.4rem]"
       pt={{
         mask: { className: 'backdrop-blur-sm bg-black/30' },
         root: { className: 'rounded-2xl border-0 shadow-2xl' },

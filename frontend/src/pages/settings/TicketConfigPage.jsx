@@ -9,7 +9,7 @@ import { toast } from 'sonner';
 import api from '../../api/axios';
 import AppLayout from '../../components/layout/AppLayout';
 import TicketPreview from '../../components/pos/TicketPreview';
-import { STACK_TABLE, STACK_CLASS, HIDE_BELOW } from '../../lib/responsive';
+import { STACK_TABLE, STACK_CLASS, HIDE_BELOW, dialogClass, DIALOG_PT } from '../../lib/responsive';
 
 const emptyForm = {
   business_name: '',
@@ -94,13 +94,26 @@ export default function TicketConfigPage() {
     return d.toLocaleString('es-MX', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
   };
 
+  /*
+   * The action is an icon, and the words live in the tooltip.
+   *
+   * "Ver Ticket" as inline text made the column as wide as its label and read
+   * as a link in a grid whose every other action in the system is an icon
+   * button. `tooltip` keeps the label one hover away, and `cursor-pointer` is
+   * explicit because PrimeReact's button reset drops it.
+   */
   const actionsTemplate = (row) => (
-    <button
+    <Button
+      icon="pi pi-eye"
+      severity="info"
+      text
+      rounded
       onClick={() => setPreviewConfig(row)}
-      className="text-indigo-600 hover:text-indigo-800 text-sm font-medium"
-    >
-      Ver Ticket
-    </button>
+      aria-label={`Ver ticket version ${row.version}`}
+      tooltip="Ver Ticket"
+      tooltipOptions={{ position: 'top' }}
+      className="cursor-pointer !h-9 !w-9"
+    />
   );
 
   const livePreviewConfig = {
@@ -279,17 +292,28 @@ export default function TicketConfigPage() {
         </form>
       </Dialog>
 
-      {/* Version preview dialog */}
+      {/*
+        Version preview dialog — deliberately small.
+
+        It used to declare `w-full max-w-md`, and `max-w-md` never applied: the
+        `.p-dialog` floor in index.css is UNLAYERED css, and unlayered rules beat
+        Tailwind utilities (which live in `@layer utilities`), so its
+        `max-width: calc(100vw - 1.5rem)` won and a dialog holding a 58mm ticket
+        spanned the whole page. `dialogClass('sm')` fixes it the way the rest of
+        the system does — by declaring a real WIDTH from `sm` up, which nothing
+        overrides.
+      */}
       <Dialog
         visible={!!previewConfig}
         onHide={() => setPreviewConfig(null)}
         modal
         header={null}
-        className="w-full max-w-md"
+        className={dialogClass('sm')}
         pt={{
-          mask: { className: 'backdrop-blur-sm bg-black/30' },
-          root: { className: 'rounded-2xl border-0 shadow-2xl' },
-          content: { className: 'p-0' },
+          ...DIALOG_PT,
+          mask: { className: 'backdrop-blur-sm bg-black/30 p-3 sm:p-4' },
+          root: { className: 'rounded-2xl border-0 shadow-2xl max-h-[92dvh] !max-w-full' },
+          content: { className: 'p-0 overflow-y-auto overscroll-contain' },
         }}
       >
         {previewConfig && (
@@ -297,20 +321,26 @@ export default function TicketConfigPage() {
             <h3 className="mb-4 text-center text-sm font-semibold uppercase tracking-wider text-slate-500">
               Ticket Version {previewConfig.version} {previewConfig.is_active ? '(Activa)' : '(Inactiva)'}
             </h3>
-            <TicketPreview
-              order={{
-                items: [
-                  { product_name: 'Producto ejemplo', quantity: 1, sale_price: 100.00, discount: 0 },
-                ],
-                subtotal: 100.00,
-                iva_total: 16.00,
-                total: 116.00,
-                payment_method: 'efectivo',
-                created_at: new Date().toISOString(),
-              }}
-              ticketConfig={previewConfig}
-              customLegend=""
-            />
+            {/* Same reading as the checkout preview: the `screen` variant,
+                on its soft grey card and in the system's own sans-serif. The
+                `print` variant belongs to what reaches paper, not to a dialog. */}
+            <div className="flex justify-center">
+              <TicketPreview
+                order={{
+                  items: [
+                    { product_name: 'Producto ejemplo', quantity: 1, sale_price: 100.00, discount: 0 },
+                  ],
+                  subtotal: 100.00,
+                  iva_total: 16.00,
+                  total: 116.00,
+                  payment_method: 'efectivo',
+                  created_at: new Date().toISOString(),
+                }}
+                ticketConfig={previewConfig}
+                customLegend=""
+                variant="screen"
+              />
+            </div>
             <button
               onClick={() => setPreviewConfig(null)}
               className="mt-4 w-full rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors"

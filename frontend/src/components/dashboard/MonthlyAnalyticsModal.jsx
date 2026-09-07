@@ -54,14 +54,20 @@ function AnalyticsSkeleton() {
  * Modal de Analitica Financiera Mensual (admin/manager).
  *
  * Una sola llamada al endpoint agregado trae todo el mes; el estado de carga
- * combina spinner + esqueleto para latencias con volumen alto. El export CSV
- * se genera client-side desde los mismos datos ya mostrados: lo que exportas
- * es exactamente lo que ves.
+ * combina spinner + esqueleto para latencias con volumen alto.
+ *
+ * "Exportar Reporte" descarga un .XLSX ESTRICTO servido por el backend
+ * (PhpSpreadsheet, cinco hojas con formato de pesos y formulas SUM vivas). No
+ * se arma en el cliente y no hay rama CSV: el archivo que se manda por correo o
+ * se entrega a contabilidad tiene que leerse como un reporte, no como un
+ * volcado. Lee el MISMO payload cacheado que pinta esta modal, asi que lo que
+ * se descarga es exactamente lo que se esta viendo.
  */
 export default function MonthlyAnalyticsModal({ visible, onHide }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [month, setMonth] = useState('');
+  const [exporting, setExporting] = useState(false);
 
   const fetchAnalytics = useCallback(async (targetMonth) => {
     setLoading(true);
@@ -95,42 +101,32 @@ export default function MonthlyAnalyticsModal({ visible, onHide }) {
     return month === `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   };
 
-  const exportCsv = () => {
+  const exportReport = async () => {
     if (!data) return;
-    const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
-    const lines = [];
+    setExporting(true);
+    try {
+      // El libro se pide para el MISMO mes que la modal esta mostrando.
+      const res = await api.get('/dashboard/monthly-analytics/export', {
+        params: { month: data.month },
+        responseType: 'blob',
+      });
 
-    lines.push(['CRONOS POS - REPORTE FINANCIERO MENSUAL', data.month_label].map(esc).join(','));
-    lines.push('');
-    lines.push(['METRICA', 'VALOR', 'VS MES PREVIO (%)'].map(esc).join(','));
-    lines.push([esc('Ventas Totales'), data.totals.total_sales, data.comparison.sales_delta_pct ?? 'N/D'].join(','));
-    lines.push([esc('Ingreso Neto (sin IVA)'), data.totals.net_sales, ''].join(','));
-    lines.push([esc('IVA Recaudado'), data.totals.tax_total, ''].join(','));
-    lines.push([esc('Descuentos Otorgados'), data.totals.discount_total, ''].join(','));
-    lines.push([esc('Ordenes'), data.totals.order_count, data.comparison.orders_delta_pct ?? 'N/D'].join(','));
-    lines.push([esc('Ticket Promedio'), data.totals.avg_ticket, data.comparison.avg_ticket_delta_pct ?? 'N/D'].join(','));
-    lines.push('');
-    lines.push([esc('DISTRIBUCION POR METODO DE PAGO')].join(','));
-    lines.push(['Metodo', 'Ordenes', 'Total'].map(esc).join(','));
-    data.by_payment_method.forEach(pm => lines.push([esc(pm.name), pm.order_count, pm.total].join(',')));
-    lines.push('');
-    lines.push([esc('TOP PRODUCTOS')].join(','));
-    lines.push(['Producto', 'Piezas', 'Ingreso'].map(esc).join(','));
-    data.top_products.forEach(p => lines.push([esc(p.name), p.quantity_sold, p.revenue].join(',')));
-    lines.push('');
-    lines.push([esc('VENTAS POR HORA (HORAS PICO)')].join(','));
-    lines.push(['Hora', 'Ordenes', 'Total'].map(esc).join(','));
-    data.peak_hours.filter(h => h.orders > 0).forEach(h => lines.push([esc(h.hour), h.orders, h.total].join(',')));
-
-    // BOM para que Excel abra el CSV en UTF-8 sin romper acentos.
-    const blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `analitica-financiera-${data.month}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-    toast.success('Reporte CSV descargado.');
+      const url = URL.createObjectURL(new Blob([res.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `analitica-financiera-${data.month}.xlsx`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      toast.success('Reporte .xlsx descargado.');
+    } catch {
+      // El cuerpo del error viaja como Blob por `responseType`, asi que no hay
+      // un `message` legible que reenviar: el aviso se queda generico.
+      toast.error('Error al exportar el reporte.');
+    } finally {
+      setExporting(false);
+    }
   };
 
   const kpis = data ? [
@@ -187,10 +183,13 @@ export default function MonthlyAnalyticsModal({ visible, onHide }) {
               pt={{ root: { className: 'border border-slate-200' } }}
             />
             <Button
-              label="Exportar Reporte"
-              icon="pi pi-download"
-              onClick={exportCsv}
-              disabled={loading || !data}
+              label={exporting ? 'Generando...' : 'Exportar Reporte'}
+              icon="pi pi-file-excel"
+              onClick={exportReport}
+              disabled={loading || exporting || !data}
+              loading={exporting}
+              tooltip="Descarga el libro .xlsx del mes"
+              tooltipOptions={{ position: 'bottom' }}
               className="flex-1 cursor-pointer justify-center rounded-lg bg-indigo-600 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50 sm:flex-none"
               pt={{ root: { className: 'border-0' } }}
             />
