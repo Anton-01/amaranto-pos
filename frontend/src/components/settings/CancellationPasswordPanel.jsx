@@ -80,11 +80,6 @@ export default function CancellationPasswordPanel() {
         </div>
         <p className="mt-1.5 text-sm text-slate-500">
           Se solicita a los usuarios <strong>sin rol de administrador</strong> al cancelar una mesa.
-          Un administrador cancela con su propio rol y nunca ve este prompt.
-        </p>
-        <p className="mt-1.5 text-xs text-slate-400">
-          Se guarda cifrada (hash) y no está ligada a la contraseña de acceso de ningún usuario:
-          puedes compartirla con un encargado de turno sin entregar tu cuenta, y rotarla cuando quieras.
         </p>
         {status.updated_at && (
           <p className="mt-1.5 text-xs text-slate-400">

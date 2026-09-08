@@ -168,7 +168,7 @@ export default function GoogleDrivePanel() {
       <div>
         <h3 className="text-base font-semibold text-slate-900">Conexión con Google Drive</h3>
         <p className="text-sm text-slate-500">
-          Credenciales de OAuth 2.0 con las que la biblioteca de medios escribe en Google Drive.
+          Credenciales de OAuth 2.0
         </p>
       </div>
 
@@ -271,12 +271,7 @@ export default function GoogleDrivePanel() {
             className="w-full"
             placeholder={secretPlaceholder(credential?.has_refresh_token, '1//0g...')}
           />
-          <p className="mt-1 text-[11px] text-slate-400">
-            Genéralo con el mismo Client ID de arriba y con la cuenta de Google <strong>dueña de la carpeta
-            raíz</strong>, pidiendo <code>access_type=offline</code> y <code>prompt=consent</code>. Si la
-            aplicación de OAuth sigue en modo <em>Testing</em> en Google Cloud, el token caduca a los 7 días:
-            publícala para que deje de expirar.
-          </p>
+
           {fieldErrors.refresh_token && (
             <p className="mt-1 text-xs text-rose-600">{fieldErrors.refresh_token}</p>
           )}
@@ -299,11 +294,7 @@ export default function GoogleDrivePanel() {
             className="w-full font-mono text-sm"
             placeholder="1AbC2dEfGh3IjKlMnOp"
           />
-          <p className="mt-1 text-[11px] text-slate-400">
-            El tramo que sigue a <code>/folders/</code> en la URL de Drive. Lo más simple es que la carpeta
-            viva en el Drive de la misma cuenta que autorizó el Refresh Token: si pertenece a otra persona,
-            los archivos consumirán la cuota de esa persona y hará falta permiso de Editor.
-          </p>
+
           {fieldErrors.root_folder_id && (
             <p className="mt-1 text-xs text-rose-600">{fieldErrors.root_folder_id}</p>
           )}
@@ -320,10 +311,7 @@ export default function GoogleDrivePanel() {
             className="w-full"
             placeholder="conta@empresa.com"
           />
-          <p className="mt-1 text-[11px] text-slate-400">
-            Cada archivo subido recibe permiso de lectura para estas cuentas de Google, y solo para ellas.
-            Vacío significa que únicamente la cuenta que autorizó la conexión puede abrir los archivos.
-          </p>
+
         </div>
       </div>
 

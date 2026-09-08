@@ -7,13 +7,6 @@ use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
-/**
- * Bitacora de ejecucion de un INTENTO de job en segundo plano (Fase 10).
- *
- * Las filas las escribe App\Listeners\JobTelemetrySubscriber a partir de los
- * eventos nativos de la cola de Laravel; ningun job necesita instrumentarse
- * a mano.
- */
 class JobExecutionLog extends Model
 {
     use HasUuids;

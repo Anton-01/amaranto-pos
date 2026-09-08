@@ -119,7 +119,6 @@ export default function PrintConfirmationModal({
           </div>
           <div className="flex-1">
             <h3 className="text-lg font-semibold text-slate-900">Venta registrada</h3>
-            <p className="text-xs text-slate-500">Revisa el ticket y decide si deseas imprimirlo.</p>
           </div>
           {printerName ? (
             <Tag value={printerName} severity="info" className="text-[10px] font-mono" />
@@ -264,10 +263,6 @@ export default function PrintConfirmationModal({
             pt={{ root: { className: 'border-0' } }}
           />
         </div>
-
-        <p className="mt-3 text-center text-[11px] text-slate-400">
-          Omitir no realiza ninguna peticion al agente local. El ticket queda disponible para reimpresion desde el Historial de Ventas.
-        </p>
       </div>
     </Dialog>
   );

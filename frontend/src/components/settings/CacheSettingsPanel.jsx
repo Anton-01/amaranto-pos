@@ -264,10 +264,7 @@ export default function CacheSettingsPanel() {
         <div>
           <h2 className="text-base font-semibold text-slate-900">Caché de Módulos (Redis)</h2>
           <p className="mt-1 max-w-2xl text-sm text-slate-500">
-            Define cuánto tiempo puede servirse cada consulta pesada desde Redis antes de volver a
-            calcularse contra PostgreSQL. Una ventana más larga alivia la base de datos; una más
-            corta acerca las cifras al momento. Los datos críticos se invalidan solos: registrar una
-            venta o mover inventario purga de inmediato el caché del Dashboard.
+            Define cuánto tiempo puede servirse cada consulta pesada.
           </p>
         </div>
         <Button

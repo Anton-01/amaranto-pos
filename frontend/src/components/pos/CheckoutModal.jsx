@@ -434,6 +434,22 @@ export default function CheckoutModal({ visible, onHide, cart, taxRate = 0.16, o
             </div>
           )}
 
+          <div className="shrink-0">
+            <label className="mb-1.5 block text-sm font-medium text-slate-700">
+              Leyenda Personalizada
+              <span className="ml-1 text-xs text-slate-400">(opcional)</span>
+            </label>
+            <textarea
+                value={customLegend}
+                onChange={(e) => setCustomLegend(e.target.value)}
+                placeholder="Escribe una leyenda que aparecera en el ticket impreso..."
+                disabled={submitting}
+                rows={1}
+                maxLength={500}
+                className="w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm text-slate-900 placeholder-slate-400 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 disabled:opacity-50 resize-none"
+            />
+            <p className="mt-1 text-right text-xs text-slate-400">{customLegend.length}/500</p>
+          </div>
 
           {/* Totals breakdown */}
           <div className="rounded-lg bg-slate-50 p-3 text-sm">
@@ -521,23 +537,6 @@ export default function CheckoutModal({ visible, onHide, cart, taxRate = 0.16, o
               taxRate={taxRate}
               variant="screen"
             />
-          </div>
-
-          <div className="shrink-0">
-            <label className="mb-1.5 block text-sm font-medium text-slate-700">
-              Leyenda Personalizada
-              <span className="ml-1 text-xs text-slate-400">(opcional)</span>
-            </label>
-            <textarea
-              value={customLegend}
-              onChange={(e) => setCustomLegend(e.target.value)}
-              placeholder="Escribe una leyenda que aparecera en el ticket impreso..."
-              disabled={submitting}
-              rows={3}
-              maxLength={500}
-              className="w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm text-slate-900 placeholder-slate-400 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 disabled:opacity-50 resize-none"
-            />
-            <p className="mt-1 text-right text-xs text-slate-400">{customLegend.length}/500</p>
           </div>
 
           {/* Discount / Coupon Section */}

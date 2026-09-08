@@ -344,23 +344,6 @@ export default function EmailNotificationsPanel() {
       <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 className="text-base font-semibold text-slate-900">Notificaciones por Correo</h2>
-          <p className="mt-1 max-w-2xl text-sm text-slate-500">
-            Da de alta las credenciales del proveedor (SendGrid, Resend o un SMTP genérico) y define
-            el asunto y los correos destino de cada tipo de proceso. El sistema elige la estrategia
-            de envío según el proveedor de cada fila al momento de enviar; si un proceso no tiene
-            configuración activa, simplemente no notifica.
-          </p>
-          <p className="mt-2 max-w-2xl text-sm text-slate-500">
-            Usa <strong className="font-semibold text-slate-600">Probar Conexión</strong> dentro del
-            formulario para validar credenciales y ruta de salida en el momento: envía un correo
-            real de diagnóstico, con límite de tiempo, y devuelve el error exacto del proveedor sin
-            necesidad de guardar ni de esperar a los procesos programados.
-          </p>
-          <p className="mt-2 max-w-2xl text-sm text-slate-500">
-            Si el servidor bloquea los puertos SMTP de salida (587 y a veces 2525), elige{' '}
-            <strong className="font-semibold text-slate-600">Resend</strong>: entrega por su API
-            HTTPS en el puerto 443, el mismo que ya usa toda la aplicación.
-          </p>
         </div>
         <Button
           label="Nueva Configuración"

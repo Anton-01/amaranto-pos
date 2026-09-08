@@ -184,19 +184,8 @@ export default function AllowedFileTypesPanel() {
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h3 className="text-base font-semibold text-slate-900">Tipos de Archivo Permitidos</h3>
-          <p className="text-sm text-slate-500">
-            Esta tabla define qué puede subirse a la biblioteca de medios.
-          </p>
         </div>
         <Button label="Nuevo tipo" icon="pi pi-plus" onClick={() => openForm()} className="w-full sm:w-auto" />
-      </div>
-
-      <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
-        <p className="text-xs leading-relaxed text-amber-900">
-          <strong>Los cambios son inmediatos.</strong> El validador consulta esta tabla en cada subida,
-          sin caché intermedia: al bloquear una extensión, la siguiente subida de ese tipo se rechaza
-          al instante. Toda alta, edición y cambio de estatus queda registrado en la auditoría de medios.
-        </p>
       </div>
 
       <DataTable
