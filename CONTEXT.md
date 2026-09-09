@@ -9356,3 +9356,395 @@ mismo patrón que el export de Historial de Ventas), muestra "Generando..." con
   `dialogClass('sm')`
 - `src/components/dashboard/MonthlyAnalyticsModal.jsx` — "Exportar Reporte"
   descarga el .xlsx del backend
+
+---
+
+## 73. MÓDULO DE PUBLICACIÓN EN REDES SOCIALES — META GRAPH API, COLAS ASÍNCRONAS Y SOCIAL COMPOSER [🟢 COMPLETADO Y OPERATIVO]
+
+La Biblioteca de Medios (sección 63) sabía guardar, versionar, auditar y
+compartir imágenes. Lo que no sabía hacer era **publicarlas**: el catálogo de
+producto vivía en Drive y alguien lo bajaba a mano para subirlo otra vez a
+Facebook o a Instagram, perdiendo por el camino toda trazabilidad de qué imagen
+salió, cuándo, con qué texto y a qué red.
+
+Este módulo cierra ese hueco **sin duplicar la biblioteca**: no hay una segunda
+copia de la imagen ni un segundo repositorio. Se publica el archivo que ya está
+en `media_files`, y cada intento queda registrado en una bitácora propia.
+
+### 73.1 La decisión de arquitectura que lo gobierna todo: es asíncrono
+
+**Nada de lo que hace este módulo ocurre dentro de la petición HTTP.** El
+`POST /api/social/publish/{mediaFile}` escribe la evidencia, encola el trabajo y
+responde **202 Accepted**. El resultado real aparece en la bitácora cuando el
+contenedor `queue-worker` termina.
+
+No es una preferencia de estilo. Publicar en Instagram **no es una llamada, son
+tres**: crear un contenedor de medio, esperar a que Meta descargue y transcodifique
+la imagen del lado de ellos, y recién entonces publicarlo. Meta no ofrece
+callback para ese intervalo, así que hay que sondearlo. En el mejor de los casos
+son segundos; cuando su lado va lento son decenas de segundos. Hacer eso dentro
+del request:
+
+- **Bloquea un worker de PHP-FPM** sobre la latencia de un tercero.
+- Le entrega al cajero un spinner en la caja, con fila detrás.
+- Con tres canales seleccionados **revienta el timeout de Nginx** antes de
+  terminar.
+
+Por eso el módulo entero está construido alrededor de `PublishSocialMediaPost`
+sobre la infraestructura de colas que ya existía (Redis + `queue-worker`), y la
+interfaz del POS **nunca** espera a Meta.
+
+### 73.2 Base de datos: dos tablas con propósitos opuestos
+
+#### `social_accounts` — la identidad, cifrada
+
+Misma disciplina que `drive_credentials` (sección 69) y por la misma razón: la
+identidad contra un tercero vive **cifrada en la base**, no en el `.env`, y se
+rota desde el panel sin redespliegue.
+
+| Columna | Propósito |
+| --- | --- |
+| `provider` | `facebook` \| `instagram` \| `whatsapp`. `string` y no enum: agregar una red no puede exigir un `ALTER TYPE` en producción |
+| `access_token` | **Cifrado** por el cast `encrypted` del modelo. `text` y no `string` |
+| `page_id` | Nodo Graph de la página de Facebook |
+| `ig_user_id` | Cuenta de Instagram Business — **no** es el @handle ni el ID de la página |
+| `phone_number_id` | Emisor de WhatsApp Cloud API (reservado, ver 73.6) |
+| `token_expires_at` | Nullable: un Page Token derivado de un token de usuario de larga duración **no caduca por sí solo** |
+
+**Por qué `access_token` es `text` y no `varchar(255)`.** La columna guarda la
+salida del cast `encrypted`, no el token crudo: un token largo de Meta de ~200
+caracteres se convierte en varios cientos de bytes de base64 una vez que se
+serializan juntos el criptograma, el IV y el MAC. Un `varchar(255)` lo truncaría
+y el síntoma aparecería horas después como un "invalid signature" inexplicable.
+
+El token está además en `$hidden`, así que **ningún endpoint puede filtrarlo
+devolviendo el modelo**. El navegador ve solo `has_access_token` y los IDs
+públicos: suficiente para reconocer qué conexión está cargada, inútil para
+publicar como el negocio. Un Page Access Token filtrado publica, borra y lee la
+bandeja de la página; no existe un nivel de solo lectura que guardar, y eso es
+lo que hace que las credenciales sean **solo admin**.
+
+#### `social_posts` — la bitácora, append-and-close
+
+**Una fila por canal, no por envío.** Un operador que marca Facebook, Instagram
+y WhatsApp produce **tres filas** que comparten `batch_id`. Esa forma es lo que
+permite que Instagram falle mientras Facebook tiene éxito sin que ninguno de los
+dos resultados se pierda o se sobrescriba: una sola fila por envío tendría que
+elegir un estado para tres resultados distintos.
+
+Las filas se escriben **antes** de tocar la red, en `pending`, así que un worker
+muerto a media publicación deja evidencia de que el intento existió. Una tabla
+que solo registra éxitos no puede responder la única pregunta que un operador
+hace de verdad: *"¿por qué no apareció nada en Instagram?"*.
+
+Los estados y lo que significan operativamente:
+
+| Estado | Significado |
+| --- | --- |
+| `pending` | Encolado. **No se envió nada** |
+| `publishing` | El worker está dentro de la llamada al proveedor. **No sabemos si la red lo recibió** |
+| `success` | El objeto existe en el proveedor; `api_response_id` lo prueba |
+| `failed` | Rechazado. `error_message` y `error_code` traen las palabras de Meta |
+
+El contexto de un éxito (el `creation_id` de Instagram, el `simulated` de
+WhatsApp) va en una columna `metadata` propia y **no** en `error_message`: una
+columna que se llama por los fallos y que además carga detalle de éxito es cómo
+una bitácora deja de poder leerse.
+
+La distinción entre `pending` y `publishing` es operativa, no cosmética: solo la
+segunda amerita revisar la página antes de reintentar.
+
+Las FK son `nullOnDelete` a propósito — **la evidencia sobrevive a su sujeto**.
+Borrar la imagen no borra el registro de que se publicó.
+
+### 73.3 El problema que casi define el módulo: Meta no recibe bytes
+
+La Content Publishing API **no acepta subidas**. Ni el edge `/photos` de una
+página ni el `/media` de Instagram: ambos aceptan únicamente `image_url`, y es
+el crawler de Meta el que descarga la imagen.
+
+Pero los archivos de la biblioteca son **privados en Drive**, y el módulo de
+medios se niega, en todas partes, a crear un permiso "anyone with the link"
+(sección 63): ese enlace no caduca, no se cuenta y no se revoca.
+
+**La solución es el mecanismo que ya existía.** `media_share_links` invierte la
+compartición: el POS emite un token, entrega una URL que apunta **a sí mismo**, y
+sirve los bytes solo tras validar ese token. Entonces una publicación acuña
+**un enlace controlado, de solo vista y de vida corta**, y le da a Meta esa URL.
+Drive no se toca, y la exposición es un hecho en la base de datos que se puede
+revocar en el instante en que algo se vea mal.
+
+`SocialImageUrlResolver` es la clase que lo arregla, y sus tres decisiones:
+
+- **Una hora de ventana**, la opción más corta del catálogo cerrado de
+  `media.share_links.expiration_options`. Meta descarga en segundos y re-hostea
+  la imagen en su propio CDN; el enlace es peso muerto después. Un valor mal
+  configurado en el `.env` **no ensancha** ese catálogo: cae a la opción más
+  corta disponible.
+- **`view` y no `download`.** El crawler necesita los bytes en línea; el permiso
+  de descarga además habilitaría una respuesta como adjunto, que nada de este
+  flujo quiere y que convierte una URL filtrada en una vía de exfiltración.
+- **No se revoca al terminar.** Instagram vuelve a leer el contenedor mientras
+  transcodifica, y revocar el enlace al cerrar una llamada exitosa rompería una
+  publicación que aún no terminaba de ingerirse.
+- **Sin tope de descargas.** El crawler de Meta no es una petición: el fetch, el
+  reintento tras un error transitorio y la relectura de Instagram son tres, y un
+  enlace capado en uno fallaría en la que llegara segunda.
+
+### 73.4 `MetaGraphService` — cliente nativo de Graph v18.0+
+
+Misma decisión que `GoogleDriveClient` (sección 63) y por las mismas razones: la
+superficie que el módulo necesita son **tres endpoints**, el SDK oficial de PHP
+está abandonado para PHP 8.4 y está construido alrededor de un modelo de app y
+sesión que este módulo no tiene. Se habla REST directo con el HTTP Client de
+Laravel (`Http::`), y lo que el SDK haría por nosotros aquí son dos POST de
+formulario.
+
+**La versión está fijada, y tiene que estarlo.** Una llamada sin versión la
+sirve la que Meta considere actual, que cambia debajo de ti. El flujo de
+publicación de fotos es estable desde v18.0; un salto silencioso es cómo una
+integración que funcionaba se rompe una mañana en que nadie desplegó nada. Meta
+retira una versión ~2 años después de publicarla, así que
+`config('social.meta.version')` **es una fecha de mantenimiento, no una
+constante**.
+
+#### Facebook: una llamada
+
+`POST {version}/{page-id}/photos` con `url`, `caption`, `published=true` y el
+token. El `published=true` es explícito y no se deja al default: el mismo edge
+con `published=false` produce una foto **no publicada** que queda invisible en la
+biblioteca de la página, y un operador que pulsó "Publicar Ahora" y no ve nada en
+el muro no tiene forma de distinguir ese estado de un fallo.
+
+Se guarda `post_id` cuando Meta lo devuelve (y no `id`): es el que abre un
+navegador en la publicación real.
+
+#### Instagram: dos pasos, y no se pueden colapsar
+
+1. `POST {version}/{ig-user-id}/media` con `image_url` y `caption` → devuelve un
+   **creation_id** (solo crea el contenedor).
+2. Sondeo de `GET {creation_id}?fields=status_code` hasta `FINISHED`.
+3. `POST {version}/{ig-user-id}/media_publish` con `creation_id` → publica.
+
+Entre 1 y 3 hay un hueco asíncrono sin callback, y llamar al tercero demasiado
+pronto falla con *"Media ID is not available"* — que **se lee como un ID mal
+formado y en realidad es una carrera**.
+
+El sondeo está **acotado a propósito** (`social.instagram.container_poll_*`, por
+defecto 10 intentos cada 3 s). Una imagen que el crawler no alcanza nunca sale de
+`IN_PROGRESS`, y una espera sin límite dejaría clavado un worker de la cola
+mientras eso dure. Agotar el presupuesto se reporta como fallo **con el último
+estado visto**, que es la respuesta honesta: el contenedor existe, pero no fue
+publicable dentro de la ventana, y la causa habitual es una URL que Meta no
+alcanzó. `ERROR` y `EXPIRED` son terminales y se levantan de inmediato en lugar
+de seguir sondeándose.
+
+Ese `sleep()` es exactamente la razón por la que esta clase **solo corre dentro
+de un job encolado**.
+
+#### Los errores viajan con las palabras de Meta
+
+Graph responde 400 con un JSON cuyo código numérico **es el diagnóstico**:
+
+| Código | Qué significa realmente |
+| --- | --- |
+| `190` | Token expirado o revocado |
+| `200` | Falta el permiso `pages_manage_posts` |
+| `100` / subcódigo `2207003` | El crawler no pudo descargar la imagen |
+| `4`, `17`, `32` | Rate limit — se resuelve solo |
+
+El mensaje y el código llegan intactos a `social_posts.error_message` y
+`error_code`. Parafrasearlos en una frase amable destruye la única información
+por la que el administrador vino. Se conserva también el `fbtrace_id`: es el
+único token que el soporte de Meta pide.
+
+`asForm()` y no `asJson()`: los edges de publicación se comportan como
+endpoints de formulario y un cuerpo JSON es **ignorado en silencio** en algunos
+de ellos — la llamada devuelve 200 con un objeto vacío, mucho más difícil de
+diagnosticar que un rechazo.
+
+### 73.5 `PublishSocialMediaPost` — el job, y por qué `$tries = 1`
+
+`$tries = 1` parece un error en un job de red y es exactamente lo contrario.
+
+**La unidad de trabajo aquí son tres publicaciones independientes**, y un
+reintento a nivel de framework re-ejecutaría el job **completo**. Una corrida en
+la que Facebook tuvo éxito e Instagram falló publicaría, en su segundo intento,
+**la foto de Facebook una segunda vez** — un post duplicado en una página de cara
+al cliente, que nadie pidió y que este módulo no puede detectar después.
+Reintentar es una decisión del operador, tomada por canal desde la bitácora.
+
+El aislamiento va por canal: cada proveedor corre en su propio `try/catch` y
+cierra su propia fila. El `catch` es de `Throwable` y no de `MetaGraphException`
+porque un bug de este módulo **no debe dejar una fila en `publishing` para
+siempre** — una fila que nunca cierra es indistinguible de una red por la que el
+operador todavía espera.
+
+Otras decisiones del job:
+
+- **La URL pública se acuña UNA vez para todo el lote.** Tres canales no
+  necesitan tres enlaces, necesitan la misma foto; y un solo enlace es una sola
+  fila que revocar si hay que cerrar la exposición a mano.
+- **La cuenta se resuelve dentro del job, no al encolar.** Una credencial rotada
+  entre el clic y el worker debe publicar con el token **nuevo**.
+- `failed()` cierra toda fila que quedó en `pending`/`publishing`: un job que
+  muere de golpe no puede dejar la bitácora congelada.
+- El lote se registra además en la **auditoría de medios** con la acción nueva
+  `social_publish`, clasificada como **crítica**. Un investigador que pregunta
+  "qué se ha hecho jamás con este archivo" tiene que ver una publicación a una
+  red pública junto a sus descargas y sus enlaces compartidos — y publicar saca
+  la imagen del control de la organización para siempre: no se puede "des-
+  compartir" de las líneas de tiempo que ya la vieron.
+
+El orden entre escribir la bitácora y encolar **es el punto**: las filas se
+crean en una transacción que hace commit **antes** del dispatch, así que la cola
+no puede tomar trabajo cuyas filas de log todavía no existan — una carrera que
+con un worker de Redis rápido no es teórica.
+
+### 73.6 WhatsApp: cableado de punta a punta, simulado a propósito
+
+Todo alrededor de `WhatsAppService` es real: el canal aparece en el composer, el
+job se ramifica hacia él, y cada intento cae en `social_posts` con los mismos
+estados que Facebook e Instagram. Lo que **no** hace es tocar la red.
+
+**Y la razón es de producto, no de trabajo pendiente.** La WhatsApp Cloud API
+publica **mensajes a conversaciones, no estados a una audiencia**: no existe un
+edge `/status`, y la ventana de atención de 24 horas significa que una imagen no
+solicitada solo puede salir como **plantilla pre-aprobada** a números que dieron
+consentimiento. Elegir entre un blast de plantillas, una lista de difusión y un
+puente en dispositivo es una decisión con consecuencias legales y de costo, y
+adivinarla aquí produciría una integración que habría que arrancar de raíz.
+
+El mock existe para que el pipeline se pueda ejercitar hoy entero, de modo que la
+integración real solo tenga que cambiar **el cuerpo de `publish()`** — la firma
+ya es la definitiva. El ID simulado lleva prefijo `wa_mock_` para que ningún
+lector de la bitácora pueda confundirlo con un message id que exista en Meta, la
+fila guarda `simulated: true`, y **la interfaz etiqueta el canal como "Simulado"
+dondequiera que aparezca**: un operador jamás debe creer que salió un estado que
+nunca dejó el servidor.
+
+La estructura queda lista en `Contracts\SocialChannelPublisher`, deliberadamente
+estrecha: el publicador recibe una conexión resuelta, una URL que un crawler
+puede descargar y un texto, y responde con lo que el proveedor creó. **No sabe de
+`social_posts`, ni de colas, ni de la biblioteca** — el job es dueño de las tres,
+y un publicador que además escribiera la bitácora haría a cada implementación
+responsable de la auditoría. Su único contrato duro: `publish()` devuelve algo
+que **existe** en el proveedor, o lanza. Devolver éxito por una publicación que
+no ocurrió es el único modo de fallo que este módulo no puede detectar después.
+
+### 73.7 Interfaz: el Social Composer
+
+**Punto de entrada.** En el Modal de Detalles del archivo (sección 63) aparece
+"Compartir en Redes" como **primer botón y en color sólido** — es la acción por
+la que un operador abre esa modal sobre una foto de producto. Se ofrece solo para
+`preview_kind === 'image'` y solo a quien puede administrar la biblioteca:
+publicar mueve el archivo fuera del control de la organización, que es la misma
+clase de acción que emitir un enlace compartido y por eso comparte su nivel
+(admin y manager). Un archivo archivado lo muestra deshabilitado con tooltip.
+
+El Composer se monta **sobrepuesto** a la modal de detalles y recibe el
+`previewUrl` ya descargado como prop: los bytes son privados y cada vista previa
+cuesta un viaje autenticado del POS a Drive, así que **descargar la misma imagen
+dos veces para mostrarla dos veces en la misma pantalla es puro desperdicio**.
+
+Lo que el Composer tiene:
+
+- **Miniatura** de la imagen, con nombre, dimensiones y peso.
+- **Textarea con contador**, y aquí está la decisión que importa: el contador
+  cuenta contra **la red más estricta de la selección**. Los 2 200 caracteres de
+  Instagram y los 5 000 de Facebook son límites distintos, y un contador genérico
+  dejaría que un texto que Facebook acepta se **trunque en Instagram sin una
+  palabra de aviso**. La leyenda nombra qué red está imponiendo el límite. El
+  backend lo revalida en `PublishSocialPostRequest`, canal por canal.
+- **Tarjetas-toggle por canal** con la identidad de marca de cada red. La tarjeta
+  entera es el control, no un switch de 40px: el área de clic es del tamaño de la
+  tarjeta.
+- Un canal **sin credenciales se muestra, deshabilitado, y dice qué falta**.
+  Ocultarlo dejaría al operador preguntándose por qué Instagram no es una opción;
+  fallar en silencio tras el clic le costaría el texto que acaba de escribir.
+- **Historial reciente** de esa misma imagen, para responder "¿ya salió esto, y
+  cómo fue?".
+- Un aviso explícito de que se genera un enlace temporal y de que **la
+  publicación no se puede deshacer desde aquí**.
+
+Los canales conectados arrancan marcados: el operador abrió un composer para
+publicar, así que el default útil es "en todas las que pueda". El caption se
+limpia en cada apertura — arrastrar el texto de ayer a una imagen nueva es el
+único error de esta modal que llega al público.
+
+El copy sigue al backend: la respuesta es 202, así que el toast dice
+**"Publicación en cola"** y no "Publicado".
+
+### 73.8 Rutas y niveles de acceso
+
+Viven bajo el prefijo `social`, **fuera** de `media`, porque su recurso no es el
+archivo sino la **publicación**, y su bitácora es independiente de la auditoría
+de medios.
+
+| Ruta | Nivel |
+| --- | --- |
+| `GET /social/catalogs` | admin, manager |
+| `GET /social/posts` · `GET /social/posts/{mediaFile}/history` | admin, manager |
+| `POST /social/publish/{mediaFile}` (throttle 20/min) | admin, manager |
+| `GET|POST /social/accounts` · `DELETE /social/accounts/{id}` | **solo admin** |
+| `POST /social/accounts/{id}/test` (throttle 10/min) | **solo admin** |
+
+El freno del publish sale del cupo global: cada petición encola tres llamadas a
+Meta y emite un enlace público temporal, y un formulario en bucle agotaría el
+rate limit de Graph —que es **de la organización**, no del servidor— mucho antes
+que el nuestro. El del test existe por la misma razón que el de Drive.
+
+`DELETE /social/accounts/{id}` **desactiva sin destruir**: la fila sobrevive para
+que las publicaciones que la referencian conserven un nombre, y lo que se destruye
+es el token, porque una conexión desactivada que sigue guardando un secreto vivo
+es un secreto que nadie está vigilando.
+
+### 73.9 Archivos
+
+**Backend (nuevos)**
+- `database/migrations/2026_09_09_000001_create_social_accounts_table.php`
+- `database/migrations/2026_09_09_000002_create_social_posts_table.php`
+- `app/Models/SocialAccount.php` — credenciales con `access_token` cifrado y oculto
+- `app/Models/SocialPost.php` — bitácora append-and-close
+- `app/Services/Social/MetaGraphService.php` — cliente nativo de Graph v18.0+
+- `app/Services/Social/WhatsAppService.php` — publicador mock, firma definitiva
+- `app/Services/Social/Contracts/SocialChannelPublisher.php` — contrato de canal
+- `app/Services/Social/SocialImageUrlResolver.php` — enlace público efímero para el crawler
+- `app/Services/Social/SocialPublishingService.php` — escribe evidencia y encola
+- `app/Jobs/PublishSocialMediaPost.php` — el job asíncrono
+- `app/Http/Controllers/Social/SocialPublishingController.php`
+- `app/Http/Controllers/Social/SocialAccountController.php`
+- `app/Http/Requests/Social/PublishSocialPostRequest.php`
+- `app/Http/Requests/Social/StoreSocialAccountRequest.php`
+- `app/Exceptions/Social/MetaGraphException.php`
+- `app/Exceptions/Social/SocialCredentialsMissingException.php`
+- `config/social.php` — versión de Graph, sondeo de Instagram, límites de caption
+
+**Backend (modificados)**
+- `app/Models/MediaAuditLog.php` — acción `social_publish`, clasificada como crítica
+- `routes/api.php` — grupo `social` con sus dos niveles de acceso
+
+**Frontend (nuevos)**
+- `src/api/social.js` — cliente único del módulo
+- `src/components/media/SocialComposerModal.jsx` — el Social Composer
+
+**Frontend (modificados)**
+- `src/components/media/MediaDetailModal.jsx` — botón "Compartir en Redes" y
+  montaje del composer reutilizando el `previewUrl` ya descargado
+
+### 73.10 Variables de entorno
+
+Todas opcionales; los defaults son los de `config/social.php`.
+
+```env
+SOCIAL_META_GRAPH_VERSION=v18.0
+SOCIAL_META_TIMEOUT=30
+SOCIAL_IG_POLL_ATTEMPTS=10
+SOCIAL_IG_POLL_SECONDS=3
+SOCIAL_IMAGE_LINK_HOURS=1
+SOCIAL_WHATSAPP_ENABLED=true
+SOCIAL_WHATSAPP_MOCK=true
+```
+
+Los tokens de Meta **no viven aquí**: viven cifrados en `social_accounts` y se
+cargan desde el panel, exactamente igual que las credenciales de Drive.

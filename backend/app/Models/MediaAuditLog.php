@@ -54,6 +54,16 @@ class MediaAuditLog extends Model
     public const ACTION_CREDENTIALS_TESTED = 'credentials_tested';
 
     /**
+     * A library image was pushed to a social network.
+     *
+     * It belongs in THIS trail and not only in `social_posts`: an investigator
+     * asking "what has ever been done with this file" must see a publication to
+     * a public page next to its downloads and its share links, and that
+     * question is answered here.
+     */
+    public const ACTION_SOCIAL_PUBLISH = 'social_publish';
+
+    /**
      * Catalog of auditable actions.
      *
      * Shared by the viewer's filter dropdown and by the API validation, so the
@@ -78,6 +88,7 @@ class MediaAuditLog extends Model
         self::ACTION_FILE_TYPE_DELETED => 'Tipo de archivo eliminado',
         self::ACTION_CREDENTIALS_UPDATED => 'Credenciales de Drive actualizadas',
         self::ACTION_CREDENTIALS_TESTED => 'Prueba de conexión con Drive',
+        self::ACTION_SOCIAL_PUBLISH => 'Publicación en redes sociales',
     ];
 
     /**
@@ -92,6 +103,9 @@ class MediaAuditLog extends Model
         self::ACTION_SHARE_LINK_ACCESSED,
         self::ACTION_CREDENTIALS_UPDATED,
         self::ACTION_PERMISSIONS_UPDATED,
+        // Publishing sends a picture out of the organization's control for
+        // good: it cannot be unshared from the timelines that already saw it.
+        self::ACTION_SOCIAL_PUBLISH,
     ];
 
     public $timestamps = false;

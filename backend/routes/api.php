@@ -43,6 +43,8 @@ use App\Http\Controllers\Sales\OrderController;
 use App\Http\Controllers\Sales\SalesExportController;
 use App\Http\Controllers\Sales\ShiftSalesCountController;
 use App\Http\Controllers\Sales\TicketConfigController;
+use App\Http\Controllers\Social\SocialAccountController;
+use App\Http\Controllers\Social\SocialPublishingController;
 use App\Models\GlobalSetting;
 use Illuminate\Support\Facades\Route;
 
@@ -448,6 +450,57 @@ Route::middleware(['auth:sanctum', 'user.active'])->group(function () {
         Route::middleware('role:admin')->prefix('audit')->group(function () {
             Route::get('/', [MediaAuditLogController::class, 'index']);
             Route::get('/catalogs', [MediaAuditLogController::class, 'catalogs']);
+        });
+    });
+
+    /*
+    |--------------------------------------------------------------------------
+    | Publicacion en Redes Sociales
+    |--------------------------------------------------------------------------
+    |
+    | Extension de la Biblioteca de Medios: publica una imagen ya existente en
+    | Facebook, Instagram y WhatsApp. Vive fuera del prefijo `media` porque su
+    | recurso no es el archivo sino la PUBLICACION, y su bitacora
+    | (`social_posts`) es independiente de la auditoria de medios.
+    |
+    | Dos niveles de acceso, y la diferencia entre ellos no es de comodidad:
+    |
+    |  - Publicar y leer la bitacora: admin y manager. Es la misma clase de
+    |    accion que compartir un archivo — mueve informacion fuera del sistema —
+    |    y por eso comparte su nivel.
+    |  - Credenciales: SOLO admin. Un Page Access Token publica, borra y lee la
+    |    bandeja de la pagina; no existe un nivel de solo lectura que guardar.
+    |
+    | El envio NO publica: encola. La respuesta es 202 y el resultado de cada
+    | red aparece en la bitacora cuando el `queue-worker` termina.
+    |
+    */
+    Route::prefix('social')->group(function () {
+
+        Route::middleware('role:admin,manager')->group(function () {
+            Route::get('/catalogs', [SocialPublishingController::class, 'catalogs']);
+            Route::get('/posts', [SocialPublishingController::class, 'index']);
+            Route::get('/posts/{mediaFile}/history', [SocialPublishingController::class, 'history']);
+
+            /*
+             * Freno propio, fuera del cupo global. Cada peticion encola tres
+             * llamadas a Meta y emite un enlace publico temporal de la imagen;
+             * un formulario en bucle agotaria el rate limit de Graph — que es
+             * de la organizacion, no del servidor — mucho antes que el nuestro.
+             */
+            Route::post('/publish/{mediaFile}', [SocialPublishingController::class, 'store'])
+                ->middleware('throttle:20,1');
+        });
+
+        Route::middleware('role:admin')->prefix('accounts')->group(function () {
+            Route::get('/', [SocialAccountController::class, 'index']);
+            Route::post('/', [SocialAccountController::class, 'store']);
+            Route::delete('/{socialAccount}', [SocialAccountController::class, 'destroy']);
+
+            // Diagnostico sincrono contra Graph. Con freno propio por la misma
+            // razon que el de Drive: la cuota de esa API es compartida.
+            Route::post('/{socialAccount}/test', [SocialAccountController::class, 'test'])
+                ->middleware('throttle:10,1');
         });
     });
 

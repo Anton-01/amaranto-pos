@@ -8,6 +8,7 @@ import { Tag } from 'primereact/tag';
 import { toast } from 'sonner';
 import mediaApi from '../../api/media';
 import MediaPreviewTile from './MediaPreviewTile';
+import SocialComposerModal from './SocialComposerModal';
 import { embeddableInDetail, VISIBILITY_LABELS, formatDateTime } from '../../lib/mediaPreview';
 import { dialogClass, DIALOG_PT } from '../../lib/responsive';
 
@@ -31,6 +32,7 @@ export default function MediaDetailModal({ visible, onHide, fileId, onChanged, c
   const [form, setForm] = useState({ name: '', alt_text: '', description: '', is_active: true });
   const [embedUrl, setEmbedUrl] = useState(null);
   const [hardening, setHardening] = useState(false);
+  const [composerOpen, setComposerOpen] = useState(false);
 
   const fetchFile = useCallback(async () => {
     if (!fileId) return;
@@ -202,6 +204,26 @@ export default function MediaDetailModal({ visible, onHide, fileId, onChanged, c
             </div>
 
             <div className="mt-3 flex flex-wrap gap-2">
+              {/*
+                Prominent and first, because it is the action an operator opens
+                this modal to perform on a product photo. Offered only for
+                images and only to whoever may manage the library: publishing
+                moves the file out of the organization's control for good, which
+                is the same class of action as issuing a share link.
+              */}
+              {canManage && file.preview_kind === 'image' && (
+                <Button
+                  label="Compartir en Redes"
+                  icon="pi pi-share-alt"
+                  size="small"
+                  className="w-full sm:w-auto"
+                  onClick={() => setComposerOpen(true)}
+                  disabled={!file.is_active}
+                  tooltip={file.is_active ? undefined : 'Reactiva el archivo para poder publicarlo.'}
+                  tooltipOptions={{ position: 'top' }}
+                />
+              )}
+
               <Button
                 label="Descargar"
                 icon="pi pi-download"
@@ -319,6 +341,20 @@ export default function MediaDetailModal({ visible, onHide, fileId, onChanged, c
           </div>
         </div>
       )}
+
+      {/*
+        Rendered inside the details dialog and stacked over it. The already
+        fetched object URL is handed down rather than re-fetched: the bytes are
+        private and every preview costs an authenticated round trip through the
+        POS to Drive, so downloading the same image twice to show it twice on
+        the same screen is pure waste.
+      */}
+      <SocialComposerModal
+        visible={composerOpen}
+        onHide={() => setComposerOpen(false)}
+        file={file}
+        previewUrl={embedUrl}
+      />
     </Dialog>
   );
 }
