@@ -9724,6 +9724,10 @@ es un secreto que nadie está vigilando.
 - `app/Models/MediaAuditLog.php` — acción `social_publish`, clasificada como crítica
 - `routes/api.php` — grupo `social` con sus dos niveles de acceso
 
+**Backend (pruebas)**
+- `tests/Feature/Social/SocialPublishingTest.php` — 11 pruebas, Graph falseado
+  en la capa HTTP
+
 **Frontend (nuevos)**
 - `src/api/social.js` — cliente único del módulo
 - `src/components/media/SocialComposerModal.jsx` — el Social Composer
@@ -9732,7 +9736,36 @@ es un secreto que nadie está vigilando.
 - `src/components/media/MediaDetailModal.jsx` — botón "Compartir en Redes" y
   montaje del composer reutilizando el `previewUrl` ya descargado
 
-### 73.10 Variables de entorno
+### 73.10 Pruebas
+
+`tests/Feature/Social/SocialPublishingTest.php` (11 pruebas) fija las cuatro
+decisiones del módulo, cada una invisible hasta que se rompe. Graph se falsea en
+la **capa HTTP** y no en la frontera del servicio, así que el cliente real, el
+job, los modelos y la maquinaria de enlaces compartidos se ejecutan de verdad:
+
+- El token **no es legible en la tabla**, el cast lo descifra de vuelta, y
+  `GET /social/accounts` no lo devuelve ni truncado.
+- El envío responde **202** con una fila `pending` por canal y un `batch_id`
+  compartido.
+- **Una red que falla no le cuesta la publicación a la otra**, y el mensaje y el
+  código de Meta (`100/2207003`) llegan intactos a la bitácora.
+- Instagram **espera el contenedor** y sobrevive a un `IN_PROGRESS` intermedio;
+  uno que nunca termina falla con presupuesto acotado y **no llega jamás a
+  `media_publish`**.
+- Se acuña **un solo enlace compartido**, de solo vista, sin tope y de vida
+  corta, y el archivo en Drive sigue `private`.
+- Un canal sin credenciales —o a medio configurar— falla **nombrando lo que
+  falta**.
+- **Ningún intento queda sin desenlace**: una imagen borrada entre el clic y el
+  worker cierra la fila igual.
+- El caption se valida contra la red más estricta: 2 500 caracteres los rechaza
+  Instagram y los acepta Facebook.
+- Solo se publican imágenes activas (`ERR_SOCIAL_NOT_AN_IMAGE`,
+  `ERR_SOCIAL_FILE_ARCHIVED`).
+- WhatsApp publica **sin tocar la red** (`Http::preventStrayRequests()`), con
+  `wa_mock_` y `simulated: true`, y el catálogo lo etiqueta.
+
+### 73.11 Variables de entorno
 
 Todas opcionales; los defaults son los de `config/social.php`.
 
