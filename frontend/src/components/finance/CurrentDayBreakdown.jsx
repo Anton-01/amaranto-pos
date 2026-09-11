@@ -32,6 +32,11 @@ const methodColors = {
  * still live inside an open register. The header shows both apart rather than
  * one blended figure, because a manager reading "$4,000" needs to know which
  * part has been counted and which part is still a promise.
+ *
+ * ONE INCOME FIGURE. Every amount on this panel is the total charged, and the
+ * fund and the profit are percentages of it. The header used to carry a gross
+ * and a net total as two cards and segment the 70/30 on the net one, which put
+ * three mutually inconsistent "income" numbers in the same row.
  */
 export default function CurrentDayBreakdown() {
   const [data, setData] = useState(null);
@@ -56,8 +61,8 @@ export default function CurrentDayBreakdown() {
     return (
       <div className="mb-6 animate-pulse rounded-xl bg-white p-5 ring-1 ring-slate-200">
         <div className="h-5 w-56 rounded bg-slate-100" />
-        <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
-          {Array.from({ length: 4 }).map((_, i) => <div key={i} className="h-20 rounded-lg bg-slate-100" />)}
+        <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
+          {Array.from({ length: 3 }).map((_, i) => <div key={i} className="h-20 rounded-lg bg-slate-100" />)}
         </div>
       </div>
     );
@@ -99,16 +104,13 @@ export default function CurrentDayBreakdown() {
         </div>
       ) : (
         <>
-          <div className="grid grid-cols-2 gap-3 p-4 sm:p-5 lg:grid-cols-4">
+          <div className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-3 sm:p-5">
             <div className="min-w-0 rounded-lg bg-slate-50 p-3">
-              <p className="text-xs text-slate-500">Ingreso Bruto</p>
+              <p className="text-xs text-slate-500">Ingreso Total</p>
               <p className="mt-0.5 truncate text-lg font-bold tabular-nums text-slate-900">{money(totals.gross)}</p>
-              <p className="text-[11px] text-slate-400">{totals.orders} órdenes · IVA {money(totals.tax)}</p>
-            </div>
-            <div className="min-w-0 rounded-lg bg-indigo-50 p-3">
-              <p className="text-xs text-indigo-700">Ingreso Neto</p>
-              <p className="mt-0.5 truncate text-lg font-bold tabular-nums text-indigo-700">{money(totals.net)}</p>
-              <p className="text-[11px] text-indigo-500">Base del reparto {split.investment_pct}/{split.profit_pct}</p>
+              <p className="text-[11px] text-slate-400">
+                {totals.orders} órdenes · base del reparto {split.investment_pct}/{split.profit_pct}
+              </p>
             </div>
             <div className="min-w-0 rounded-lg bg-blue-50 p-3">
               <p className="text-xs text-blue-700">Fondo Inversión {split.investment_pct}%</p>
@@ -129,7 +131,7 @@ export default function CurrentDayBreakdown() {
                 <span className="flex items-center gap-1.5 text-xs font-medium text-slate-600">
                   <i className="pi pi-lock text-[11px] text-slate-400" /> Ya liquidado en arqueo
                 </span>
-                <span className="text-sm font-bold tabular-nums text-slate-900">{money(totals.settled_net)}</span>
+                <span className="text-sm font-bold tabular-nums text-slate-900">{money(totals.settled_gross)}</span>
               </div>
               {counters.closed > 0 && (
                 <div className="mt-2 space-y-1 border-t border-slate-100 pt-2 text-[11px]">
@@ -153,7 +155,7 @@ export default function CurrentDayBreakdown() {
                 <span className="flex items-center gap-1.5 text-xs font-medium text-amber-800">
                   <i className="pi pi-clock text-[11px]" /> En curso (cajas abiertas)
                 </span>
-                <span className="text-sm font-bold tabular-nums text-amber-800">{money(totals.in_progress_net)}</span>
+                <span className="text-sm font-bold tabular-nums text-amber-800">{money(totals.in_progress_gross)}</span>
               </div>
               <p className="mt-2 border-t border-amber-200 pt-2 text-[11px] text-amber-700">
                 {counters.open === 0
@@ -230,7 +232,6 @@ export default function CurrentDayBreakdown() {
                       </span>
                       <span className="shrink-0 text-right">
                         <span className="block text-sm font-bold tabular-nums text-slate-900">{money(r.sales.gross)}</span>
-                        <span className="block text-[11px] text-slate-400">neto {money(r.sales.net)}</span>
                       </span>
                       <i className={`pi ${isOpen ? 'pi-chevron-up' : 'pi-chevron-down'} shrink-0 text-xs text-slate-400`} />
                     </button>

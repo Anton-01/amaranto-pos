@@ -176,8 +176,8 @@ export default function FinanceDashboardPage() {
 
   const splitData = summary ? [
     {
-      name: 'Ingreso Neto',
-      value: summary.net_income,
+      name: 'Ingreso Total',
+      value: summary.total_income,
       fill: '#6366f1',
     },
     {
@@ -198,7 +198,7 @@ export default function FinanceDashboardPage() {
     <AppLayout>
       <div className="mb-5 sm:mb-6">
         <h1 className="text-xl font-bold sm:text-2xl text-slate-900">Panel Financiero</h1>
-        <p className="text-sm text-slate-500">Analisis de ingresos netos con segmentacion 70/30.</p>
+        <p className="text-sm text-slate-500">Analisis del ingreso total con segmentacion 70/30.</p>
       </div>
 
       {/* Opening view: today's money, before any period selection applies.
@@ -222,16 +222,15 @@ export default function FinanceDashboardPage() {
         <>
           {/* KPI Cards */}
           {summary && (
-            <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {/* One income figure, and every card beside it is a percentage of
+                  it. The panel used to print a gross and a net total side by
+                  side and segment the 70/30 on the net one, so neither of the
+                  two headline numbers matched the fund underneath them. */}
               <div className="min-w-0 rounded-xl bg-white p-4 shadow-sm sm:p-5 ring-1 ring-slate-200">
-                <p className="text-sm text-slate-500">Ingreso Bruto</p>
-                <p className="mt-1 truncate text-xl font-bold tabular-nums text-slate-900 sm:text-2xl">${fmt(summary.gross_income)}</p>
+                <p className="text-sm text-slate-500">Ingreso Total</p>
+                <p className="mt-1 truncate text-xl font-bold tabular-nums text-slate-900 sm:text-2xl">${fmt(summary.total_income)}</p>
                 <p className="mt-0.5 text-xs text-slate-400">{summary.order_count} ordenes</p>
-              </div>
-              <div className="min-w-0 rounded-xl bg-white p-4 shadow-sm sm:p-5 ring-1 ring-slate-200">
-                <p className="text-sm text-slate-500">Ingreso Neto (sin IVA)</p>
-                <p className="mt-1 truncate text-xl font-bold tabular-nums text-indigo-600 sm:text-2xl">${fmt(summary.net_income)}</p>
-                <p className="mt-0.5 truncate text-xs text-slate-400">IVA: ${fmt(summary.total_tax)} ({(summary.tax_rate * 100).toFixed(0)}%)</p>
                 {summary.total_discounts > 0 && (
                   <p className="mt-0.5 text-xs font-medium text-amber-600">Descuentos: -${fmt(summary.total_discounts)}</p>
                 )}
@@ -263,7 +262,7 @@ export default function FinanceDashboardPage() {
             {/* Vista 1: Stacked Bar Chart — Sales by Payment Method */}
             <div className="rounded-xl bg-white p-4 shadow-sm sm:p-5 ring-1 ring-slate-200">
               <h2 className="mb-1 text-base font-semibold text-slate-900">Ventas por Metodo de Pago</h2>
-              <p className="mb-4 text-xs text-slate-500">Ingreso neto diario desglosado (sin IVA)</p>
+              <p className="mb-4 text-xs text-slate-500">Ingreso total diario desglosado</p>
               {salesData.length > 0 ? (
                 <ResponsiveContainer width="100%" height={320}>
                   <BarChart data={salesData} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
@@ -309,8 +308,8 @@ export default function FinanceDashboardPage() {
             {/* Vista 2: 70/30 Split Comparison */}
             <div className="rounded-xl bg-white p-4 shadow-sm sm:p-5 ring-1 ring-slate-200">
               <h2 className="mb-1 text-base font-semibold text-slate-900">Segmentacion 70/30</h2>
-              <p className="mb-4 text-xs text-slate-500">Ingreso Neto vs Fondo de Inversion vs Utilidad Real</p>
-              {summary && summary.net_income > 0 ? (
+              <p className="mb-4 text-xs text-slate-500">Ingreso Total vs Fondo de Inversion vs Utilidad Real</p>
+              {summary && summary.total_income > 0 ? (
                 <>
                   <ResponsiveContainer width="100%" height={220}>
                     <BarChart data={splitData} layout="vertical" margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>

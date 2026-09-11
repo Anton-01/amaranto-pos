@@ -11,6 +11,7 @@ import { Button } from 'primereact/button';
 import { toast } from 'sonner';
 import api from '../../api/axios';
 import AppLayout from '../../components/layout/AppLayout';
+import ClosingProductBreakdown from '../../components/finance/ClosingProductBreakdown';
 import { useAuth } from '../../context/AuthContext';
 import { toLocalYmd } from '../../lib/dates';
 import { STACK_TABLE, STACK_CLASS, HIDE_BELOW } from '../../lib/responsive';
@@ -347,6 +348,15 @@ export default function CashClosingsAuditPage() {
                   ))}
                 </tbody>
               </table>
+            </div>
+
+            {/* Que se vendio durante el turno. Un arqueo dice cuanto dinero
+                habia; esto dice de donde salio. */}
+            <div className="mt-5">
+              <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-400">
+                Productos vendidos en el turno
+              </p>
+              <ClosingProductBreakdown products={detail.product_breakdown} />
             </div>
 
             {detail.notes && (

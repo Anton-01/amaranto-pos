@@ -284,6 +284,60 @@
   </table>
 </div>
 
+<!-- Products sold during the shift -->
+@php
+  $products = $closing->product_breakdown;
+@endphp
+<div class="section">
+  <div class="section-title">Productos Vendidos en el Turno</div>
+  @if ($products === null)
+    <p style="font-size: 11px; color: #64748b;">
+      Este cierre es anterior al desglose por producto y no incluye la lista de articulos vendidos.
+    </p>
+  @elseif ($products === [])
+    <p style="font-size: 11px; color: #64748b;">No se vendio ningun producto durante este turno.</p>
+  @else
+    <table class="breakdown">
+      <thead>
+        <tr>
+          <th>Producto</th>
+          <th>Piezas</th>
+          <th>Ingreso</th>
+          <th>Costo</th>
+        </tr>
+      </thead>
+      <tbody>
+        @php
+          $pieces = 0;
+          $revenue = 0.0;
+          $cost = 0.0;
+        @endphp
+        @foreach ($products as $product)
+          @php
+            $pieces += (int) ($product['quantity_sold'] ?? 0);
+            $revenue += (float) ($product['revenue'] ?? 0);
+            $cost += (float) ($product['cost'] ?? 0);
+          @endphp
+          <tr>
+            <td>{{ $product['name'] ?? '—' }}</td>
+            <td>{{ (int) ($product['quantity_sold'] ?? 0) }}</td>
+            <td>${{ number_format((float) ($product['revenue'] ?? 0), 2) }} MXN</td>
+            {{-- El costo de un producto ya eliminado no se pudo capturar al
+                 cerrar; imprimir $0.00 ahi diria que no costo nada. --}}
+            <td>{{ ($product['cost'] ?? null) === null ? 'N/D' : '$'.number_format((float) $product['cost'], 2).' MXN' }}</td>
+          </tr>
+        @endforeach
+        <tr class="totals-row">
+          <td>{{ count($products) }} PRODUCTO(S)</td>
+          <td>{{ $pieces }}</td>
+          <td>${{ number_format($revenue, 2) }} MXN</td>
+          <td>${{ number_format($cost, 2) }} MXN</td>
+        </tr>
+      </tbody>
+    </table>
+  @endif
+</div>
+
 <!-- Summary -->
 <div class="section">
   @php

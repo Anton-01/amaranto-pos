@@ -631,10 +631,16 @@ export default function SalesHistoryPage() {
         onHide={() => setShowDetail(false)}
         modal
         header={null}
-        className="w-full max-w-2xl"
+        /*
+         * The item table inside needs room, so from `lg` up the dialog takes
+         * 70% of the viewport instead of the 42rem cap it shared with the
+         * confirmation dialogs — the six-column breakdown was wrapping on a
+         * laptop. Below `lg` it stays a full-width sheet minus the gutter.
+         */
+        className="w-[calc(100vw-1.5rem)] max-w-2xl sm:w-[92vw] lg:w-[70vw] lg:max-w-none"
         pt={{
           mask: { className: 'backdrop-blur-sm bg-black/30' },
-          root: { className: 'rounded-2xl border-0 shadow-2xl' },
+          root: { className: 'rounded-2xl border-0 shadow-2xl !max-w-full' },
           content: { className: 'p-0' },
         }}
       >

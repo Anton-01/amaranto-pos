@@ -19,6 +19,7 @@ class CashRegisterClosing extends Model
         'declared_amount',
         'difference_amount',
         'payment_breakdown',
+        'product_breakdown',
         'is_automated',
         'notes',
     ];
@@ -45,6 +46,7 @@ class CashRegisterClosing extends Model
             'declared_amount'  => 'decimal:2',
             'difference_amount' => 'decimal:2',
             'payment_breakdown' => 'array',
+            'product_breakdown' => 'array',
             'is_automated'     => 'boolean',
             'created_at'       => 'datetime',
         ];

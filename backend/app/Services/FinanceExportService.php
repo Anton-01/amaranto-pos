@@ -43,7 +43,6 @@ class FinanceExportService
     {
         $spreadsheet = new Spreadsheet();
 
-        $taxRate = $this->readSetting('tax_rate', 'rate', 0.16);
         $investmentPct = (int) $this->readSetting('investment_split', 'investment_pct', 70);
         $profitPct = (int) $this->readSetting('investment_split', 'profit_pct', 30);
 
@@ -56,7 +55,6 @@ class FinanceExportService
             $filters,
             $orders,
             $deductions,
-            $taxRate,
             $investmentPct,
             $profitPct,
         );
@@ -213,19 +211,23 @@ class FinanceExportService
         FinanceFilters $filters,
         $orders,
         $deductions,
-        float $taxRate,
         int $investmentPct,
         int $profitPct,
     ): void {
         $sheet->setTitle('Resumen');
 
-        $gross = round((float) $orders->sum('total'), 2);
-        $net = round((float) $orders->sum('subtotal'), 2);
-        $tax = round((float) $orders->sum('iva_total'), 2);
+        /*
+         * The total charged is the one income figure the whole report works
+         * from: the segmentation, the fund and the remainder all derive from
+         * it. The per-order sheet still carries subtotal and IVA line by line,
+         * because those are ledger facts about each ticket — but no second
+         * period-level "income" is stated here to compete with this one.
+         */
+        $totalIncome = round((float) $orders->sum('total'), 2);
         $discounts = round((float) $orders->sum('discount_total'), 2);
 
-        $investmentFund = round($net * ($investmentPct / 100), 2);
-        $netProfit = round($net * ($profitPct / 100), 2);
+        $investmentFund = round($totalIncome * ($investmentPct / 100), 2);
+        $netProfit = round($totalIncome * ($profitPct / 100), 2);
 
         $pettyCash = round((float) $deductions->where('kind', 'petty_cash')->sum('amount'), 2);
         $purchases = round((float) $deductions->where('kind', 'purchase_input')->sum('amount'), 2);
@@ -236,16 +238,14 @@ class FinanceExportService
 
         $row = 4;
         $row = $this->sectionHeader($sheet, $row, 'INGRESOS DEL PERIODO', 'D');
-        $row = $this->figure($sheet, $row, 'Ingreso Bruto (con IVA)', $gross);
-        $row = $this->figure($sheet, $row, 'IVA trasladado ('.round($taxRate * 100).'%)', $tax);
-        $row = $this->figure($sheet, $row, 'Ingreso Neto (sin IVA)', $net, bold: true);
+        $row = $this->figure($sheet, $row, 'Ingreso Total', $totalIncome, bold: true);
         $row = $this->figure($sheet, $row, 'Descuentos aplicados', $discounts);
         $row = $this->figure($sheet, $row, 'Órdenes completadas', $orders->count(), money: false);
 
         $row++;
         $row = $this->sectionHeader($sheet, $row, "SEGMENTACIÓN {$investmentPct}/{$profitPct}", 'D');
-        $row = $this->figure($sheet, $row, "Fondo de Inversión ({$investmentPct}% del neto)", $investmentFund, bold: true);
-        $row = $this->figure($sheet, $row, "Utilidad Real ({$profitPct}% del neto)", $netProfit, bold: true);
+        $row = $this->figure($sheet, $row, "Fondo de Inversión ({$investmentPct}% del ingreso total)", $investmentFund, bold: true);
+        $row = $this->figure($sheet, $row, "Utilidad Real ({$profitPct}% del ingreso total)", $netProfit, bold: true);
 
         $row++;
         $row = $this->sectionHeader($sheet, $row, 'DEDUCCIONES DEL FONDO DE INVERSIÓN', 'D');
