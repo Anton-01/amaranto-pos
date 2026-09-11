@@ -292,14 +292,24 @@ export default function AppHeader({ collapsed, onToggleSidebar, onOpenMobileNav 
             <RegisterClosedNotice status={registerStatus} onNavigate={() => setShowSalesModal(false)} />
           ) : dailySummary ? (
             <div className="space-y-4">
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              {/* One row, three figures: what came in, how many tickets it took
+                  and what went back out of the drawer. The income used to be
+                  split across a gross and a net card, a distinction that means
+                  nothing to the person reading the day's takings — and the
+                  count and the outflow sat in a second row far below it, where
+                  the three numbers could not be read against each other. */}
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                 <div className="min-w-0 rounded-xl bg-indigo-50 p-3 sm:p-4">
-                  <p className="text-[11px] font-medium text-indigo-600">Ingreso Bruto</p>
-                  <p className="mt-1 truncate text-lg font-bold text-indigo-900 sm:text-xl">{fmt(dailySummary.gross_income)}</p>
+                  <p className="text-[11px] font-medium text-indigo-600">Ingresos Totales</p>
+                  <p className="mt-1 truncate text-lg font-bold text-indigo-900 sm:text-xl">{fmt(dailySummary.total_income)}</p>
                 </div>
-                <div className="min-w-0 rounded-xl bg-emerald-50 p-3 sm:p-4">
-                  <p className="text-[11px] font-medium text-emerald-600">Ingreso Neto</p>
-                  <p className="mt-1 truncate text-lg font-bold text-emerald-900 sm:text-xl">{fmt(dailySummary.net_income)}</p>
+                <div className="min-w-0 rounded-xl bg-slate-50 p-3 sm:p-4">
+                  <p className="text-[11px] font-medium text-slate-500">Ordenes del día</p>
+                  <p className="mt-1 truncate text-lg font-bold text-slate-900 sm:text-xl">{dailySummary.order_count}</p>
+                </div>
+                <div className="min-w-0 rounded-xl bg-rose-50 p-3 sm:p-4">
+                  <p className="text-[11px] font-medium text-rose-600">Egresos Caja Chica</p>
+                  <p className="mt-1 truncate text-lg font-bold text-rose-900 sm:text-xl">-{fmt(dailySummary.petty_cash_total)}</p>
                 </div>
               </div>
 
@@ -317,21 +327,6 @@ export default function AppHeader({ collapsed, onToggleSidebar, onOpenMobileNav 
                       </div>
                     ))
                   }
-                </div>
-              </div>
-
-              {/* Two cards instead of one row: an outflow and a sale count are
-                  unrelated figures, and sharing a single tinted surface made
-                  the count look like part of the expense. Same labels, same
-                  values, same colours — only the container is split. */}
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <div className="min-w-0 rounded-xl bg-rose-50 p-3 sm:p-4">
-                  <p className="text-[11px] font-medium text-rose-600">Egresos Caja Chica</p>
-                  <p className="mt-0.5 truncate text-lg font-bold text-rose-900">-{fmt(dailySummary.petty_cash_total)}</p>
-                </div>
-                <div className="min-w-0 rounded-xl bg-slate-50 p-3 sm:p-4">
-                  <p className="text-[11px] font-medium text-slate-500">Ordenes del día</p>
-                  <p className="mt-0.5 truncate text-lg font-bold text-slate-900">{dailySummary.order_count}</p>
                 </div>
               </div>
 

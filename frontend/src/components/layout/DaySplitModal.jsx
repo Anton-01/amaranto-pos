@@ -22,6 +22,12 @@ const money = (n) =>
  *
  * The percentages are read from the payload rather than hard-coded at 70/30,
  * because the split is a configurable global setting.
+ *
+ * THE BASE IS THE TOTAL CHARGED. The header used to read "Ingreso Neto del día
+ * (sin IVA)" and the two percentages below it were taken from that subtotal, so
+ * the fund and the profit described a smaller day than any other screen in the
+ * system reported. There is now one income figure and the split is a share of
+ * it.
  */
 export default function DaySplitModal({ visible, onHide }) {
   const navigate = useNavigate();
@@ -110,8 +116,8 @@ export default function DaySplitModal({ visible, onHide }) {
                 profit figure with no visible origin invite the question
                 "percentage of what?" on every read. */}
             <div className="rounded-xl bg-slate-50 p-3 sm:p-4">
-              <p className="text-[11px] font-medium text-slate-500">Ingreso Neto del día (sin IVA)</p>
-              <p className="mt-1 truncate text-2xl font-bold tabular-nums text-slate-900">{money(totals.net)}</p>
+              <p className="text-[11px] font-medium text-slate-500">Ingreso Total del día</p>
+              <p className="mt-1 truncate text-2xl font-bold tabular-nums text-slate-900">{money(totals.gross)}</p>
               <p className="mt-0.5 text-[11px] text-slate-400">
                 {totals.orders} orden{totals.orders === 1 ? '' : 'es'} · base del reparto
               </p>
@@ -145,7 +151,7 @@ export default function DaySplitModal({ visible, onHide }) {
                   <i className="pi pi-lock text-[11px] text-slate-400" /> Ya liquidado en arqueo
                 </span>
                 <span className="text-sm font-semibold tabular-nums text-slate-900">
-                  {money(totals.settled_net)}
+                  {money(totals.settled_gross)}
                 </span>
               </div>
               <div className="mt-2 flex items-center justify-between gap-3 border-t border-slate-100 pt-2">
@@ -153,7 +159,7 @@ export default function DaySplitModal({ visible, onHide }) {
                   <i className="pi pi-clock text-[11px]" /> En curso (cajas abiertas)
                 </span>
                 <span className="text-sm font-semibold tabular-nums text-amber-700">
-                  {money(totals.in_progress_net)}
+                  {money(totals.in_progress_gross)}
                 </span>
               </div>
             </div>

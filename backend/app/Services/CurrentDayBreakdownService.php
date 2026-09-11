@@ -28,12 +28,17 @@ use Illuminate\Support\Facades\DB;
  * date.
  *
  * WHY THE FIGURES ARE RECOMPUTED AND NOT READ FROM `payment_breakdown`. The
- * stored breakdown is an immutable ledger of EXPECTED versus DECLARED cash, and
- * it works on gross totals because that is what a person counts in a drawer.
- * The 70/30 segmentation works on the net subtotal, which the breakdown does not
- * carry. Deriving the split from gross would inflate every figure by the tax
- * rate — so the sales aggregates come from `orders` and the arqueo comes from
- * the closing, each from the source that actually holds the truth.
+ * stored breakdown is an immutable ledger of EXPECTED versus DECLARED cash for
+ * the drawer as a whole; it carries no per-payment-method order count and no
+ * discount figure, both of which this panel prints. So the sales aggregates
+ * come from `orders` and the arqueo comes from the closing, each from the
+ * source that actually holds the truth.
+ *
+ * ONE INCOME FIGURE, NOT TWO. Everything here — the totals, the 70/30
+ * segmentation, the settled-versus-live split — is computed on the total
+ * charged (`orders.total`). The panel used to carry a parallel net subtotal
+ * and segment on that instead, which meant two "income" numbers on screen and
+ * a fund figure that matched neither of them.
  */
 class CurrentDayBreakdownService
 {
@@ -112,8 +117,6 @@ class CurrentDayBreakdownService
                 'payment_methods.slug as payment_slug',
                 'payment_methods.name as payment_name',
                 DB::raw('COALESCE(SUM(orders.total), 0) as gross'),
-                DB::raw('COALESCE(SUM(orders.subtotal), 0) as net'),
-                DB::raw('COALESCE(SUM(orders.iva_total), 0) as tax'),
                 DB::raw('COALESCE(SUM(orders.discount_total), 0) as discounts'),
                 DB::raw('COUNT(*) as order_count'),
             )
@@ -194,14 +197,12 @@ class CurrentDayBreakdownService
         $sales ??= collect();
 
         $gross = round((float) $sales->sum('gross'), 2);
-        $net = round((float) $sales->sum('net'), 2);
 
         $paymentMethods = $sales
             ->map(fn (object $row) => [
                 'slug' => $row->payment_slug,
                 'name' => $row->payment_name,
                 'gross' => round((float) $row->gross, 2),
-                'net' => round((float) $row->net, 2),
                 'orders' => (int) $row->order_count,
             ])
             ->sortByDesc('gross')
@@ -218,16 +219,15 @@ class CurrentDayBreakdownService
             'is_closed' => $closing !== null || $register->closed_at !== null,
             'sales' => [
                 'gross' => $gross,
-                'net' => $net,
-                'tax' => round((float) $sales->sum('tax'), 2),
                 'discounts' => round((float) $sales->sum('discounts'), 2),
                 'orders' => (int) $sales->sum('order_count'),
             ],
-            // The split is computed per register on the NET subtotal, so the
-            // rows add up to the day total instead of drifting by rounding.
+            // The split is computed per register on the total charged, the same
+            // base the day header uses, so the rows add up to the day total
+            // instead of drifting by rounding.
             'split' => [
-                'investment_fund' => round($net * ($investmentPct / 100), 2),
-                'net_profit' => round($net * ($profitPct / 100), 2),
+                'investment_fund' => round($gross * ($investmentPct / 100), 2),
+                'net_profit' => round($gross * ($profitPct / 100), 2),
             ],
             'payment_methods' => $paymentMethods,
             'closing' => $closing === null ? null : $this->buildClosing($closing),
@@ -270,26 +270,23 @@ class CurrentDayBreakdownService
     private function dayTotals(Collection $rows, int $investmentPct, int $profitPct): array
     {
         $gross = round((float) $rows->sum(fn (array $r) => $r['sales']['gross']), 2);
-        $net = round((float) $rows->sum(fn (array $r) => $r['sales']['net']), 2);
 
-        $closedNet = round((float) $rows->where('is_closed', true)->sum(fn (array $r) => $r['sales']['net']), 2);
-        $openNet = round($net - $closedNet, 2);
+        $closedGross = round((float) $rows->where('is_closed', true)->sum(fn (array $r) => $r['sales']['gross']), 2);
+        $openGross = round($gross - $closedGross, 2);
 
         $withClosing = $rows->filter(fn (array $r) => $r['closing'] !== null);
 
         return [
             'gross' => $gross,
-            'net' => $net,
-            'tax' => round((float) $rows->sum(fn (array $r) => $r['sales']['tax']), 2),
             'discounts' => round((float) $rows->sum(fn (array $r) => $r['sales']['discounts']), 2),
             'orders' => (int) $rows->sum(fn (array $r) => $r['sales']['orders']),
-            'investment_fund' => round($net * ($investmentPct / 100), 2),
-            'net_profit' => round($net * ($profitPct / 100), 2),
-            // The two states the day's money can be in. Their sum is `net`, and
-            // showing them apart is what stops the panel from looking like the
-            // business collapsed at any hour before the closings run.
-            'settled_net' => $closedNet,
-            'in_progress_net' => $openNet,
+            'investment_fund' => round($gross * ($investmentPct / 100), 2),
+            'net_profit' => round($gross * ($profitPct / 100), 2),
+            // The two states the day's money can be in. Their sum is `gross`,
+            // and showing them apart is what stops the panel from looking like
+            // the business collapsed at any hour before the closings run.
+            'settled_gross' => $closedGross,
+            'in_progress_gross' => $openGross,
             // Arqueo aggregates over the closings performed today only.
             'expected_amount' => round((float) $withClosing->sum(fn (array $r) => $r['closing']['expected_amount']), 2),
             'declared_amount' => round((float) $withClosing->sum(fn (array $r) => $r['closing']['declared_amount']), 2),
@@ -315,12 +312,10 @@ class CurrentDayBreakdownService
                     'slug' => $slug,
                     'name' => $method['name'],
                     'gross' => 0.0,
-                    'net' => 0.0,
                     'orders' => 0,
                 ];
 
                 $folded[$slug]['gross'] = round($folded[$slug]['gross'] + $method['gross'], 2);
-                $folded[$slug]['net'] = round($folded[$slug]['net'] + $method['net'], 2);
                 $folded[$slug]['orders'] += $method['orders'];
             }
         }

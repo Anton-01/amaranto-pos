@@ -7,6 +7,15 @@ use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\DB;
 
+/**
+ * Resumen del dia que abre la cabecera.
+ *
+ * UN SOLO INGRESO. El panel mostraba el cobrado (`total`) y el subtotal sin
+ * IVA como dos cifras hermanas, y la separacion no significaba nada para quien
+ * lee la pantalla: el dinero que entro al negocio es uno solo. Aqui se reporta
+ * `total_income` —la suma de `orders.total`, es decir lo efectivamente
+ * cobrado— y todo lo que se calcule despues parte de ese valor.
+ */
 class DailySummaryController extends Controller
 {
     public function __invoke(): JsonResponse
@@ -16,9 +25,7 @@ class DailySummaryController extends Controller
 
         $sales = DB::table('orders')
             ->select(
-                DB::raw('COALESCE(SUM(total), 0) as gross_income'),
-                DB::raw('COALESCE(SUM(subtotal), 0) as net_income'),
-                DB::raw('COALESCE(SUM(iva_total), 0) as total_tax'),
+                DB::raw('COALESCE(SUM(total), 0) as total_income'),
                 DB::raw('COALESCE(SUM(discount_total), 0) as total_discounts'),
                 DB::raw('COUNT(*) as order_count')
             )
@@ -56,9 +63,7 @@ class DailySummaryController extends Controller
         return response()->json([
             'status' => 'success',
             'data' => [
-                'gross_income' => round((float) $sales->gross_income, 2),
-                'net_income' => round((float) $sales->net_income, 2),
-                'total_tax' => round((float) $sales->total_tax, 2),
+                'total_income' => round((float) $sales->total_income, 2),
                 'total_discounts' => round((float) $sales->total_discounts, 2),
                 'order_count' => (int) $sales->order_count,
                 'by_payment' => $byPayment->map(fn ($row) => [

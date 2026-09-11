@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Dialog } from 'primereact/dialog';
 import { OverlayPanel } from 'primereact/overlaypanel';
 import { InputNumber } from 'primereact/inputnumber';
-import { InputText } from 'primereact/inputtext';
+import { InputTextarea } from 'primereact/inputtextarea';
 import { Dropdown } from 'primereact/dropdown';
 import { Button } from 'primereact/button';
 import { toast } from 'sonner';
@@ -363,11 +363,12 @@ export default function TablesFloorPlanPage() {
         modal
         header={null}
         /*
-         * DESKTOP SIZING. Full-bleed on a phone, and from `lg` up it is capped
-         * at half the viewport (never past `2xl`) so the floor plan behind it
-         * stays readable on a laptop or a wide monitor.
+         * DESKTOP SIZING. The dialog asks for a guest count and an optional
+         * note; at half the viewport those two controls were stretched across
+         * a laptop screen with nothing in them. It is now a narrow column at
+         * every size above a phone — wide enough for the note, no wider.
          */
-        className="w-full max-w-md lg:w-1/2 lg:max-w-2xl"
+        className="w-[calc(100vw-1.5rem)] max-w-sm sm:w-[22rem]"
         pt={{
           mask: { className: 'backdrop-blur-sm bg-black/30' },
           root: { className: 'rounded-2xl border-0 shadow-2xl' },
@@ -399,13 +400,17 @@ export default function TablesFloorPlanPage() {
               <label className="mb-1.5 block text-sm font-medium text-slate-700">
                 Nota <span className="text-xs text-slate-400">(opcional)</span>
               </label>
-              <InputText
+              {/* Two rows, and `autoResize` deliberately off: the note can run
+                  to 500 characters and a growing box would push the buttons
+                  off a phone screen mid-typing. It scrolls instead. */}
+              <InputTextarea
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
+                rows={2}
                 maxLength={500}
                 placeholder="Cumpleaños, alergias, cliente frecuente..."
                 disabled={opening}
-                className="w-full rounded-lg border-slate-200 px-3 py-2.5 text-sm"
+                className="w-full resize-none rounded-lg border-slate-200 px-3 py-2 text-sm"
                 pt={{ root: { className: 'w-full' } }}
               />
             </div>

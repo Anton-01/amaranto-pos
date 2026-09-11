@@ -105,16 +105,14 @@ class MonthlyAnalyticsExportService
         $this->headerRow($sheet, $row, ['Métrica', 'Valor', 'vs. mes previo']);
         $row++;
 
-        $row = $this->figure($sheet, $row, 'Ventas Totales (bruto)', $totals['total_sales'], $comparison['sales_delta_pct'], bold: true);
-        $row = $this->figure($sheet, $row, 'Ingreso Neto (sin IVA)', $totals['net_sales']);
-        $row = $this->figure($sheet, $row, 'IVA Recaudado', $totals['tax_total']);
+        $row = $this->figure($sheet, $row, 'Ventas Totales', $totals['total_sales'], $comparison['sales_delta_pct'], bold: true);
         $row = $this->figure($sheet, $row, 'Descuentos Otorgados', $totals['discount_total']);
         $row = $this->figure($sheet, $row, 'Órdenes Completadas', $totals['order_count'], $comparison['orders_delta_pct'], money: false);
         $row = $this->figure($sheet, $row, 'Ticket Promedio', $totals['avg_ticket'], $comparison['avg_ticket_delta_pct'], bold: true);
 
         $row++;
         $row = $this->sectionHeader($sheet, $row, 'MES PREVIO ('.$previous['month'].') — BASE DE COMPARACIÓN', 'C');
-        $row = $this->figure($sheet, $row, 'Ventas Totales (bruto)', $previous['total_sales']);
+        $row = $this->figure($sheet, $row, 'Ventas Totales', $previous['total_sales']);
         $row = $this->figure($sheet, $row, 'Órdenes Completadas', $previous['order_count'], money: false);
         $row = $this->figure($sheet, $row, 'Ticket Promedio', $previous['avg_ticket']);
 

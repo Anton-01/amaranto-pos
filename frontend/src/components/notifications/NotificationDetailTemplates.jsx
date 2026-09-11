@@ -13,6 +13,10 @@ const fmtDateTime = (iso) =>
 /** Plantilla de detalle: cierre automatico de cajas (job de las 21:00). */
 export function AutoCashClosingDetail({ data }) {
   const closings = data?.closings ?? [];
+  // Consolidado de la corrida: lo que vendieron todas las cajas cerradas a las
+  // 21:00, ya sumado por el comando. Ausente en notificaciones anteriores al
+  // desglose, y su JSON es inmutable — por eso se comprueba, no se reconstruye.
+  const products = data?.products ?? [];
 
   return (
     <div className="space-y-4">
@@ -65,6 +69,46 @@ export function AutoCashClosingDetail({ data }) {
           </tbody>
         </table>
       </div>
+
+      {products.length > 0 && (
+        <div>
+          <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-400">
+            Productos vendidos en la jornada
+          </p>
+          <div className="overflow-hidden rounded-lg border border-slate-200">
+            <div className="max-h-64 overflow-y-auto">
+              <table className="w-full text-sm">
+                <thead className="sticky top-0 bg-slate-50">
+                  <tr className="border-b border-slate-200">
+                    <th className="px-3 py-2 text-left text-xs font-semibold text-slate-600">Producto</th>
+                    <th className="px-3 py-2 text-center text-xs font-semibold text-slate-600">Piezas</th>
+                    <th className="px-3 py-2 text-right text-xs font-semibold text-slate-600">Ingreso</th>
+                    <th className="px-3 py-2 text-right text-xs font-semibold text-slate-600">Costo</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {products.map((p, i) => (
+                    <tr key={p.product_id ?? `deleted-${i}`} className="border-b border-slate-100 last:border-0">
+                      <td className="px-3 py-2 text-slate-900">{p.name}</td>
+                      <td className="px-3 py-2 text-center tabular-nums text-slate-700">{p.quantity_sold}</td>
+                      <td className="px-3 py-2 text-right font-medium tabular-nums text-slate-900">{fmt(p.revenue)}</td>
+                      <td className="px-3 py-2 text-right tabular-nums text-slate-600">{fmt(p.cost)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr className="border-t-2 border-slate-200 bg-slate-50 font-semibold">
+                    <td className="px-3 py-2 text-slate-700">{products.length} producto(s)</td>
+                    <td className="px-3 py-2 text-center tabular-nums text-slate-900">{data?.total_pieces_sold ?? 0}</td>
+                    <td className="px-3 py-2" />
+                    <td className="px-3 py-2 text-right tabular-nums text-slate-900">{fmt(data?.total_products_cost)}</td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2.5 text-xs text-amber-800">
         Los montos declarados de un cierre automatico no fueron verificados fisicamente:

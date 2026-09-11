@@ -102,8 +102,7 @@ class AnalyticsController extends Controller
                 DB::raw(FinanceFilters::localDateExpression('orders.created_at').' as date'),
                 'payment_methods.slug as payment_slug',
                 'payment_methods.name as payment_name',
-                DB::raw('SUM(orders.subtotal) as total_net'),
-                DB::raw('SUM(orders.total) as total_gross'),
+                DB::raw('SUM(orders.total) as total_income'),
                 DB::raw('COUNT(*) as order_count'),
             )
             ->where('orders.status', 'completed')
@@ -125,12 +124,12 @@ class AnalyticsController extends Controller
 
             $grouped[$date]['methods'][$row->payment_slug] = [
                 'name' => $row->payment_name,
-                'net' => round((float) $row->total_net, 2),
+                'total' => round((float) $row->total_income, 2),
             ];
             // The chart stacks by slug, so each method is also flattened onto
             // the row: Recharts reads `dataKey="efectivo"`, not a nested map.
-            $grouped[$date][$row->payment_slug] = round((float) $row->total_net, 2);
-            $grouped[$date]['total'] = round($grouped[$date]['total'] + (float) $row->total_net, 2);
+            $grouped[$date][$row->payment_slug] = round((float) $row->total_income, 2);
+            $grouped[$date]['total'] = round($grouped[$date]['total'] + (float) $row->total_income, 2);
             $grouped[$date]['orders'] += (int) $row->order_count;
         }
 
@@ -145,24 +144,28 @@ class AnalyticsController extends Controller
     {
         $filters = FinanceFilters::fromRequest($request, Carbon::now()->startOfMonth());
 
-        $taxRate = $this->setting('tax_rate', 'rate', 0.16);
         $investmentPct = (int) $this->setting('investment_split', 'investment_pct', 70);
         $profitPct = (int) $this->setting('investment_split', 'profit_pct', 30);
 
         $sales = $filters->applyToOrders(
             DB::table('orders')
                 ->select(
-                    DB::raw('COALESCE(SUM(subtotal), 0) as net_income'),
-                    DB::raw('COALESCE(SUM(iva_total), 0) as total_tax'),
-                    DB::raw('COALESCE(SUM(total), 0) as gross_income'),
+                    DB::raw('COALESCE(SUM(total), 0) as total_income'),
                     DB::raw('COALESCE(SUM(discount_total), 0) as total_discounts'),
                     DB::raw('COUNT(*) as order_count'),
                 )
                 ->where('status', 'completed')
         )->first();
 
-        $netIncome = round((float) $sales->net_income, 2);
-        $investmentFund = round($netIncome * ($investmentPct / 100), 2);
+        /*
+         * ONE INCOME FIGURE. The panel used to carry the charged total and the
+         * net subtotal side by side and segment the 70/30 on the latter, which
+         * left the fund and the profit describing a smaller business than the
+         * headline figure right next to them. Both the base and every derived
+         * amount are now the total charged.
+         */
+        $totalIncome = round((float) $sales->total_income, 2);
+        $investmentFund = round($totalIncome * ($investmentPct / 100), 2);
 
         $pettyCash = (float) $filters
             ->applyToDeductions(DB::table('petty_cash_transactions'), 'petty_cash_transactions')
@@ -186,15 +189,12 @@ class AnalyticsController extends Controller
             'status' => 'success',
             'data' => [
                 'period' => ['from' => $filters->from->toDateString(), 'to' => $filters->to->toDateString()],
-                'tax_rate' => $taxRate,
                 'split' => ['investment_pct' => $investmentPct, 'profit_pct' => $profitPct],
-                'gross_income' => round((float) $sales->gross_income, 2),
-                'total_tax' => round((float) $sales->total_tax, 2),
-                'net_income' => $netIncome,
+                'total_income' => $totalIncome,
                 'total_discounts' => round((float) $sales->total_discounts, 2),
                 'order_count' => (int) $sales->order_count,
                 'investment_fund' => $investmentFund,
-                'net_profit' => round($netIncome * ($profitPct / 100), 2),
+                'net_profit' => round($totalIncome * ($profitPct / 100), 2),
                 'deductions' => [
                     'petty_cash' => round($pettyCash, 2),
                     'stock_purchases' => round($stockPurchases, 2),
@@ -222,8 +222,7 @@ class AnalyticsController extends Controller
         $query = DB::table('orders')
             ->select(
                 DB::raw(FinanceFilters::localDateExpression('created_at').' as date'),
-                DB::raw('SUM(subtotal) as net_income'),
-                DB::raw('SUM(total) as gross_income'),
+                DB::raw('SUM(total) as total_income'),
                 DB::raw('COUNT(*) as order_count'),
             )
             ->where('status', 'completed')

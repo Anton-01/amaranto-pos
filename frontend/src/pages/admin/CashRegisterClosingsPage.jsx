@@ -14,6 +14,7 @@ import { toast } from 'sonner';
 import api from '../../api/axios';
 import AppLayout from '../../components/layout/AppLayout';
 import useCronosAgent from '../../hooks/useCronosAgent';
+import ClosingProductBreakdown from '../../components/finance/ClosingProductBreakdown';
 import { addDays, startOfMonth, todayYmd, toLocalYmd } from '../../lib/dates';
 import { STACK_TABLE, STACK_CLASS, dialogClass, DIALOG_PT } from '../../lib/responsive';
 
@@ -649,7 +650,9 @@ export default function CashRegisterClosingsPage() {
             <span className="font-bold text-slate-900">Detalle del Arqueo</span>
           </div>
         }
-        className={dialogClass('md')}
+        /* `lg`, no `md`: el arqueo ahora lleva dos tablas —metodos de pago y
+           productos vendidos— y a 32rem la de productos partia sus columnas. */
+        className={dialogClass('lg')}
         pt={DIALOG_PT}
         modal
         draggable={false}
@@ -701,6 +704,13 @@ export default function CashRegisterClosingsPage() {
                 })}
               </tbody>
             </table>
+
+            <div className="mt-5">
+              <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-400">
+                Productos vendidos en el turno
+              </p>
+              <ClosingProductBreakdown products={selectedClosing.product_breakdown} />
+            </div>
 
             <div className="mt-4 flex items-center justify-between">
               <div className="flex items-center gap-2">

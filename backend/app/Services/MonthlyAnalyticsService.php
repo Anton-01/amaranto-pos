@@ -74,7 +74,7 @@ class MonthlyAnalyticsService
         ];
     }
 
-    /** @return array{total_sales: float, net_sales: float, tax_total: float, discount_total: float, order_count: int, avg_ticket: float} */
+    /** @return array{total_sales: float, discount_total: float, order_count: int, avg_ticket: float} */
     private function totals(Carbon $from, Carbon $to): array
     {
         $row = DB::table('orders')
@@ -82,8 +82,6 @@ class MonthlyAnalyticsService
             ->whereBetween('created_at', [$from, $to])
             ->selectRaw('
                 COALESCE(SUM(total), 0) as total_sales,
-                COALESCE(SUM(subtotal), 0) as net_sales,
-                COALESCE(SUM(iva_total), 0) as tax_total,
                 COALESCE(SUM(discount_total), 0) as discount_total,
                 COUNT(*) as order_count,
                 COALESCE(AVG(total), 0) as avg_ticket
@@ -92,8 +90,6 @@ class MonthlyAnalyticsService
 
         return [
             'total_sales' => round((float) $row->total_sales, 2),
-            'net_sales' => round((float) $row->net_sales, 2),
-            'tax_total' => round((float) $row->tax_total, 2),
             'discount_total' => round((float) $row->discount_total, 2),
             'order_count' => (int) $row->order_count,
             'avg_ticket' => round((float) $row->avg_ticket, 2),

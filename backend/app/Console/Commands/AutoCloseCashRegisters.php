@@ -112,6 +112,16 @@ class AutoCloseCashRegisters extends Command
         $closed = [];
         $failed = 0;
 
+        /*
+         * Lista consolidada de lo vendido por todas las cajas de la corrida,
+         * acumulada a medida que cada arqueo se firma. Es lo que hace que la
+         * notificacion de las 21:00 responda "que se vendio hoy" sin abrir
+         * cierre por cierre.
+         *
+         * @var array<string, array<string, mixed>>
+         */
+        $productTotals = [];
+
         /** @var array<int, array{closing: CashRegisterClosing, operator: string}> */
         $reportable = [];
 
@@ -125,6 +135,8 @@ class AutoCloseCashRegisters extends Command
                     notes: 'Cierre automatico programado (21:00). Montos declarados no verificados fisicamente: el sistema asume declarado = esperado. Requiere conciliacion del efectivo al siguiente turno.',
                 );
 
+                $products = $closing->product_breakdown ?? [];
+
                 $closed[] = [
                     'closing_id' => $closing->id,
                     'cash_register_id' => $register->id,
@@ -136,10 +148,18 @@ class AutoCloseCashRegisters extends Command
                     'expected_amount' => (float) $closing->expected_amount,
                     'declared_amount' => (float) $closing->declared_amount,
                     'difference_amount' => (float) $closing->difference_amount,
+                    // Que se vendio en el turno, resumido. La lista completa
+                    // vive dentro del arqueo; aqui solo la cabecera, para que
+                    // la notificacion no cargue un catalogo entero por caja.
+                    'products_count' => count($products),
+                    'pieces_sold' => (int) array_sum(array_column($products, 'quantity_sold')),
+                    'products_cost' => round((float) array_sum(array_column($products, 'cost')), 2),
                     'was_stale' => $register->opened_at !== null
                         && $register->opened_at->timezone(Timezone::app())->toDateString()
                             !== now()->toDateString(),
                 ];
+
+                $this->foldProducts($productTotals, $products);
 
                 $reportable[] = [
                     'closing' => $closing,
@@ -187,7 +207,10 @@ class AutoCloseCashRegisters extends Command
                 'total_expected' => round(array_sum(array_column($closed, 'expected_amount')), 2),
                 'total_declared' => round(array_sum(array_column($closed, 'declared_amount')), 2),
                 'total_difference' => round(array_sum(array_column($closed, 'difference_amount')), 2),
+                'total_pieces_sold' => (int) array_sum(array_column($closed, 'pieces_sold')),
+                'total_products_cost' => round((float) array_sum(array_column($closed, 'products_cost')), 2),
                 'closings' => $closed,
+                'products' => $this->sortedProducts($productTotals),
             ]);
         }
 
@@ -392,5 +415,48 @@ class AutoCloseCashRegisters extends Command
                 (string) ($row['name'] ?? 'Otro') => round((float) ($row['expected'] ?? 0), 2),
             ])
             ->all();
+    }
+
+    /**
+     * Acumula el desglose de productos de un arqueo sobre el total de la corrida.
+     *
+     * Se agrupa por `product_id` cuando existe y por nombre cuando no: dos
+     * cajas que vendieron el mismo producto deben aparecer como una linea, y
+     * las lineas huerfanas ("Producto eliminado") tambien se suman entre si en
+     * lugar de repetirse una vez por caja.
+     *
+     * @param  array<string, array<string, mixed>>  $totals
+     * @param  array<int, array<string, mixed>>  $products
+     */
+    private function foldProducts(array &$totals, array $products): void
+    {
+        foreach ($products as $product) {
+            $key = (string) ($product['product_id'] ?? 'deleted:'.($product['name'] ?? '—'));
+
+            $totals[$key] ??= [
+                'product_id' => $product['product_id'] ?? null,
+                'name' => $product['name'] ?? '—',
+                'quantity_sold' => 0,
+                'revenue' => 0.0,
+                'cost' => 0.0,
+            ];
+
+            $totals[$key]['quantity_sold'] += (int) ($product['quantity_sold'] ?? 0);
+            $totals[$key]['revenue'] = round($totals[$key]['revenue'] + (float) ($product['revenue'] ?? 0), 2);
+            $totals[$key]['cost'] = round($totals[$key]['cost'] + (float) ($product['cost'] ?? 0), 2);
+        }
+    }
+
+    /**
+     * @param  array<string, array<string, mixed>>  $totals
+     * @return array<int, array<string, mixed>>
+     */
+    private function sortedProducts(array $totals): array
+    {
+        $rows = array_values($totals);
+
+        usort($rows, fn (array $a, array $b) => $b['revenue'] <=> $a['revenue']);
+
+        return $rows;
     }
 }
